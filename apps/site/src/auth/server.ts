@@ -67,11 +67,14 @@ export function startAuthServer(opts: { service: AuthService; port?: number }): 
 
   // Don't let a slow/half-open client tie up a socket forever (slowloris).
   server.requestTimeout = 10_000;
-  // A socket-level error must never crash the process.
-  server.on("error", (err) => console.error("[auth-server] socket error:", err.message));
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    // A failure to bind (e.g. EADDRINUSE) must reject loudly, not hang.
+    server.once("error", reject);
     server.listen(opts.port ?? 0, "127.0.0.1", () => {
+      server.off("error", reject);
+      // Once we're listening, a later socket error must not crash the process.
+      server.on("error", (err) => console.error("[auth-server] socket error:", err.message));
       const { port } = server.address() as AddressInfo;
       resolve({
         url: `http://127.0.0.1:${port}`,

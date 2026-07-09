@@ -55,7 +55,10 @@ it("boots standalone, serves a real sign-in, and shuts down", async () => {
 
   // 3. read the link the server PRINTED to its console (the dev inbox)
   const linkLine = await waitFor(/Sign-in link for boot@shop\.test:\s*(\S+)/, "printed magic link");
-  const token = new URL(linkLine[1]!).searchParams.get("token")!;
+  const printed = new URL(linkLine[1]!);
+  // the printed link must point at the real bound port, not :0 (F2 regression guard)
+  expect(printed.origin).toBe(base);
+  const token = printed.searchParams.get("token")!;
 
   // 4. verify it → founding user #1 comes back through the whole boot path
   const verifyRes = await fetch(`${base}/auth/verify`, {

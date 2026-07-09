@@ -10,6 +10,10 @@ const DEFAULT_DATABASE_URL = "postgres://deskhand:deskhand@localhost:5442/deskha
 function pickMailer(): Mailer {
   const key = process.env["RESEND_API_KEY"];
   if (key) return new ResendMailer(key, process.env["MAIL_FROM"] ?? "Deskhand <hi@deskhand.app>");
+  if (process.env["NODE_ENV"] === "production") {
+    // DevLinkMailer prints full single-use tokens — never in prod.
+    throw new Error("RESEND_API_KEY is required in production");
+  }
   return new DevLinkMailer();
 }
 
@@ -29,12 +33,14 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // AuthService reads config.appUrl lazily, so we can fill it from the real
+  // bound URL after listening — correct even when PORT=0 picks an ephemeral port.
+  const config = { appUrl: process.env["APP_URL"] ?? "" };
   const server = await startAuthServer({
-    service: new AuthService(new AuthStore(pool), pickMailer(), {
-      appUrl: process.env["APP_URL"] ?? `http://127.0.0.1:${port}`,
-    }),
+    service: new AuthService(new AuthStore(pool), pickMailer(), config),
     port,
   });
+  if (!config.appUrl) config.appUrl = server.url;
   console.log(`[auth-server] listening on ${server.url}`);
 
   let shuttingDown = false;
