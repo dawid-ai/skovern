@@ -1,9 +1,11 @@
-import { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage } from "electron";
+import { app, BrowserWindow, Menu, Tray, nativeImage } from "electron";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import electronUpdater from "electron-updater";
-import { getAppInfo } from "@deskhand/core";
-import { isTrustedSender } from "./trust.js";
+import { createAccountClient, getAppInfo } from "@deskhand/core";
+import { registerTrusted } from "./ipc.js";
+import { clearSession, loadSession, saveSession } from "./session.js";
+import type { CurrentAccount, RequestResult, VerifyResult } from "../shared/account.js";
 
 const { autoUpdater } = electronUpdater;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -13,6 +15,11 @@ const DEV_SERVER_URL = app.isPackaged ? undefined : process.env["ELECTRON_RENDER
 const RENDERER_INDEX_PATH = path.join(__dirname, "../renderer/index.html");
 const RENDERER_INDEX_URL = pathToFileURL(RENDERER_INDEX_PATH).href;
 const TRUST = { devServerUrl: DEV_SERVER_URL, rendererIndexUrl: RENDERER_INDEX_URL };
+
+// The core auth client is the ONLY thing that talks to the cloud API. Local
+// server by default; a hosted URL is injected via env when one exists.
+const API_BASE = process.env["DESKHAND_API_URL"] ?? "http://127.0.0.1:8787";
+const CANT_REACH = "Couldn't connect right now. Try again in a moment.";
 
 // ponytail: placeholder 16x16 orange square until the real icon exists
 const TRAY_ICON_DATA_URL =
@@ -109,11 +116,44 @@ app.on("window-all-closed", () => {
 app
   .whenReady()
   .then(() => {
-    ipcMain.handle("app:info", (event) => {
-      if (!isTrustedSender(event.senderFrame?.url, TRUST)) {
-        throw new Error("app:info called from untrusted sender");
+    registerTrusted(TRUST, "app:info", () => getAppInfo());
+
+    const account = createAccountClient(API_BASE);
+
+    registerTrusted(TRUST, "account:request", async (rawEmail: unknown): Promise<RequestResult> => {
+      const email = typeof rawEmail === "string" ? rawEmail : "";
+      try {
+        await account.requestMagicLink(email);
+        return { ok: true, message: "Check your email for a sign-in link." };
+      } catch {
+        return { ok: false, message: CANT_REACH };
       }
-      return getAppInfo();
+    });
+
+    registerTrusted(TRUST, "account:verify", async (rawToken: unknown): Promise<VerifyResult> => {
+      const token = typeof rawToken === "string" ? rawToken : "";
+      try {
+        const session = await account.verifyMagicLink(token);
+        if (!session) return { ok: false, message: "That link didn't work. Ask for a new one." };
+        try {
+          saveSession({ token: session.token, ogNumber: session.ogNumber });
+        } catch {
+          // no OS keychain → signed in for this run only, not persisted
+          console.warn("[account] session not persisted (secure storage unavailable)");
+        }
+        return { ok: true, ogNumber: session.ogNumber, message: "You're in." };
+      } catch {
+        return { ok: false, message: CANT_REACH };
+      }
+    });
+
+    registerTrusted(TRUST, "account:current", (): CurrentAccount | null => {
+      const session = loadSession();
+      return session ? { ogNumber: session.ogNumber } : null;
+    });
+
+    registerTrusted(TRUST, "account:signOut", (): void => {
+      clearSession();
     });
 
     createWindow();

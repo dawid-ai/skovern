@@ -8,3 +8,5 @@ export { ResendMailer } from "./auth/mailer.js";
 export type { Mailer } from "./auth/mailer.js";
 export { handleRequestLink, handleVerify } from "./auth/handlers.js";
 export type { HttpResult } from "./auth/handlers.js";
+export { startAuthServer } from "./auth/server.js";
+export type { RunningServer } from "./auth/server.js";
