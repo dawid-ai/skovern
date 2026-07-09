@@ -9,7 +9,11 @@ export class ConsoleMailer implements Mailer {
 
   async send(to: string, url: string): Promise<void> {
     this.sent.push({ to, url });
-    console.log(`[magic-link] ${to} -> ${url}`);
+    // The full link lives in `sent` for dev tooling/tests to read; the log line
+    // itself never carries a full token or address (CLAUDE.md: never log those).
+    const domain = to.slice(to.indexOf("@") + 1);
+    const id = new URL(url).searchParams.get("token")?.split(".")[0] ?? "?";
+    console.log(`[magic-link] queued for …@${domain} (token ${id.slice(0, 6)}…)`);
   }
 }
 

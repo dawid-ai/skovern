@@ -1,8 +1,14 @@
 import pg from "pg";
-import { secretMatches } from "./tokens.js";
+import { secretMatches, sha256 } from "./tokens.js";
 
 const { Pool } = pg;
 export type Pool = pg.Pool;
+
+// A fixed hash of the same length as a real one, compared against on a token
+// miss so the constant-time path runs whether or not the id existed.
+const DUMMY_SECRET_HASH = sha256("deskhand/no-such-token");
+
+type AccountRow = { id: string; og_number: string; email: string };
 
 // One migration, applied idempotently. A dedicated migration tool is overkill
 // for three tables; when the cloud schema grows past a handful, swap this for
@@ -74,7 +80,10 @@ export class AuthStore {
       [id],
     );
     const row = found.rows[0];
-    if (!row || !secretMatches(secret, row.secret_hash)) return null;
+    // Always run the constant-time compare — on a miss, against a dummy hash —
+    // so app-level timing never reveals whether the id existed.
+    const ok = secretMatches(secret, row?.secret_hash ?? DUMMY_SECRET_HASH);
+    if (!row || !ok) return null;
 
     const consumed = await this.pool.query<{ email: string }>(
       `UPDATE magic_tokens SET consumed_at = now()
@@ -88,26 +97,36 @@ export class AuthStore {
   /** Create the account for this email, or return the existing one. The OG
    * number is assigned once, on first insert, and never changes. */
   async upsertAccount(email: string): Promise<Account> {
-    // ponytail: og_number's DEFAULT nextval fires before ON CONFLICT is
-    // resolved, so two *concurrent* first sign-ins of the SAME email can burn
-    // one sequence value (a gap). Distinct emails never gap. Upgrade to a
-    // per-email advisory lock if same-email races must stay gap-free.
-    const inserted = await this.pool.query<{ id: string; og_number: string; email: string }>(
-      `INSERT INTO accounts (email) VALUES ($1)
-       ON CONFLICT (email) DO NOTHING
-       RETURNING id, og_number, email`,
-      [email],
-    );
-    const row =
-      inserted.rows[0] ??
-      (
-        await this.pool.query<{ id: string; og_number: string; email: string }>(
-          `SELECT id, og_number, email FROM accounts WHERE email = $1`,
-          [email],
-        )
-      ).rows[0];
-    if (!row) throw new Error("account upsert failed");
-    return { id: row.id, ogNumber: Number(row.og_number), email: row.email };
+    // A plain INSERT ... ON CONFLICT would evaluate og_number's DEFAULT
+    // nextval before the conflict is resolved, so a concurrent same-email
+    // sign-in would burn a sequence value and leave a gap. We instead serialize
+    // same-email sign-ins with a per-email advisory lock and only INSERT after
+    // confirming no row exists — so nextval fires exactly once per account.
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [email]);
+      const existing = await client.query<AccountRow>(
+        `SELECT id, og_number, email FROM accounts WHERE email = $1`,
+        [email],
+      );
+      const row =
+        existing.rows[0] ??
+        (
+          await client.query<AccountRow>(
+            `INSERT INTO accounts (email) VALUES ($1) RETURNING id, og_number, email`,
+            [email],
+          )
+        ).rows[0];
+      await client.query("COMMIT");
+      if (!row) throw new Error("account upsert failed");
+      return { id: row.id, ogNumber: Number(row.og_number), email: row.email };
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   async createSession(

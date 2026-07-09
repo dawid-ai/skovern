@@ -117,7 +117,7 @@ describe("magic-link auth", () => {
     expect(await service.verifyMagicLink(good)).not.toBeNull();
   });
 
-  it("assigns gap-free OG numbers under concurrent first-time verifies", async () => {
+  it("assigns OG numbers 1..N under concurrent first-time verifies (distinct emails)", async () => {
     const N = 8;
     const { service, mailer } = makeService();
     for (let i = 0; i < N; i++) await service.requestMagicLink(`user${i}@shop.test`);
@@ -127,6 +127,40 @@ describe("magic-link auth", () => {
 
     const ogs = sessions.map((s) => s!.ogNumber).sort((a, b) => a - b);
     expect(ogs).toEqual(Array.from({ length: N }, (_, i) => i + 1));
+  });
+
+  it("stays gap-free when the SAME new email is verified concurrently", async () => {
+    const { service, mailer } = makeService();
+    // two live links for one brand-new email, redeemed at the same time
+    await service.requestMagicLink("dbl@shop.test");
+    await service.requestMagicLink("dbl@shop.test");
+    const [t1, t2] = mailer.sent.map((s) => tokenFromUrl(s.url));
+    const [s1, s2] = await Promise.all([
+      service.verifyMagicLink(t1!),
+      service.verifyMagicLink(t2!),
+    ]);
+
+    // both links work and resolve to the SAME founding number
+    expect(s1!.ogNumber).toBe(1);
+    expect(s2!.ogNumber).toBe(1);
+    // and no sequence value was burned: the next new account is #2, not #3
+    await service.requestMagicLink("after@shop.test");
+    const s3 = await service.verifyMagicLink(tokenFromUrl(mailer.sent[2]!.url));
+    expect(s3!.ogNumber).toBe(2);
+  });
+
+  it("rejects every bad-token kind identically (no leak about which failed)", async () => {
+    const { service, mailer } = makeService();
+    await service.requestMagicLink("e@shop.test");
+    const used = tokenFromUrl(mailer.sent[0]!.url);
+    await service.verifyMagicLink(used); // consume it
+
+    const reused = await handleVerify(service, { token: used });
+    const garbage = await handleVerify(service, { token: "no.such" });
+    const malformed = await handleVerify(service, { token: "missingsecret" });
+
+    expect(reused).toEqual(garbage);
+    expect(garbage).toEqual(malformed);
   });
 
   it("does not reveal whether an email already has an account", async () => {
