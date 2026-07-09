@@ -4,7 +4,7 @@ export const SITE_NAME = "deskhand";
 
 export { AuthService, AuthStore, ConsoleMailer, normalizeEmail } from "./auth/service.js";
 export type { AuthConfig, Session } from "./auth/service.js";
-export { ResendMailer } from "./auth/mailer.js";
+export { DevLinkMailer, ResendMailer } from "./auth/mailer.js";
 export type { Mailer } from "./auth/mailer.js";
 export { handleRequestLink, handleVerify } from "./auth/handlers.js";
 export type { HttpResult } from "./auth/handlers.js";

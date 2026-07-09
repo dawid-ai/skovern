@@ -234,4 +234,14 @@ describe("auth http server", () => {
       await srv.close();
     }
   });
+
+  it("rejects loudly when the port is already in use (no silent hang)", async () => {
+    const { service } = makeService();
+    const first = await startAuthServer({ service });
+    try {
+      await expect(startAuthServer({ service, port: first.port })).rejects.toThrow();
+    } finally {
+      await first.close();
+    }
+  });
 });
