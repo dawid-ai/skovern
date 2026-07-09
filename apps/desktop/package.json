@@ -20,13 +20,17 @@
     "react-dom": "^19.2.7"
   },
   "devDependencies": {
+    "@deskhand/site": "workspace:^",
     "@playwright/test": "^1.61.1",
+    "@testcontainers/postgresql": "^10.13.2",
     "@types/node": "^26.1.1",
+    "@types/pg": "^8.11.10",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.2.0",
     "electron": "^43.1.0",
     "electron-vite": "^5.0.0",
+    "pg": "^8.13.1",
     "vite": "^7.3.6",
     "vitest": "^4.1.10"
   }

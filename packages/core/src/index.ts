@@ -10,3 +10,6 @@ export interface AppInfo {
 export function getAppInfo(): AppInfo {
   return { name: "Deskhand", version: CORE_VERSION };
 }
+
+export { createAccountClient } from "./account/client.js";
+export type { AccountClient, Session } from "./account/client.js";

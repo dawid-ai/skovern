@@ -3,6 +3,7 @@ import pg from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { handleRequestLink, handleVerify } from "./handlers.js";
 import { ConsoleMailer } from "./mailer.js";
+import { startAuthServer } from "./server.js";
 import { AuthService } from "./service.js";
 import { AuthStore } from "./store.js";
 import { createOpaqueToken } from "./tokens.js";
@@ -186,5 +187,51 @@ describe("magic-link auth", () => {
     const ok = await handleVerify(service, { token });
     expect(ok.status).toBe(200);
     expect((ok.body as { ogNumber: number }).ogNumber).toBe(1);
+  });
+});
+
+describe("auth http server", () => {
+  it("runs the full request→verify flow over real HTTP", async () => {
+    const { service, mailer } = makeService();
+    const srv = await startAuthServer({ service });
+    try {
+      const reqRes = await fetch(`${srv.url}/auth/request`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "http@shop.test" }),
+      });
+      expect(reqRes.status).toBe(200);
+
+      const token = tokenFromUrl(mailer.sent[0]!.url);
+      const verifyRes = await fetch(`${srv.url}/auth/verify`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
+      expect(verifyRes.status).toBe(200);
+      const body = (await verifyRes.json()) as { ok: boolean; session: string; ogNumber: number };
+      expect(body.ok).toBe(true);
+      expect(body.ogNumber).toBe(1);
+      expect(body.session).toMatch(/.+\..+/);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it("rejects unknown routes and non-POST methods without leaking", async () => {
+    const { service } = makeService();
+    const srv = await startAuthServer({ service });
+    try {
+      expect((await fetch(`${srv.url}/nope`, { method: "POST" })).status).toBe(404);
+      expect((await fetch(`${srv.url}/auth/verify`, { method: "GET" })).status).toBe(405);
+      const bad = await fetch(`${srv.url}/auth/request`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{not json",
+      });
+      expect(bad.status).toBe(400);
+    } finally {
+      await srv.close();
+    }
   });
 });
