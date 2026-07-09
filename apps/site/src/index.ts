@@ -1,2 +1,10 @@
-// Project site — scaffolded when the publish-service loop starts.
+// Project site + cloud API. Auth is the first cloud surface; more (news, DM,
+// publish) hang off the same store as later loops land.
 export const SITE_NAME = "deskhand";
+
+export { AuthService, AuthStore, ConsoleMailer, normalizeEmail } from "./auth/service.js";
+export type { AuthConfig, Session } from "./auth/service.js";
+export { ResendMailer } from "./auth/mailer.js";
+export type { Mailer } from "./auth/mailer.js";
+export { handleRequestLink, handleVerify } from "./auth/handlers.js";
+export type { HttpResult } from "./auth/handlers.js";
