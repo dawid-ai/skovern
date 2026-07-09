@@ -6,10 +6,13 @@ type Phase = "loading" | "email" | "link" | "in";
 // Accept either the whole magic-link URL or just the bare token.
 function extractToken(input: string): string {
   const trimmed = input.trim();
-  const at = trimmed.indexOf("token=");
-  if (at === -1) return trimmed;
-  const after = trimmed.slice(at + "token=".length);
-  return decodeURIComponent(after.split("&")[0] ?? "");
+  try {
+    const token = new URL(trimmed).searchParams.get("token");
+    if (token) return token;
+  } catch {
+    // not a URL — treat the input as a bare token
+  }
+  return trimmed;
 }
 
 export function App() {
@@ -103,7 +106,7 @@ export function App() {
             <p>
               I sent a sign-in link to <strong>{email}</strong>. Paste it below to finish.
               <br />
-              <span className="hint">(Running it yourself? Copy the link from the server window.)</span>
+              <span className="hint">(Just testing? Your link also shows where Deskhand is running.)</span>
             </p>
             <div className="form">
               <label htmlFor="link">Paste your link</label>

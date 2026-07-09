@@ -19,7 +19,7 @@ const TRUST = { devServerUrl: DEV_SERVER_URL, rendererIndexUrl: RENDERER_INDEX_U
 // The core auth client is the ONLY thing that talks to the cloud API. Local
 // server by default; a hosted URL is injected via env when one exists.
 const API_BASE = process.env["DESKHAND_API_URL"] ?? "http://127.0.0.1:8787";
-const CANT_REACH = "Couldn't reach the server. Is it running?";
+const CANT_REACH = "Couldn't connect right now. Try again in a moment.";
 
 // ponytail: placeholder 16x16 orange square until the real icon exists
 const TRAY_ICON_DATA_URL =

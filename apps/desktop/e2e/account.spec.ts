@@ -68,7 +68,18 @@ test("sign in end to end and stay signed in across a restart", async () => {
     const page2 = await app2.firstWindow();
     await expect(page2.getByRole("heading", { name: /founding user #1/i })).toBeVisible();
     await expect(page2.getByLabel("Your email")).toHaveCount(0);
+
+    // --- sign out clears the persisted session ---
+    await page2.getByRole("button", { name: "Sign out" }).click();
+    await expect(page2.getByLabel("Your email")).toBeVisible();
     await app2.close();
+
+    // --- relaunch after sign-out: prompted again, not signed in ---
+    const app3 = await electron.launch(launchOpts);
+    const page3 = await app3.firstWindow();
+    await expect(page3.getByLabel("Your email")).toBeVisible();
+    await expect(page3.getByRole("heading", { name: /founding user #1/i })).toHaveCount(0);
+    await app3.close();
   } finally {
     rmSync(userDataDir, { recursive: true, force: true });
   }
