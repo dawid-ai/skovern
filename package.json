@@ -1,0 +1,24 @@
+{
+  "name": "deskhand",
+  "private": true,
+  "version": "0.0.1",
+  "description": "A local-first AI assistant for small businesses. Buttons, not terminals.",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "typecheck": "pnpm -r typecheck",
+    "lint": "eslint .",
+    "test": "pnpm -r test"
+  },
+  "devDependencies": {
+    "eslint": "^10.6.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.63.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["electron", "esbuild"]
+  }
+}

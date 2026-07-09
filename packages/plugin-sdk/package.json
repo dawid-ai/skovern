@@ -1,0 +1,11 @@
+{
+  "name": "@deskhand/plugin-sdk",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Build skills for Deskhand. MIT licensed — your plugins are yours, no strings.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}

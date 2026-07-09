@@ -1,0 +1,4 @@
+#!/bin/sh
+# Deskhand pre-commit guard. Blocks secrets/junk before they reach the public repo.
+# Enabled once per clone with:  git config core.hooksPath .githooks
+node scripts/check-secrets.mjs || exit 1

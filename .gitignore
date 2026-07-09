@@ -1,0 +1,16 @@
+node_modules/
+dist/
+out/
+coverage/
+*.log
+.env
+.env.*
+.DS_Store
+Thumbs.db
+test-results/
+playwright-report/
+
+# Loop machinery is version-controlled privately in the HQ repo, not here
+.claude/
+docs/loop.md
+docs/loops/

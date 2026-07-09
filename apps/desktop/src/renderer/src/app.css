@@ -1,0 +1,98 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --accent: #e87a2e;
+  --ink: #2b2620;
+  --paper: #faf6f1;
+  --muted: #8a8178;
+}
+
+body {
+  font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+.home {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.card {
+  max-width: 460px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: center;
+}
+
+.mark {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  font-size: 20px;
+  display: grid;
+  place-items: center;
+  letter-spacing: 0.5px;
+}
+
+h1 {
+  font-size: 26px;
+  line-height: 1.2;
+}
+
+p {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  margin-top: 8px;
+}
+
+.actions button {
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: 1px solid #e5ddd3;
+  background: #fff;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--ink);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.75;
+}
+
+.actions button span {
+  font-size: 11px;
+  color: var(--muted);
+  border: 1px solid #e5ddd3;
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+footer {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
