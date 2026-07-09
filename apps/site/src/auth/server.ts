@@ -65,6 +65,11 @@ export function startAuthServer(opts: { service: AuthService; port?: number }): 
     })();
   });
 
+  // Don't let a slow/half-open client tie up a socket forever (slowloris).
+  server.requestTimeout = 10_000;
+  // A socket-level error must never crash the process.
+  server.on("error", (err) => console.error("[auth-server] socket error:", err.message));
+
   return new Promise((resolve) => {
     server.listen(opts.port ?? 0, "127.0.0.1", () => {
       const { port } = server.address() as AddressInfo;

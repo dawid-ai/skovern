@@ -17,6 +17,18 @@ export class ConsoleMailer implements Mailer {
   }
 }
 
+/**
+ * Dev-only mailer for the standalone server: prints the FULL magic link so you
+ * can copy it into the app. This is the dev *delivery* channel (it replaces
+ * email, like Rails/Django console mail) — never wired in a real deployment,
+ * where ResendMailer sends and nothing logs the link.
+ */
+export class DevLinkMailer implements Mailer {
+  async send(to: string, url: string): Promise<void> {
+    console.log(`\n  Sign-in link for ${to}:\n  ${url}\n`);
+  }
+}
+
 /** Prod mailer — Resend HTTP API (no SDK dependency; uses global fetch). */
 export class ResendMailer implements Mailer {
   constructor(

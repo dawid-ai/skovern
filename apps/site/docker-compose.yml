@@ -1,0 +1,17 @@
+# Local dev Postgres for the auth server. `pnpm --filter @deskhand/site db:up`.
+# Password is a well-known dev-only default — never used in a real deployment.
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: deskhand
+      POSTGRES_PASSWORD: deskhand
+      POSTGRES_DB: deskhand
+    # Host port 5442 (not the crowded 5432) to avoid clashing with other local DBs.
+    ports:
+      - "5442:5432"
+    volumes:
+      - deskhand-pgdata:/var/lib/postgresql/data
+
+volumes:
+  deskhand-pgdata:
