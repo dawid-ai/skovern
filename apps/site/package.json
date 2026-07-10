@@ -7,7 +7,7 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "scripts": {
-    "dev": "tsx src/server/main.ts",
+    "dev": "node --env-file-if-exists=.env --import tsx src/server/main.ts",
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
     "typecheck": "tsc --noEmit",
