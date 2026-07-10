@@ -5,6 +5,7 @@ import type { AuthService } from "./service.js";
 import { handleAdminNews, handleNews } from "../news/handlers.js";
 import type { NewsStore } from "../news/store.js";
 import { handleAdminDm, handleDm, type DmDeps } from "../dm/handlers.js";
+import { handlePublish } from "../publish/handlers.js";
 
 // Magic-link payloads are a few hundred bytes; cap hard so a flood can't buffer.
 const MAX_BODY = 4096;
@@ -52,6 +53,10 @@ export function startAuthServer(opts: {
   dm?: DmDeps;
   /** Guards the founder admin surface (DM thread, news publish). Null = off. */
   adminToken?: string | null;
+  /** Absolute public base (e.g. https://deskhand.app) for og:image URLs. When
+   *  set it wins over the request Host header, so a spoofed Host/proto can't be
+   *  reflected into published pages. */
+  publicOrigin?: string;
   port?: number;
 }): Promise<RunningServer> {
   const adminToken = opts.adminToken ?? null;
@@ -66,6 +71,21 @@ export function startAuthServer(opts: {
             return send(res, { status: 405, body: { ok: false, message: "Use GET." } });
           }
           return send(res, await handleNews(opts.news));
+        }
+        // Public published pages + OG cards, e.g. /u/news/<slug>[/og.svg].
+        if (path.startsWith("/u/") && opts.news) {
+          if (method !== "GET") {
+            return send(res, { status: 405, body: { ok: false, message: "Use GET." } });
+          }
+          // Prefer the configured public origin; only fall back to the (spoofable)
+          // Host header for local dev, honoring a TLS proxy's forwarded scheme.
+          let origin = opts.publicOrigin;
+          if (!origin) {
+            const fwd = req.headers["x-forwarded-proto"];
+            const proto = (Array.isArray(fwd) ? fwd[0] : fwd)?.split(",")[0] ?? "http";
+            origin = `${proto}://${req.headers.host ?? "127.0.0.1"}`;
+          }
+          return send(res, await handlePublish(opts.news, path.split("/").slice(2), origin));
         }
         // Founder DM: read-only admin thread (GET, Basic-auth guarded)…
         if (path === "/admin/dm" && opts.dm) {

@@ -65,11 +65,20 @@ export class NewsStore {
          FROM news_posts
         ORDER BY published_at DESC`,
     );
-    return rows.map((r) => ({
-      slug: r.slug,
-      title: r.title,
-      body: r.body,
-      publishedAt: r.published_at.toISOString(),
-    }));
+    return rows.map(toPost);
   }
+
+  /** One post by slug for its public page, or null. Public columns only. */
+  async getBySlug(slug: string): Promise<NewsPost | null> {
+    const { rows } = await this.pool.query<PostRow>(
+      `SELECT slug, title, body, published_at FROM news_posts WHERE slug = $1`,
+      [slug],
+    );
+    const row = rows[0];
+    return row ? toPost(row) : null;
+  }
+}
+
+function toPost(r: PostRow): NewsPost {
+  return { slug: r.slug, title: r.title, body: r.body, publishedAt: r.published_at.toISOString() };
 }
