@@ -49,12 +49,8 @@ async function main(): Promise<void> {
   const server = await startAuthServer({
     service: auth,
     news,
-    dm: {
-      auth,
-      store: dm,
-      notifier: pickNotifier(),
-      adminToken: process.env["DESKHAND_ADMIN_TOKEN"] ?? null,
-    },
+    dm: { auth, store: dm, notifier: pickNotifier() },
+    adminToken: process.env["DESKHAND_ADMIN_TOKEN"] ?? null,
     port,
   });
   if (!config.appUrl) config.appUrl = server.url;

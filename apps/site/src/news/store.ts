@@ -39,6 +39,25 @@ export class NewsStore {
     }
   }
 
+  /** Publish (or update) a single post from the admin surface. Same upsert as
+   *  the boot seed; publishedAt defaults to now() when the caller omits it. */
+  async publish(post: {
+    slug: string;
+    title: string;
+    body: string;
+    publishedAt?: string;
+  }): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO news_posts (slug, title, body, published_at)
+       VALUES ($1, $2, $3, COALESCE($4::timestamptz, now()))
+       ON CONFLICT (slug) DO UPDATE
+         SET title = EXCLUDED.title,
+             body = EXCLUDED.body,
+             published_at = EXCLUDED.published_at`,
+      [post.slug, post.title, post.body, post.publishedAt ?? null],
+    );
+  }
+
   /** Published posts, newest first. Selects only public columns — never *. */
   async listNews(): Promise<NewsPost[]> {
     const { rows } = await this.pool.query<PostRow>(

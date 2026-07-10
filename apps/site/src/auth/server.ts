@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { AddressInfo } from "node:net";
 import { handleRequestLink, handleVerify, type HttpResult } from "./handlers.js";
 import type { AuthService } from "./service.js";
-import { handleNews } from "../news/handlers.js";
+import { handleAdminNews, handleNews } from "../news/handlers.js";
 import type { NewsStore } from "../news/store.js";
 import { handleAdminDm, handleDm, type DmDeps } from "../dm/handlers.js";
 
@@ -50,8 +50,11 @@ export function startAuthServer(opts: {
   service: AuthService;
   news?: NewsStore;
   dm?: DmDeps;
+  /** Guards the founder admin surface (DM thread, news publish). Null = off. */
+  adminToken?: string | null;
   port?: number;
 }): Promise<RunningServer> {
+  const adminToken = opts.adminToken ?? null;
   const server = createServer((req, res) => {
     void (async () => {
       try {
@@ -69,7 +72,23 @@ export function startAuthServer(opts: {
           if (method !== "GET") {
             return send(res, { status: 405, body: { ok: false, message: "Use GET." } });
           }
-          return send(res, await handleAdminDm(opts.dm, req.headers.authorization ?? null));
+          return send(res, await handleAdminDm(opts.dm, adminToken, req.headers.authorization ?? null));
+        }
+        // Founder news publish (POST, same Basic-auth guard).
+        if (path === "/admin/news" && opts.news) {
+          if (method !== "POST") {
+            return send(res, { status: 405, body: { ok: false, message: "Use POST." } });
+          }
+          let newsBody: unknown;
+          try {
+            newsBody = await readJson(req);
+          } catch {
+            return send(res, { status: 400, body: { ok: false, message: "Bad request." } });
+          }
+          return send(
+            res,
+            await handleAdminNews(opts.news, adminToken, req.headers.authorization ?? null, newsBody),
+          );
         }
         // …and the authenticated send (POST, session bearer token).
         if (path === "/dm" && opts.dm) {

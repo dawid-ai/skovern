@@ -107,5 +107,24 @@ it("guards DM send by session, forwards it, and serves an escaped admin thread",
   expect(html).toContain("&lt;script&gt;"); // escaped
   expect(html).not.toContain("<script>alert(1)</script>"); // never raw
 
+  // 5. admin news publish: wrong token → 401; right token → post appears on /news
+  const badPublish = await fetch(`${base}/admin/news`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: basic("nope") },
+    body: JSON.stringify({ slug: "x", title: "x", body: "x" }),
+  });
+  expect(badPublish.status).toBe(401);
+
+  const published = await fetch(`${base}/admin/news`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: basic(ADMIN_PW) },
+    body: JSON.stringify({ slug: "loop-006", title: "Founder DM is live", body: "Say hi anytime." }),
+  });
+  expect(published.status).toBe(200);
+
+  const feed = await fetch(`${base}/news`);
+  const posts = ((await feed.json()) as { posts: { slug: string }[] }).posts;
+  expect(posts.map((p) => p.slug)).toContain("loop-006");
+
   child.kill("SIGTERM");
 });

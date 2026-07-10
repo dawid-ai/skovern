@@ -1,6 +1,6 @@
 import type { HttpResult } from "../auth/handlers.js";
+import { requireAdmin } from "../auth/admin.js";
 import type { AuthService } from "../auth/service.js";
-import { secretMatches, sha256 } from "../auth/tokens.js";
 import type { DmStore } from "./store.js";
 import type { Notifier } from "./notifier.js";
 
@@ -12,8 +12,6 @@ export interface DmDeps {
   auth: AuthService;
   store: DmStore;
   notifier: Notifier;
-  /** From env; null disables the admin surface entirely. */
-  adminToken: string | null;
 }
 
 function readString(body: unknown, key: string): string | null {
@@ -60,32 +58,15 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => HTML_ESCAPES[c] ?? c);
 }
 
-/** Extract the password from an `Authorization: Basic base64(user:pass)` header. */
-function basicPassword(header: string | null): string | null {
-  if (!header?.startsWith("Basic ")) return null;
-  try {
-    const decoded = Buffer.from(header.slice(6), "base64").toString("utf8");
-    const colon = decoded.indexOf(":");
-    return colon < 0 ? decoded : decoded.slice(colon + 1);
-  } catch {
-    return null;
-  }
-}
-
-const UNAUTHORIZED: HttpResult = {
-  status: 401,
-  body: "Unauthorized",
-  contentType: "text/plain",
-  headers: { "www-authenticate": 'Basic realm="Deskhand admin"' },
-};
-
 /** GET /admin/dm — the founder reads the thread. Basic-auth token guarded.
  *  Read-only this loop; replying is out-of-band (the founder has the email). */
-export async function handleAdminDm(deps: DmDeps, authHeader: string | null): Promise<HttpResult> {
-  // No admin token configured → the surface simply doesn't exist.
-  if (!deps.adminToken) return UNAUTHORIZED;
-  const provided = basicPassword(authHeader);
-  if (!provided || !secretMatches(provided, sha256(deps.adminToken))) return UNAUTHORIZED;
+export async function handleAdminDm(
+  deps: DmDeps,
+  adminToken: string | null,
+  authHeader: string | null,
+): Promise<HttpResult> {
+  const denied = requireAdmin(adminToken, authHeader);
+  if (denied) return denied;
 
   const messages = await deps.store.list();
   const rows = messages
