@@ -41,6 +41,23 @@ feature, not a finished one.
 - The bar: after `pnpm --filter @deskhand/site dev` + `pnpm --filter
   @deskhand/desktop dev`, a person can click to the new thing and it works.
 
+## UI information architecture (mandatory)
+
+Every feature gets its **own place, properly named and correctly located** — not
+another block piled onto whatever page exists. Do NOT dump features onto one
+screen.
+
+- The app has a real shell: a persistent navigation (sidebar/menu) and dedicated
+  pages/views. A new user-facing feature ships as its **own page/section** reached
+  from the nav, named in florist language ("Messages", "What's new", "Settings").
+- When you add a feature, decide where it belongs in the IA first. If it doesn't
+  fit an existing home, it gets a new, well-labeled one — never a bolt-on to an
+  unrelated page.
+- Placement, naming, and grouping are part of "done." A working feature in the
+  wrong place, or crammed next to unrelated things, is not done.
+- Layout/visual quality matters: use the `frontend-design` skill for new surfaces;
+  match the existing design language.
+
 ## Code rules
 
 - TypeScript strict everywhere. No `any` without a `// why:` comment.
