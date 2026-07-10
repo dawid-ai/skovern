@@ -56,6 +56,11 @@ async function main(): Promise<void> {
   });
   if (!config.appUrl) config.appUrl = server.url;
   console.log(`[auth-server] listening on ${server.url}`);
+  console.log(
+    process.env["DESKHAND_ADMIN_TOKEN"]
+      ? `[auth-server] admin inbox: ${server.url}/admin/dm — log in with ANY username and your DESKHAND_ADMIN_TOKEN as the password`
+      : `[auth-server] admin inbox DISABLED — set DESKHAND_ADMIN_TOKEN before starting to enable /admin/dm`,
+  );
 
   let shuttingDown = false;
   const shutdown = (): void => {
