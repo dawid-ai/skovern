@@ -150,11 +150,19 @@ export function runPlugin(deps: RunPluginDeps, input: string): Promise<RunSkillR
         return;
       }
       inflight++;
-      // capability is an untrusted string; the broker denies anything the manifest
-      // didn't grant, so the cast can't widen what actually runs.
-      const resp = await broker.handle({ id: msg.reqId, capability: msg.capability as Capability, arg: msg.arg });
-      inflight--;
-      post({ type: "cap-result", reqId: msg.reqId, ok: resp.ok, result: resp.result, error: resp.error });
+      try {
+        // capability is an untrusted string; the broker denies anything the manifest
+        // didn't grant, so the cast can't widen what actually runs.
+        const resp = await broker.handle({ id: msg.reqId, capability: msg.capability as Capability, arg: msg.arg });
+        post({ type: "cap-result", reqId: msg.reqId, ok: resp.ok, result: resp.result, error: resp.error });
+      } catch {
+        // broker.handle rejects only if the fail-closed egress receipt couldn't be
+        // written (disk full / EACCES). Egress stayed blocked; tell the child cleanly
+        // instead of leaking an unhandled rejection and hanging it until timeout.
+        post({ type: "cap-result", reqId: msg.reqId, ok: false, error: "That skill's request couldn't be completed." });
+      } finally {
+        inflight--;
+      }
     }
   });
 }

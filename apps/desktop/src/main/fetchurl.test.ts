@@ -39,6 +39,11 @@ describe("fetchUrl SSRF guard (production: loopback off)", () => {
     ["loopback 127.x", "https://127.0.0.1/"],
     ["unspecified 0.0.0.0", "https://0.0.0.0/"],
     ["IPv6 loopback", "https://[::1]/"],
+    ["IPv4-mapped loopback (dotted)", "https://[::ffff:127.0.0.1]/"],
+    ["IPv4-mapped loopback (hex, URL-canonical)", "https://[::ffff:7f00:1]/"],
+    ["IPv4-mapped metadata", "https://[::ffff:169.254.169.254]/"],
+    ["IPv6 link-local", "https://[fe80::1]/"],
+    ["IPv6 ULA", "https://[fc00::1]/"],
   ])("rejects %s (resolved private/loopback/link-local)", async (_name, url) => {
     await expect(fetchUrl(url)).rejects.toThrow();
   });

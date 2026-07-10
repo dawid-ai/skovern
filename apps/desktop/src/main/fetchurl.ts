@@ -34,33 +34,34 @@ function isEncodedIpv4(rawHost: string): boolean {
   return false;
 }
 
-function toParts(ip: string): number[] {
-  return ip.split(".").map((n) => parseInt(n, 10));
-}
-
 // Block the ranges a skill has no business reaching from an "internet" grant:
 // loopback, private, link-local (incl. the 169.254.169.254 cloud-metadata trap),
-// unspecified, and IPv6 equivalents (ULA, link-local, IPv4-mapped).
+// unspecified, CGNAT, and the IPv6 equivalents. Built on stdlib net.BlockList so the
+// fiddly IP math — CIDR boundaries AND IPv4-mapped IPv6 in every serialization
+// (::ffff:7f00:1, ::ffff:127.0.0.1) — is handled correctly, not hand-rolled.
+function buildBlockList(): net.BlockList {
+  const bl = new net.BlockList();
+  bl.addSubnet("0.0.0.0", 8, "ipv4"); // unspecified / "this network"
+  bl.addSubnet("10.0.0.0", 8, "ipv4");
+  bl.addSubnet("100.64.0.0", 10, "ipv4"); // CGNAT
+  bl.addSubnet("127.0.0.0", 8, "ipv4"); // loopback
+  bl.addSubnet("169.254.0.0", 16, "ipv4"); // link-local + metadata (169.254.169.254)
+  bl.addSubnet("172.16.0.0", 12, "ipv4");
+  bl.addSubnet("192.168.0.0", 16, "ipv4");
+  bl.addAddress("::1", "ipv6"); // loopback
+  bl.addAddress("::", "ipv6"); // unspecified
+  bl.addSubnet("fe80::", 10, "ipv6"); // link-local
+  bl.addSubnet("fc00::", 7, "ipv6"); // ULA
+  bl.addSubnet("64:ff9b::", 96, "ipv6"); // NAT64 (embeds a v4 target) — block wholesale
+  // IPv4-mapped (::ffff:0:0/96) needs no rule: BlockList checks it against the v4 rules.
+  return bl;
+}
+const BLOCKED = buildBlockList();
+
 function isBlockedIp(ip: string): boolean {
   const kind = net.isIP(ip);
-  if (kind === 4) {
-    const [a, b] = toParts(ip);
-    if (a === 0 || a === 127 || a === 10) return true;
-    if (a === 172 && b! >= 16 && b! <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 169 && b === 254) return true; // link-local + metadata
-    if (a === 100 && b! >= 64 && b! <= 127) return true; // CGNAT
-    return false;
-  }
-  if (kind === 6) {
-    const v = ip.toLowerCase();
-    if (v === "::1" || v === "::") return true;
-    if (v.startsWith("fe80") || v.startsWith("fc") || v.startsWith("fd")) return true; // link-local + ULA
-    const mapped = v.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/); // IPv4-mapped
-    if (mapped) return isBlockedIp(mapped[1]!);
-    return false;
-  }
-  return true; // not a recognizable IP → refuse rather than guess
+  if (kind === 0) return true; // not a recognizable IP → refuse rather than guess
+  return BLOCKED.check(ip, kind === 6 ? "ipv6" : "ipv4");
 }
 
 export function createFetchUrl(opts: FetchUrlOptions = {}): (url: string) => Promise<string> {
