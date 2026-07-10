@@ -85,6 +85,9 @@ export function App() {
     setEmail("");
     setLink("");
     setNotice("");
+    setNews(null); // force a fresh fetch on next sign-in, not a stale feed
+    setDmText("");
+    setDmNotice("");
     setPhase("email");
   }
 
