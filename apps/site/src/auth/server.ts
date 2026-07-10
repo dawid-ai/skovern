@@ -5,6 +5,7 @@ import type { AuthService } from "./service.js";
 import { handleAdminNews, handleNews } from "../news/handlers.js";
 import type { NewsStore } from "../news/store.js";
 import { handleAdminDm, handleDm, type DmDeps } from "../dm/handlers.js";
+import { handlePublish } from "../publish/handlers.js";
 
 // Magic-link payloads are a few hundred bytes; cap hard so a flood can't buffer.
 const MAX_BODY = 4096;
@@ -66,6 +67,17 @@ export function startAuthServer(opts: {
             return send(res, { status: 405, body: { ok: false, message: "Use GET." } });
           }
           return send(res, await handleNews(opts.news));
+        }
+        // Public published pages + OG cards, e.g. /u/news/<slug>[/og.svg].
+        if (path.startsWith("/u/") && opts.news) {
+          if (method !== "GET") {
+            return send(res, { status: 405, body: { ok: false, message: "Use GET." } });
+          }
+          // Honor a TLS-terminating proxy's scheme so og:image is absolute+https.
+          const fwd = req.headers["x-forwarded-proto"];
+          const proto = (Array.isArray(fwd) ? fwd[0] : fwd)?.split(",")[0] ?? "http";
+          const origin = `${proto}://${req.headers.host ?? "127.0.0.1"}`;
+          return send(res, await handlePublish(opts.news, path.split("/").slice(2), origin));
         }
         // Founder DM: read-only admin thread (GET, Basic-auth guarded)…
         if (path === "/admin/dm" && opts.dm) {

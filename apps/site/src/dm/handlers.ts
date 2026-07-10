@@ -1,5 +1,6 @@
 import type { HttpResult } from "../auth/handlers.js";
 import { requireAdmin } from "../auth/admin.js";
+import { escapeHtml } from "../html.js";
 import type { AuthService } from "../auth/service.js";
 import type { DmStore } from "./store.js";
 import type { Notifier } from "./notifier.js";
@@ -44,18 +45,6 @@ export async function handleDm(
     console.error("[dm] forward failed (message saved):", (err as Error).message);
   }
   return { status: 200, body: { ok: true, message: "Got it — Dawid will see this. Thanks!" } };
-}
-
-const HTML_ESCAPES: Record<string, string> = {
-  "&": "&amp;",
-  "<": "&lt;",
-  ">": "&gt;",
-  '"': "&quot;",
-  "'": "&#39;",
-};
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => HTML_ESCAPES[c] ?? c);
 }
 
 /** GET /admin/dm — the founder reads the thread. Basic-auth token guarded.
