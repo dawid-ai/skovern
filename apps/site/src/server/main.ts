@@ -51,6 +51,7 @@ async function main(): Promise<void> {
     news,
     dm: { auth, store: dm, notifier: pickNotifier() },
     adminToken: process.env["DESKHAND_ADMIN_TOKEN"] ?? null,
+    publicOrigin: process.env["APP_URL"] || undefined,
     port,
   });
   if (!config.appUrl) config.appUrl = server.url;

@@ -71,6 +71,10 @@ it("serves published pages with OG cards and sanitizes hostile bodies", async ()
   expect(missing.status).toBe(404);
   expect(missing.headers.get("content-type")).toMatch(/text\/html/);
 
+  // 2b. a malformed %-escape in the slug is a clean 404, not a 500
+  const malformed = await fetch(`${base}/u/news/%`);
+  expect(malformed.status).toBe(404);
+
   // 3. the OG image endpoint returns an image
   const og = await fetch(`${base}/u/news/${SLUG}/og.svg`);
   expect(og.status).toBe(200);

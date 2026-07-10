@@ -32,7 +32,13 @@ export async function handlePublish(
   const [type, id, sub] = parts;
   if (type !== "news" || !id) return NOT_FOUND;
 
-  const slug = decodeURIComponent(id);
+  let slug: string;
+  try {
+    slug = decodeURIComponent(id);
+  } catch {
+    // A malformed %-escape is just a bad URL → 404, not a 500.
+    return NOT_FOUND;
+  }
   const post = await news.getBySlug(slug);
   if (!post) return NOT_FOUND;
 
