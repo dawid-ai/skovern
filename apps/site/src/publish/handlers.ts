@@ -48,7 +48,9 @@ export async function handlePublish(
       status: 200,
       body: renderOgImage(post),
       contentType: "image/svg+xml",
-      headers: { "x-content-type-options": "nosniff" },
+      // nosniff + a locked CSP: even if the SVG is opened as a document, nothing
+      // can execute. Defense-in-depth for when the renderer gains richer tags.
+      headers: { "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'" },
     };
   }
   if (sub === undefined) {
