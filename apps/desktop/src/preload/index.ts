@@ -3,6 +3,7 @@ import type { AppInfo } from "@deskhand/core";
 import type { CurrentAccount, RequestResult, VerifyResult } from "../shared/account.js";
 import type { DmSendResult, DmThreadView, NewsPostView } from "../shared/cloud.js";
 import type { BrainStatusView, SaveBrainInput, SaveBrainResult, TestBrainResult } from "../shared/brain.js";
+import type { RunSkillResult, SandboxCheckResult, SkillView } from "../shared/plugin.js";
 
 const api = {
   getAppInfo: (): Promise<AppInfo> => ipcRenderer.invoke("app:info") as Promise<AppInfo>,
@@ -30,6 +31,12 @@ const api = {
     save: (input: SaveBrainInput): Promise<SaveBrainResult> =>
       ipcRenderer.invoke("brain:save", input) as Promise<SaveBrainResult>,
     test: (): Promise<TestBrainResult> => ipcRenderer.invoke("brain:test") as Promise<TestBrainResult>,
+  },
+  plugins: {
+    list: (): Promise<SkillView[]> => ipcRenderer.invoke("plugin:list") as Promise<SkillView[]>,
+    run: (id: string): Promise<RunSkillResult> => ipcRenderer.invoke("plugin:run", id) as Promise<RunSkillResult>,
+    sandboxCheck: (): Promise<SandboxCheckResult> =>
+      ipcRenderer.invoke("plugin:sandboxCheck") as Promise<SandboxCheckResult>,
   },
 };
 

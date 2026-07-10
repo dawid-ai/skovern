@@ -13,13 +13,17 @@ import {
   type Provider,
   type ProviderId,
 } from "@deskhand/core";
+import { explainCapability } from "@deskhand/plugin-sdk";
 import { registerTrusted } from "./ipc.js";
 import { clearSession, loadSession, saveSession } from "./session.js";
 import { brainStatus, loadBrain, saveBrain } from "./keys.js";
 import { fileReceiptSink } from "./receipts.js";
+import { runPlugin, sandboxCheck } from "./plugin-host.js";
+import { helloManifest } from "../plugins/hello/manifest.js";
 import type { CurrentAccount, RequestResult, VerifyResult } from "../shared/account.js";
 import type { DmSendResult, DmThreadView, NewsPostView } from "../shared/cloud.js";
 import type { BrainStatusView, SaveBrainResult, TestBrainResult } from "../shared/brain.js";
+import type { RunSkillResult, SandboxCheckResult, SkillView } from "../shared/plugin.js";
 
 const { autoUpdater } = electronUpdater;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -42,6 +46,16 @@ const BRAIN_BASE = {
   anthropic: app.isPackaged ? undefined : process.env["DESKHAND_ANTHROPIC_BASE_URL"],
 };
 const CANT_REACH = "Couldn't connect right now. Try again in a moment.";
+
+// Skills: the bundled fixtures for v1. Loopback + a mock target are dev/test seams
+// (mirror of DEV_SERVER_URL) — a shipped app is https-only and reaches real pages.
+const SKILLS = [helloManifest];
+const PLUGIN_ALLOW_LOOPBACK = !app.isPackaged && process.env["DESKHAND_PLUGIN_ALLOW_LOOPBACK"] === "1";
+const HELLO_URL = (!app.isPackaged && process.env["DESKHAND_HELLO_URL"]) || "https://example.com";
+
+// The fixture uses only `fetch`; a brain-using skill rides in later, so this stub
+// just refuses. A skill can't reach it anyway unless its manifest declared `brain`.
+const noBrain = { generate: () => Promise.reject(new Error("no brain configured")) };
 
 // ponytail: placeholder 16x16 orange square until the real icon exists
 const TRAY_ICON_DATA_URL =
@@ -266,6 +280,32 @@ app
         return { ok: false, message: "Your brain didn't answer. Check the key and try again." };
       }
     });
+
+    // Skills. `list` shows each skill's permission card (exactly what the broker
+    // enforces); `run` executes it in the sandboxed host; `sandboxCheck` proves the
+    // lockdown on the real utilityProcess.
+    registerTrusted(TRUST, "plugin:list", (): SkillView[] =>
+      SKILLS.map((m) => ({
+        id: m.id,
+        name: m.name,
+        description: m.description,
+        permissions: m.capabilities.map(explainCapability),
+      })),
+    );
+
+    registerTrusted(TRUST, "plugin:run", async (rawId: unknown): Promise<RunSkillResult> => {
+      const id = typeof rawId === "string" ? rawId : "";
+      const manifest = SKILLS.find((m) => m.id === id);
+      if (!manifest) return { ok: false, message: "That skill isn't here." };
+      const input = manifest.id === "hello" ? HELLO_URL : "";
+      try {
+        return await runPlugin({ manifest, brain: noBrain, allowLoopback: PLUGIN_ALLOW_LOOPBACK }, input);
+      } catch {
+        return { ok: false, message: "That skill couldn't run." };
+      }
+    });
+
+    registerTrusted(TRUST, "plugin:sandboxCheck", (): Promise<SandboxCheckResult> => sandboxCheck());
 
     createWindow();
     try {

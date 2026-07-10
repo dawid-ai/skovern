@@ -2,17 +2,19 @@ import { useCallback, useEffect, useState } from "react";
 import type { DmThreadView } from "../../shared/cloud.js";
 import { NewsPage } from "./pages/NewsPage.js";
 import { MessagesPage } from "./pages/MessagesPage.js";
+import { SkillsPage } from "./pages/SkillsPage.js";
 import { SettingsPage } from "./pages/SettingsPage.js";
 
 // The signed-in app shell: a persistent left nav + a main area that shows one
 // dedicated page at a time. New features become new nav items + pages here —
 // never another block piled onto an existing page (CLAUDE.md UI IA rule).
 
-type Page = "news" | "messages" | "settings";
+type Page = "news" | "messages" | "skills" | "settings";
 
 const NAV: { id: Page; label: string }[] = [
   { id: "news", label: "What's new" },
   { id: "messages", label: "Messages" },
+  { id: "skills", label: "Skills" },
   { id: "settings", label: "Settings" },
 ];
 
@@ -79,6 +81,7 @@ export function Shell({ ogNumber, onSignOut }: { ogNumber: number | null; onSign
       <main className="content">
         {page === "news" && <NewsPage />}
         {page === "messages" && <MessagesPage messages={thread.messages} onChanged={onChanged} />}
+        {page === "skills" && <SkillsPage />}
         {page === "settings" && <SettingsPage />}
       </main>
     </div>
