@@ -28,7 +28,7 @@ describe("fetchUrl SSRF guard (production: loopback off)", () => {
   const fetchUrl = createFetchUrl({ allowLoopback: false });
 
   it("rejects non-https", async () => {
-    await expect(fetchUrl("http://example.com/")).rejects.toThrow();
+    await expect(fetchUrl("http://example.com/")).rejects.toThrow("unsafe-scheme");
   });
 
   it.each([
@@ -45,7 +45,9 @@ describe("fetchUrl SSRF guard (production: loopback off)", () => {
     ["IPv6 link-local", "https://[fe80::1]/"],
     ["IPv6 ULA", "https://[fc00::1]/"],
   ])("rejects %s (resolved private/loopback/link-local)", async (_name, url) => {
-    await expect(fetchUrl(url)).rejects.toThrow();
+    // Assert the RANGE rejection specifically — a bare toThrow() would also pass on a
+    // real connection error, which is exactly how the IPv4-mapped bypass (F1) hid.
+    await expect(fetchUrl(url)).rejects.toThrow("blocked-ip");
   });
 
   it.each([
@@ -54,12 +56,13 @@ describe("fetchUrl SSRF guard (production: loopback off)", () => {
     ["octal-encoded", "https://0177.0.0.1/"],
     ["shorthand", "https://127.1/"],
   ])("rejects %s IP", async (_name, url) => {
-    await expect(fetchUrl(url)).rejects.toThrow();
+    // These encoded spellings normalize (via WHATWG URL) to 127.0.0.1 → range-blocked.
+    await expect(fetchUrl(url)).rejects.toThrow("blocked-ip");
   });
 
   it("blocks loopback even over https when loopback is off", async () => {
     const { port } = mock.address() as AddressInfo;
-    await expect(fetchUrl(`https://127.0.0.1:${port}/`)).rejects.toThrow();
+    await expect(fetchUrl(`https://127.0.0.1:${port}/`)).rejects.toThrow("blocked-ip");
   });
 });
 
