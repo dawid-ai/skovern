@@ -151,6 +151,14 @@ it("guards DM send by session, forwards it, and serves an escaped admin thread",
   });
   expect([302, 303]).toContain(reply.status);
 
+  // 7b. CSRF: a cross-origin reply, even with valid admin creds, is rejected.
+  const csrf = await fetch(`${base}/admin/dm/reply`, {
+    method: "POST",
+    headers: { ...formHeaders, authorization: basic(ADMIN_PW), origin: "https://evil.example" },
+    body: replyForm,
+  });
+  expect(csrf.status).toBe(403);
+
   // 8. the reply shows up in the user's thread as a founder message; unread now 1
   const t2 = (await (await fetch(`${base}/dm/thread`, { headers: bearer })).json()) as Thread;
   expect(t2.messages.some((m) => m.sender === "founder" && m.body === "Thanks for reaching out!")).toBe(true);

@@ -62,6 +62,23 @@ function bearer(req: IncomingMessage): string | null {
   return header?.startsWith("Bearer ") ? header.slice(7) : null;
 }
 
+// CSRF guard for the Basic-auth admin POSTs. Basic auth is ambient (the browser
+// re-sends cached creds), so a cross-origin form could ride them. A browser
+// ALWAYS sends Origin on a cross-origin POST, so: if Origin/Referer is present
+// it must match our host; a request with neither is a non-browser client
+// (curl/server) and can't be a CSRF vector. Bearer-token routes don't need this.
+function sameOriginOk(req: IncomingMessage): boolean {
+  const source = req.headers.origin ?? req.headers.referer;
+  if (!source) return true;
+  try {
+    return new URL(source).host === req.headers.host;
+  } catch {
+    return false;
+  }
+}
+
+const BAD_ORIGIN: HttpResult = { status: 403, body: { ok: false, message: "Bad origin." } };
+
 export function startAuthServer(opts: {
   service: AuthService;
   news?: NewsStore;
@@ -114,6 +131,7 @@ export function startAuthServer(opts: {
           if (method !== "POST") {
             return send(res, { status: 405, body: { ok: false, message: "Use POST." } });
           }
+          if (!sameOriginOk(req)) return send(res, BAD_ORIGIN);
           let form: URLSearchParams;
           try {
             form = await readForm(req);
@@ -130,6 +148,7 @@ export function startAuthServer(opts: {
           if (method !== "POST") {
             return send(res, { status: 405, body: { ok: false, message: "Use POST." } });
           }
+          if (!sameOriginOk(req)) return send(res, BAD_ORIGIN);
           let newsBody: unknown;
           try {
             newsBody = await readJson(req);
