@@ -34,6 +34,11 @@ export async function handleAdminNews(
     return { status: 400, body: { ok: false, message: "slug, title and body are required." } };
   }
   const publishedAt = readString(body, "publishedAt") ?? undefined;
+  // Validate before it hits `$4::timestamptz` — a bad date should 400, not
+  // throw a generic 500 from Postgres.
+  if (publishedAt !== undefined && Number.isNaN(Date.parse(publishedAt))) {
+    return { status: 400, body: { ok: false, message: "publishedAt must be a date." } };
+  }
   await store.publish({ slug, title, body: postBody, publishedAt });
   return { status: 200, body: { ok: true, slug } };
 }
