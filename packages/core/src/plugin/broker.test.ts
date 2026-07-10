@@ -123,6 +123,45 @@ describe("permission broker", () => {
     expect(sink.receipts).toHaveLength(0);
   });
 
+  it("allows a loopback fetch (dev/test seam), and refuses an invalid address without egress", async () => {
+    const sink = fetchSink();
+    const fetchUrl = vi.fn(async () => "local page");
+    const broker = createBroker({
+      manifest: manifest(["fetch"]),
+      brain: fakeRouter("x"),
+      fetchUrl,
+      fetchSink: sink,
+      now: FIXED,
+    });
+
+    // loopback (incl. IPv6 [::1]) is permitted
+    expect((await broker.handle(req("fetch", "http://127.0.0.1:8080/x"))).ok).toBe(true);
+    expect((await broker.handle(req("fetch", "http://[::1]:8080/x"))).ok).toBe(true);
+    expect(fetchUrl).toHaveBeenCalledTimes(2);
+
+    // a non-URL string is refused before any egress
+    fetchUrl.mockClear();
+    const bad = await broker.handle(req("fetch", "not a url"));
+    expect(bad.ok).toBe(false);
+    expect(fetchUrl).not.toHaveBeenCalled();
+  });
+
+  it("still returns the page if only the finalize (done) receipt write fails", async () => {
+    let n = 0;
+    const fetchUrl = vi.fn(async () => "page body");
+    const broker = createBroker({
+      manifest: manifest(["fetch"]),
+      brain: fakeRouter("x"),
+      fetchUrl,
+      // throw on the 2nd append (the "done" finalize) — egress is already
+      // receipted by the "sent" line, so the user must still get their answer
+      fetchSink: { append: () => { if (++n === 2) throw new Error("late write"); } },
+      now: FIXED,
+    });
+    const res = await broker.handle(req("fetch", "https://example.com"));
+    expect(res).toMatchObject({ ok: true, result: "page body" });
+  });
+
   it("surfaces a generic error when the brain fails (no provider detail leaks)", async () => {
     const brain: Router = { generate: vi.fn(async () => { throw new Error("sk-key-boom"); }) };
     const broker = createBroker({

@@ -37,6 +37,13 @@ function deny(id: number, error: string): CapabilityResponse {
   return { id, ok: false, error };
 }
 
+// Compile-time exhaustiveness: if a new Capability is added to the union and NOT
+// wired into the dispatch below, this fails typecheck — a security-critical
+// capability can never silently fall through to the wrong handler.
+function assertNever(x: never): never {
+  throw new Error(`unhandled capability: ${String(x)}`);
+}
+
 export function createBroker(deps: BrokerDeps): Broker {
   const { manifest, brain, fetchUrl, fetchSink } = deps;
   const clock = deps.now ?? (() => new Date());
@@ -46,8 +53,9 @@ export function createBroker(deps: BrokerDeps): Broker {
     let host: string;
     try {
       const u = new URL(req.arg);
+      // WHATWG URL keeps IPv6 hosts bracketed, so loopback v6 is "[::1]".
       const loopback =
-        u.hostname === "127.0.0.1" || u.hostname === "localhost" || u.hostname === "::1";
+        u.hostname === "127.0.0.1" || u.hostname === "localhost" || u.hostname === "[::1]";
       if (u.protocol !== "https:" && !loopback) {
         return deny(req.id, "That skill tried to use an unsafe web address.");
       }
@@ -95,16 +103,21 @@ export function createBroker(deps: BrokerDeps): Broker {
         return deny(req.id, "That skill didn't ask for permission to do that.");
       }
 
-      if (req.capability === "brain") {
-        try {
-          const { text } = await brain.generate({ task: `skill:${manifest.id}`, prompt: req.arg });
-          return { id: req.id, ok: true, result: text };
-        } catch {
-          return deny(req.id, "The brain couldn't answer just now.");
-        }
+      switch (req.capability) {
+        case "brain":
+          try {
+            const { text } = await brain.generate({ task: `skill:${manifest.id}`, prompt: req.arg });
+            return { id: req.id, ok: true, result: text };
+          } catch {
+            return deny(req.id, "The brain couldn't answer just now.");
+          }
+        case "fetch":
+          return handleFetch(req);
+        default:
+          // Unreachable at runtime (undeclared caps are denied above); this exists
+          // so adding a capability without wiring it here fails typecheck.
+          return assertNever(req.capability);
       }
-
-      return handleFetch(req);
     },
   };
 }
