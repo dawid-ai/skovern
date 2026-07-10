@@ -42,6 +42,13 @@ export function createRouter(config: RouterConfig): Router {
       if (!provider) throw new Error(`provider "${id}" is not configured`);
 
       const bytesSent = bytes(input.prompt);
+      const base = { provider: id, model: provider.model, task: input.task, bytesSent };
+
+      // Record the egress BEFORE it happens. This append is awaited and NOT
+      // swallowed: if it throws, we reject here and the provider is never
+      // called — so a byte cannot leave the machine without a durable receipt.
+      await sink.append({ ...base, ts: clock().toISOString(), bytesReceived: 0, ok: false, phase: "sent" });
+
       let text: string | null = null;
       let failed = false;
       try {
@@ -52,19 +59,21 @@ export function createRouter(config: RouterConfig): Router {
         failed = true;
       }
 
-      // Always record the attempt — success OR failure. Awaited and NOT
-      // swallowed: if the append throws, generate() rejects here, so a caller
-      // can never receive model text without a receipt reaching the log first.
+      // Finalize with the outcome. Best-effort: the "sent" receipt already made
+      // the egress non-repudiable, so a failed finalize write must not deny the
+      // user their answer.
       const receipt: Receipt = {
+        ...base,
         ts: clock().toISOString(),
-        provider: id,
-        model: provider.model,
-        task: input.task,
-        bytesSent,
         bytesReceived: bytes(text ?? ""),
         ok: !failed,
+        phase: "done",
       };
-      await sink.append(receipt);
+      try {
+        await sink.append(receipt);
+      } catch {
+        // egress already receipted by the "sent" line
+      }
 
       if (failed || text === null) throw new Error(`brain "${id}" failed`);
       return { text, provider: id, model: provider.model, receipt };

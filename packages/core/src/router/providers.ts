@@ -17,10 +17,22 @@ export interface ProviderOptions {
 
 const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
 
+// Security note (contract §): provider calls are https only. A base URL override
+// exists for self-hosted proxies + tests, but it may not downgrade a real egress
+// to plaintext — only https, or a loopback host (the dev/test mock), is allowed.
+function assertSafeBaseUrl(baseURL: string): void {
+  const u = new URL(baseURL);
+  const loopback = u.hostname === "127.0.0.1" || u.hostname === "localhost" || u.hostname === "::1";
+  if (u.protocol !== "https:" && !loopback) {
+    throw new Error("brain base URL must be https");
+  }
+}
+
 /** OpenRouter — one key, every model. It's OpenAI-compatible, so we drive it
  *  through the OpenAI adapter pointed at OpenRouter's base URL. */
 export function openRouterProvider(opts: ProviderOptions): Provider {
   const model = opts.model ?? "anthropic/claude-3.5-haiku";
+  if (opts.baseURL) assertSafeBaseUrl(opts.baseURL);
   const openrouter = createOpenAI({
     apiKey: opts.apiKey,
     baseURL: opts.baseURL ?? OPENROUTER_BASE,
@@ -40,6 +52,7 @@ export function openRouterProvider(opts: ProviderOptions): Provider {
 /** Anthropic — a native BYO key, to prove the router isn't single-provider. */
 export function anthropicProvider(opts: ProviderOptions): Provider {
   const model = opts.model ?? "claude-3-5-haiku-latest";
+  if (opts.baseURL) assertSafeBaseUrl(opts.baseURL);
   const anthropic = createAnthropic({
     apiKey: opts.apiKey,
     ...(opts.baseURL ? { baseURL: opts.baseURL } : {}),

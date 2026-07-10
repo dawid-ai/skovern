@@ -15,7 +15,11 @@ export interface Provider {
 }
 
 /** One line in the "what left your machine" log. Metadata only — never the
- *  prompt/response body, never the API key. */
+ *  prompt/response body, never the API key.
+ *
+ *  Two are written per call: a `"sent"` receipt BEFORE the request leaves (so
+ *  egress can't happen without a durable record — fail-closed), then a `"done"`
+ *  receipt with the outcome after the reply comes back. */
 export interface Receipt {
   /** ISO timestamp. */
   ts: string;
@@ -24,8 +28,11 @@ export interface Receipt {
   /** Plain-English label for what this call was for ("Test my brain"). */
   task: string;
   bytesSent: number;
+  /** 0 on the `"sent"` receipt; the reply size on the `"done"` receipt. */
   bytesReceived: number;
   ok: boolean;
+  /** `"sent"` = recorded before egress; `"done"` = the outcome. */
+  phase: "sent" | "done";
 }
 
 /** Where receipts go. Append-only. Injected, so core stays Electron-agnostic
