@@ -103,6 +103,9 @@ importers:
       '@ai-sdk/openai':
         specifier: ^2.0.0
         version: 2.0.110(zod@4.4.3)
+      '@deskhand/plugin-sdk':
+        specifier: workspace:*
+        version: link:../plugin-sdk
       ai:
         specifier: ^5.0.0
         version: 5.0.210(zod@4.4.3)
@@ -114,7 +117,11 @@ importers:
         specifier: ^4.1.10
         version: 4.1.10(@opentelemetry/api@1.9.0)(@types/node@26.1.1)(vite@8.1.4(@types/node@26.1.1)(esbuild@0.28.1)(tsx@4.23.0)(yaml@2.9.0))
 
-  packages/plugin-sdk: {}
+  packages/plugin-sdk:
+    devDependencies:
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@opentelemetry/api@1.9.0)(@types/node@26.1.1)(vite@8.1.4(@types/node@26.1.1)(esbuild@0.28.1)(tsx@4.23.0)(yaml@2.9.0))
 
 packages:
 

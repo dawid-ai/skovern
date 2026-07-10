@@ -5,7 +5,13 @@
   "description": "Build skills for Deskhand. MIT licensed — your plugins are yours, no strings.",
   "license": "MIT",
   "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.10"
   }
 }
