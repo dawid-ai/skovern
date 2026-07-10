@@ -13,6 +13,7 @@
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.0",
     "@ai-sdk/openai": "^2.0.0",
+    "@deskhand/plugin-sdk": "workspace:*",
     "ai": "^5.0.0"
   },
   "devDependencies": {

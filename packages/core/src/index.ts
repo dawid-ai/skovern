@@ -31,3 +31,7 @@ export type {
   GenerateInput,
   GenerateResult,
 } from "./router/types.js";
+
+export { createBroker } from "./plugin/broker.js";
+export type { Broker, BrokerDeps } from "./plugin/broker.js";
+export type { FetchReceipt, FetchSink } from "./plugin/receipt.js";
