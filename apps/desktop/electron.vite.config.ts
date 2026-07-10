@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { defineConfig, externalizeDepsPlugin } from "electron-vite";
 import react from "@vitejs/plugin-react";
 import type { Plugin } from "vite";
@@ -30,8 +31,24 @@ function injectCsp(policy: string, apply: "build" | "serve"): Plugin {
 
 export default defineConfig({
   main: {
-    // @deskhand/core is workspace TS source — bundle it instead of externalizing
-    plugins: [externalizeDepsPlugin({ exclude: ["@deskhand/core"] })],
+    // @deskhand/core + plugin-sdk are workspace TS source — bundle, don't externalize
+    plugins: [externalizeDepsPlugin({ exclude: ["@deskhand/core", "@deskhand/plugin-sdk"] })],
+    build: {
+      rollupOptions: {
+        // Second entry: the sandboxed child. Emitted as a fully-bundled .mjs (no bare
+        // imports) so it loads under the Permission Model reading only its own entry.
+        input: {
+          index: resolve(__dirname, "src/main/index.ts"),
+          "plugin-child": resolve(__dirname, "src/plugin-child/index.ts"),
+        },
+        output: {
+          entryFileNames: (chunk) => (chunk.name === "plugin-child" ? "plugin-child.mjs" : "[name].js"),
+          // .mjs so the sandboxed child's code (entry + shared chunks) is ESM by
+          // extension — no package.json walk that the Permission Model would deny.
+          chunkFileNames: "chunks/[name].mjs",
+        },
+      },
+    },
   },
   preload: {
     plugins: [externalizeDepsPlugin()],
