@@ -17,3 +17,17 @@ export { createNewsClient } from "./news/client.js";
 export type { NewsClient, NewsPost } from "./news/client.js";
 export { createDmClient } from "./dm/client.js";
 export type { DmClient, DmResult, Thread, ThreadMessage, Sender } from "./dm/client.js";
+
+export { createRouter } from "./router/router.js";
+export type { RouterConfig } from "./router/router.js";
+export { openRouterProvider, anthropicProvider } from "./router/providers.js";
+export type { ProviderOptions } from "./router/providers.js";
+export type {
+  Router,
+  Provider,
+  ProviderId,
+  Receipt,
+  ReceiptSink,
+  GenerateInput,
+  GenerateResult,
+} from "./router/types.js";

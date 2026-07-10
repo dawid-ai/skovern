@@ -115,9 +115,45 @@ p {
   color: var(--ink);
 }
 
-.form input:focus {
+.form input:focus,
+.form select:focus {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+.form select {
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid #e5ddd3;
+  background: #fff;
+  font-size: 15px;
+  font-family: inherit;
+  color: var(--ink);
+}
+
+.row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.brain-reply {
+  background: #f4efe8;
+  border: 1px solid #e5ddd3;
+  border-radius: 12px;
+  padding: 10px 14px;
+  width: 100%;
+}
+
+.brain-reply .who {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.receipt {
+  font-size: 12px;
+  color: var(--muted);
 }
 
 button.primary {
