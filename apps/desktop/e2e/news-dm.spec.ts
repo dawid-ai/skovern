@@ -100,6 +100,13 @@ test("signed-in user sees the news and can message the founder", async () => {
         { timeout: 15_000 },
       )
       .toBe(1);
+
+    // 6. nav is persistent and round-trips: it's still here on the Messages page,
+    //    and clicking "What's new" returns to the feed (composer gone again).
+    await expect(page.getByRole("button", { name: "What's new" })).toBeVisible();
+    await page.getByRole("button", { name: "What's new" }).click();
+    await expect(page.getByRole("heading", { name: POSTS[0]!.title })).toBeVisible();
+    await expect(page.getByLabel("Your message")).toHaveCount(0);
   } finally {
     await app.close();
     rmSync(userDataDir, { recursive: true, force: true });
