@@ -60,13 +60,13 @@ test("sign in end to end and stay signed in across a restart", async () => {
     await page.getByLabel("Paste your link").fill(magicLink);
     await page.getByRole("button", { name: "Verify" }).click();
 
-    await expect(page.getByRole("heading", { name: /founding user #1/i })).toBeVisible();
+    await expect(page.getByText(/founding user #1/i)).toBeVisible();
     await app.close();
 
     // --- relaunch: session persisted, no re-prompt ---
     const app2 = await electron.launch(launchOpts);
     const page2 = await app2.firstWindow();
-    await expect(page2.getByRole("heading", { name: /founding user #1/i })).toBeVisible();
+    await expect(page2.getByText(/founding user #1/i)).toBeVisible();
     await expect(page2.getByLabel("Your email")).toHaveCount(0);
 
     // --- sign out clears the persisted session ---
@@ -78,7 +78,7 @@ test("sign in end to end and stay signed in across a restart", async () => {
     const app3 = await electron.launch(launchOpts);
     const page3 = await app3.firstWindow();
     await expect(page3.getByLabel("Your email")).toBeVisible();
-    await expect(page3.getByRole("heading", { name: /founding user #1/i })).toHaveCount(0);
+    await expect(page3.getByText(/founding user #1/i)).toHaveCount(0);
     await app3.close();
   } finally {
     rmSync(userDataDir, { recursive: true, force: true });

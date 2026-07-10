@@ -162,31 +162,127 @@ button.link {
   width: 100%;
 }
 
-.news,
-.dm {
-  width: 100%;
-  text-align: left;
-  border-top: 1px solid #ece4d9;
-  padding-top: 16px;
+/* --- signed-in app shell: persistent nav + one dedicated page at a time --- */
+.shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 216px 1fr;
 }
 
-.news h2,
-.dm h2 {
+.sidebar {
+  background: #f2ebe1;
+  border-right: 1px solid #e5ddd3;
+  padding: 20px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 4px;
+}
+
+.brand .mark {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+.brand-name {
+  font-weight: 700;
   font-size: 15px;
-  margin-bottom: 8px;
+}
+
+.nav {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nav-item {
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.nav-item:hover {
+  background: #ece4d9;
+}
+
+.nav-item.active {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.sidebar-foot {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 0 4px;
+}
+
+.og-badge {
+  font-size: 12px;
+  color: var(--accent);
+  font-weight: 600;
+  background: #fff2e6;
+  border: 1px solid #f2d3b3;
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+
+.content {
+  padding: 44px 48px;
+  overflow-y: auto;
+  max-height: 100vh;
+}
+
+.page {
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.page-head h1 {
+  font-size: 24px;
+  margin-bottom: 4px;
+}
+
+.page-head p {
+  font-size: 14px;
+}
+
+.page .form {
+  margin-top: 0;
 }
 
 .news-list {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
 }
 
 .news-list h3 {
   font-size: 15px;
   color: var(--ink);
-  margin-bottom: 2px;
+  margin-bottom: 3px;
 }
 
 .news-list p {
@@ -194,7 +290,7 @@ button.link {
   white-space: pre-line;
 }
 
-.dm textarea {
+.form textarea {
   padding: 12px 14px;
   border-radius: 12px;
   border: 1px solid #e5ddd3;
@@ -205,7 +301,7 @@ button.link {
   resize: vertical;
 }
 
-.dm textarea:focus {
+.form textarea:focus {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }

@@ -68,20 +68,26 @@ test("signed-in user sees the news and can message the founder", async () => {
     await expect.poll(() => mailer.sent.length, { timeout: 30_000 }).toBeGreaterThan(0);
     await page.getByLabel("Paste your link").fill(mailer.sent[mailer.sent.length - 1]!.url);
     await page.getByRole("button", { name: "Verify" }).click();
-    await expect(page.getByRole("heading", { name: /founding user #1/i })).toBeVisible();
+    await expect(page.getByText(/founding user #1/i)).toBeVisible();
 
-    // 1. the seeded news feed is visible in the app
+    // 1. default page is "What's new": the seeded feed shows, the composer does NOT
     await expect(page.getByRole("heading", { name: POSTS[0]!.title })).toBeVisible();
+    await expect(page.getByLabel("Your message")).toHaveCount(0);
 
-    // 2. send a message to the founder
+    // 2. navigate to Messages: composer shows, the news feed does NOT (separate pages)
+    await page.getByRole("button", { name: "Messages" }).click();
+    await expect(page.getByLabel("Your message")).toBeVisible();
+    await expect(page.getByRole("heading", { name: POSTS[0]!.title })).toHaveCount(0);
+
+    // 3. send a message to the founder
     const message = "Hi Dawid — the florist test says this app is friendly!";
     await page.getByLabel("Your message").fill(message);
     await page.getByRole("button", { name: "Send" }).click();
 
-    // 3. on-screen confirmation
+    // 4. on-screen confirmation
     await expect(page.getByText(/Dawid will see this/i)).toBeVisible();
 
-    // 4. it actually landed server-side (UI is wired to the real backend)
+    // 5. it actually landed server-side (UI is wired to the real backend)
     await expect
       .poll(
         async () => {
@@ -94,6 +100,13 @@ test("signed-in user sees the news and can message the founder", async () => {
         { timeout: 15_000 },
       )
       .toBe(1);
+
+    // 6. nav is persistent and round-trips: it's still here on the Messages page,
+    //    and clicking "What's new" returns to the feed (composer gone again).
+    await expect(page.getByRole("button", { name: "What's new" })).toBeVisible();
+    await page.getByRole("button", { name: "What's new" }).click();
+    await expect(page.getByRole("heading", { name: POSTS[0]!.title })).toBeVisible();
+    await expect(page.getByLabel("Your message")).toHaveCount(0);
   } finally {
     await app.close();
     rmSync(userDataDir, { recursive: true, force: true });
