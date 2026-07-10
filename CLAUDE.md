@@ -22,6 +22,25 @@ Every feature runs SPEC → BUILD → VERIFY → SECURE. No stage skipped.
 
 Maker ≠ checker, always. If you built it, you don't verify it.
 
+## Ship full-stack, hand-validatable (mandatory)
+
+A feature is not done when its backend endpoint passes a test. It is done when
+Dawid can **launch the local server + the desktop app and use it by hand**.
+Every feature with a user-facing surface ships its **frontend in the same loop
+as its backend** — an API with no way to reach it in the app is an unfinished
+feature, not a finished one.
+
+- If a loop adds a server capability the user should see or trigger (news, DM,
+  a result, a setting), the desktop UI for it ships in that same loop. No
+  "backend now, UI later."
+- The loop metric for such a feature MUST include an **app-level end-to-end
+  check** that drives the real Electron UI against the real server (the
+  `apps/desktop/e2e/*.spec.ts` Playwright harness), not just an HTTP test.
+- Pure-web surfaces (e.g. published `/u/...` pages) are hand-validated by opening
+  the URL; that still counts as a usable frontend.
+- The bar: after `pnpm --filter @deskhand/site dev` + `pnpm --filter
+  @deskhand/desktop dev`, a person can click to the new thing and it works.
+
 ## Code rules
 
 - TypeScript strict everywhere. No `any` without a `// why:` comment.
