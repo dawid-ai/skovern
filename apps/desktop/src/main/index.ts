@@ -230,6 +230,9 @@ app
       const key = typeof input.key === "string" ? input.key.trim() : "";
       const model = typeof input.model === "string" && input.model.trim() ? input.model.trim() : undefined;
       if (!key) return { ok: false, message: "Paste your key first." };
+      // No real API key is this long — cap it so a bad/compromised renderer can't
+      // write a multi-MB blob into the keychain file.
+      if (key.length > 8192) return { ok: false, message: "That doesn't look like a key." };
       try {
         saveBrain({ provider, key, model });
         return { ok: true, message: "Brain saved." };
