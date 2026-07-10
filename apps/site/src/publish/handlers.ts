@@ -3,8 +3,9 @@ import type { NewsStore } from "../news/store.js";
 import { renderOgImage, renderPostPage } from "./render.js";
 
 // Public, no-auth pages for published artifacts. First (only) content type is
-// `news`; the shape /u/:type/:id generalizes to other artifacts later.
-// `origin` is built by the server from the request host so og:image is absolute.
+// `news`; the shape /u/:type/:id generalizes to other artifacts later. `origin`
+// is the absolute public base (configured APP_URL, else the request host) so
+// og:image is absolute.
 
 const NOT_FOUND: HttpResult = {
   status: 404,
