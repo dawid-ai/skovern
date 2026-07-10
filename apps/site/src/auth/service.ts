@@ -57,6 +57,14 @@ export class AuthService {
     await this.mailer.send(email, url);
   }
 
+  /** Resolve a bearer session token to its account (id + email), or null if
+   *  it's not a live session. Used to guard authenticated routes (e.g. DM). */
+  async validateSession(fullToken: string): Promise<{ accountId: string; email: string } | null> {
+    const parsed = parseToken(fullToken);
+    if (!parsed) return null;
+    return this.store.validateSession(parsed.id, parsed.secret);
+  }
+
   /** Redeem a magic link: create/find the account and issue a session. */
   async verifyMagicLink(fullToken: string): Promise<Session | null> {
     const parsed = parseToken(fullToken);

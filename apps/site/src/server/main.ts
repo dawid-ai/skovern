@@ -5,6 +5,8 @@ import { AuthStore } from "../auth/store.js";
 import { startAuthServer } from "../auth/server.js";
 import { NewsStore } from "../news/store.js";
 import { POSTS } from "../news/posts.js";
+import { DmStore } from "../dm/store.js";
+import { pickNotifier } from "../dm/notifier.js";
 
 // Defaults match docker-compose.yml so `pnpm dev` works right after `db:up`.
 const DEFAULT_DATABASE_URL = "postgres://deskhand:deskhand@localhost:5442/deskhand";
@@ -25,10 +27,12 @@ async function main(): Promise<void> {
   const pool = new pg.Pool({ connectionString: databaseUrl });
 
   const news = new NewsStore(pool);
+  const dm = new DmStore(pool);
   try {
     await new AuthStore(pool).migrate();
     await news.migrate();
     await news.syncPosts(POSTS);
+    await dm.migrate();
   } catch (err) {
     console.error(
       `[auth-server] can't reach the database at ${databaseUrl.replace(/:[^:@/]*@/, ":***@")}.\n` +
@@ -41,9 +45,16 @@ async function main(): Promise<void> {
   // AuthService reads config.appUrl lazily, so we can fill it from the real
   // bound URL after listening — correct even when PORT=0 picks an ephemeral port.
   const config = { appUrl: process.env["APP_URL"] ?? "" };
+  const auth = new AuthService(new AuthStore(pool), pickMailer(), config);
   const server = await startAuthServer({
-    service: new AuthService(new AuthStore(pool), pickMailer(), config),
+    service: auth,
     news,
+    dm: {
+      auth,
+      store: dm,
+      notifier: pickNotifier(),
+      adminToken: process.env["DESKHAND_ADMIN_TOKEN"] ?? null,
+    },
     port,
   });
   if (!config.appUrl) config.appUrl = server.url;

@@ -140,4 +140,26 @@ export class AuthStore {
       [session.id, session.secretHash, accountId, String(ttlDays)],
     );
   }
+
+  /**
+   * Resolve a session token to its account id if it's live (found, unexpired,
+   * secret matches). Same constant-time discipline as consumeMagicToken: the
+   * compare always runs, against a dummy hash on a miss, so timing never
+   * reveals whether the session id existed.
+   */
+  async validateSession(
+    id: string,
+    secret: string,
+  ): Promise<{ accountId: string; email: string } | null> {
+    const found = await this.pool.query<{ secret_hash: string; account_id: string; email: string }>(
+      `SELECT s.secret_hash, s.account_id, a.email
+         FROM sessions s JOIN accounts a ON a.id = s.account_id
+        WHERE s.id = $1 AND s.expires_at > now()`,
+      [id],
+    );
+    const row = found.rows[0];
+    const ok = secretMatches(secret, row?.secret_hash ?? DUMMY_SECRET_HASH);
+    if (!row || !ok) return null;
+    return { accountId: row.account_id, email: row.email };
+  }
 }

@@ -4,6 +4,7 @@ import { handleRequestLink, handleVerify, type HttpResult } from "./handlers.js"
 import type { AuthService } from "./service.js";
 import { handleNews } from "../news/handlers.js";
 import type { NewsStore } from "../news/store.js";
+import { handleAdminDm, handleDm, type DmDeps } from "../dm/handlers.js";
 
 // Magic-link payloads are a few hundred bytes; cap hard so a flood can't buffer.
 const MAX_BODY = 4096;
@@ -22,8 +23,11 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
 }
 
 function send(res: ServerResponse, result: HttpResult): void {
-  res.writeHead(result.status, { "content-type": "application/json" });
-  res.end(JSON.stringify(result.body));
+  const contentType = result.contentType ?? "application/json";
+  res.writeHead(result.status, { "content-type": contentType, ...result.headers });
+  const payload =
+    contentType === "application/json" ? JSON.stringify(result.body) : String(result.body);
+  res.end(payload);
 }
 
 export interface RunningServer {
@@ -37,9 +41,15 @@ export interface RunningServer {
  * loop-002 handlers at POST /auth/request and /auth/verify. Returned as a
  * factory so tests (and a future dev runner) can start it in-process.
  */
+function bearer(req: IncomingMessage): string | null {
+  const header = req.headers.authorization;
+  return header?.startsWith("Bearer ") ? header.slice(7) : null;
+}
+
 export function startAuthServer(opts: {
   service: AuthService;
   news?: NewsStore;
+  dm?: DmDeps;
   port?: number;
 }): Promise<RunningServer> {
   const server = createServer((req, res) => {
@@ -53,6 +63,26 @@ export function startAuthServer(opts: {
             return send(res, { status: 405, body: { ok: false, message: "Use GET." } });
           }
           return send(res, await handleNews(opts.news));
+        }
+        // Founder DM: read-only admin thread (GET, Basic-auth guarded)…
+        if (path === "/admin/dm" && opts.dm) {
+          if (method !== "GET") {
+            return send(res, { status: 405, body: { ok: false, message: "Use GET." } });
+          }
+          return send(res, await handleAdminDm(opts.dm, req.headers.authorization ?? null));
+        }
+        // …and the authenticated send (POST, session bearer token).
+        if (path === "/dm" && opts.dm) {
+          if (method !== "POST") {
+            return send(res, { status: 405, body: { ok: false, message: "Use POST." } });
+          }
+          let dmBody: unknown;
+          try {
+            dmBody = await readJson(req);
+          } catch {
+            return send(res, { status: 400, body: { ok: false, message: "Bad request." } });
+          }
+          return send(res, await handleDm(opts.dm, bearer(req), dmBody));
         }
         if (path !== "/auth/request" && path !== "/auth/verify") {
           return send(res, { status: 404, body: { ok: false, message: "Not found." } });

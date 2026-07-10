@@ -1,0 +1,111 @@
+import { type ChildProcess, spawn } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
+import { afterAll, beforeAll, expect, it } from "vitest";
+
+// Metric for loop 006: boot the REAL entrypoint and prove the founder-DM path
+// end to end — session-guarded send, out-of-band forward, token-guarded admin
+// thread, and HTML escaping of stored message bodies.
+
+const mainPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "main.ts");
+const ADMIN_PW = "dm-loop-test-pw";
+
+let container: StartedPostgreSqlContainer;
+let child: ChildProcess;
+let output = "";
+
+beforeAll(async () => {
+  container = await new PostgreSqlContainer("postgres:17-alpine").start();
+});
+
+afterAll(async () => {
+  child?.kill();
+  await container?.stop();
+});
+
+async function waitFor(re: RegExp, label: string, timeoutMs = 30_000): Promise<RegExpMatchArray> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const m = output.match(re);
+    if (m) return m;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(`timed out waiting for ${label}. Server output so far:\n${output}`);
+}
+
+function basic(password: string): string {
+  return "Basic " + Buffer.from(`admin:${password}`).toString("base64");
+}
+
+async function signIn(base: string, email: string): Promise<string> {
+  await fetch(`${base}/auth/request`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  const link = await waitFor(
+    new RegExp(`Sign-in link for ${email.replace(/[.@]/g, "\\$&")}:\\s*(\\S+)`),
+    "printed magic link",
+  );
+  const token = new URL(link[1]!).searchParams.get("token")!;
+  const res = await fetch(`${base}/auth/verify`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+  return ((await res.json()) as { session: string }).session;
+}
+
+it("guards DM send by session, forwards it, and serves an escaped admin thread", async () => {
+  child = spawn(process.execPath, ["--import", "tsx", mainPath], {
+    env: {
+      ...process.env,
+      DATABASE_URL: container.getConnectionUri(),
+      PORT: "0",
+      RESEND_API_KEY: "",
+      DESKHAND_ADMIN_PW: ADMIN_PW,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  child.stdout?.on("data", (d: Buffer) => (output += d.toString()));
+  child.stderr?.on("data", (d: Buffer) => (output += d.toString()));
+
+  const listening = await waitFor(/listening on (http:\/\/127\.0\.0\.1:\d+)/, "listening line");
+  const base = listening[1]!;
+
+  // 1. no session → 401
+  const anon = await fetch(`${base}/dm`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ message: "hi" }),
+  });
+  expect(anon.status).toBe(401);
+
+  // 2. sign in, then POST /dm with the session → 200, and the forward fires
+  const session = await signIn(base, "florist@shop.test");
+  const hostileBody = "please help <script>alert(1)</script>";
+  const sent = await fetch(`${base}/dm`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${session}` },
+    body: JSON.stringify({ message: hostileBody }),
+  });
+  expect(sent.status).toBe(200);
+  // the forward channel (ConsoleNotifier in this env) was called with the body
+  await waitFor(/\[dm\] new message.*please help <script>/, "forward log line");
+
+  // 3. admin thread: wrong token → 401
+  const wrong = await fetch(`${base}/admin/dm`, { headers: { authorization: basic("nope") } });
+  expect(wrong.status).toBe(401);
+
+  // 4. admin thread: right token → 200 HTML containing the message, ESCAPED
+  const ok = await fetch(`${base}/admin/dm`, { headers: { authorization: basic(ADMIN_PW) } });
+  expect(ok.status).toBe(200);
+  expect(ok.headers.get("content-type")).toMatch(/text\/html/);
+  const html = await ok.text();
+  expect(html).toContain("florist@shop.test");
+  expect(html).toContain("&lt;script&gt;"); // escaped
+  expect(html).not.toContain("<script>alert(1)</script>"); // never raw
+
+  child.kill("SIGTERM");
+});
