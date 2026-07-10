@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { AppInfo } from "@deskhand/core";
 import type { CurrentAccount, RequestResult, VerifyResult } from "../shared/account.js";
 import type { DmSendResult, DmThreadView, NewsPostView } from "../shared/cloud.js";
+import type { BrainStatusView, SaveBrainInput, SaveBrainResult, TestBrainResult } from "../shared/brain.js";
 
 const api = {
   getAppInfo: (): Promise<AppInfo> => ipcRenderer.invoke("app:info") as Promise<AppInfo>,
@@ -22,6 +23,13 @@ const api = {
       ipcRenderer.invoke("dm:send", message) as Promise<DmSendResult>,
     thread: (): Promise<DmThreadView> => ipcRenderer.invoke("dm:thread") as Promise<DmThreadView>,
     read: (): Promise<void> => ipcRenderer.invoke("dm:read") as Promise<void>,
+  },
+  brain: {
+    status: (): Promise<BrainStatusView> =>
+      ipcRenderer.invoke("brain:status") as Promise<BrainStatusView>,
+    save: (input: SaveBrainInput): Promise<SaveBrainResult> =>
+      ipcRenderer.invoke("brain:save", input) as Promise<SaveBrainResult>,
+    test: (): Promise<TestBrainResult> => ipcRenderer.invoke("brain:test") as Promise<TestBrainResult>,
   },
 };
 

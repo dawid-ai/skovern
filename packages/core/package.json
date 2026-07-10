@@ -10,6 +10,11 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^2.0.0",
+    "@ai-sdk/openai": "^2.0.0",
+    "ai": "^5.0.0"
+  },
   "devDependencies": {
     "@types/node": "^26.1.1",
     "vitest": "^4.1.10"

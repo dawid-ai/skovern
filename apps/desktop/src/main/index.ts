@@ -2,11 +2,24 @@ import { app, BrowserWindow, Menu, Tray, nativeImage } from "electron";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import electronUpdater from "electron-updater";
-import { createAccountClient, createDmClient, createNewsClient, getAppInfo } from "@deskhand/core";
+import {
+  anthropicProvider,
+  createAccountClient,
+  createDmClient,
+  createNewsClient,
+  createRouter,
+  getAppInfo,
+  openRouterProvider,
+  type Provider,
+  type ProviderId,
+} from "@deskhand/core";
 import { registerTrusted } from "./ipc.js";
 import { clearSession, loadSession, saveSession } from "./session.js";
+import { brainStatus, loadBrain, saveBrain } from "./keys.js";
+import { fileReceiptSink } from "./receipts.js";
 import type { CurrentAccount, RequestResult, VerifyResult } from "../shared/account.js";
 import type { DmSendResult, DmThreadView, NewsPostView } from "../shared/cloud.js";
+import type { BrainStatusView, SaveBrainResult, TestBrainResult } from "../shared/brain.js";
 
 const { autoUpdater } = electronUpdater;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -196,6 +209,58 @@ app
         await dm.markRead(session.token);
       } catch {
         // best-effort; the badge just lingers until the next successful mark
+      }
+    });
+
+    // Brain (model router). The key lives in the keychain (keys.ts) and never
+    // leaves main; the renderer only picks a brain and sees the result + receipt.
+    registerTrusted(TRUST, "brain:status", (): BrainStatusView => brainStatus());
+
+    registerTrusted(TRUST, "brain:save", (raw: unknown): SaveBrainResult => {
+      const input = (raw ?? {}) as { provider?: unknown; key?: unknown; model?: unknown };
+      const provider = input.provider === "anthropic" ? "anthropic" : "openrouter";
+      const key = typeof input.key === "string" ? input.key.trim() : "";
+      const model = typeof input.model === "string" && input.model.trim() ? input.model.trim() : undefined;
+      if (!key) return { ok: false, message: "Paste your key first." };
+      try {
+        saveBrain({ provider, key, model });
+        return { ok: true, message: "Brain saved." };
+      } catch {
+        // safeStorage unavailable — we refuse to write a key in plaintext
+        return { ok: false, message: "Couldn't store the key safely on this computer." };
+      }
+    });
+
+    registerTrusted(TRUST, "brain:test", async (): Promise<TestBrainResult> => {
+      const brain = loadBrain();
+      if (!brain) return { ok: false, message: "Add a brain first, then test it." };
+      try {
+        const provider: Provider =
+          brain.provider === "anthropic"
+            ? anthropicProvider({
+                apiKey: brain.key,
+                model: brain.model,
+                baseURL: process.env["DESKHAND_ANTHROPIC_BASE_URL"],
+              })
+            : openRouterProvider({
+                apiKey: brain.key,
+                model: brain.model,
+                baseURL: process.env["DESKHAND_OPENROUTER_BASE_URL"],
+              });
+        const providers: Partial<Record<ProviderId, Provider>> = {};
+        providers[brain.provider] = provider;
+        const router = createRouter({
+          providers,
+          defaultProvider: brain.provider,
+          sink: fileReceiptSink(),
+        });
+        const { text, receipt } = await router.generate({
+          task: "Test my brain",
+          prompt: "Say a short, friendly hello so I know you're working.",
+        });
+        return { ok: true, message: "Your brain answered!", reply: text, receipt };
+      } catch {
+        return { ok: false, message: "Your brain didn't answer. Check the key and try again." };
       }
     });
 

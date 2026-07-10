@@ -1,6 +1,7 @@
 import type { AppInfo } from "@deskhand/core";
 import type { CurrentAccount, RequestResult, VerifyResult } from "./account.js";
 import type { DmSendResult, DmThreadView, NewsPostView } from "./cloud.js";
+import type { BrainStatusView, SaveBrainInput, SaveBrainResult, TestBrainResult } from "./brain.js";
 
 declare global {
   interface Window {
@@ -19,6 +20,11 @@ declare global {
         send(message: string): Promise<DmSendResult>;
         thread(): Promise<DmThreadView>;
         read(): Promise<void>;
+      };
+      brain: {
+        status(): Promise<BrainStatusView>;
+        save(input: SaveBrainInput): Promise<SaveBrainResult>;
+        test(): Promise<TestBrainResult>;
       };
     };
   }
