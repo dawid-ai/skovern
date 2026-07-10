@@ -1,11 +1,25 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import type { ThreadMessageView } from "../../../shared/cloud.js";
 
-// "Messages" — a direct line to the founder, on its own page. Send-only for now;
-// loop 010 turns this into a two-way thread with history.
-export function MessagesPage() {
+// "Messages" — a two-way conversation with the founder. Messages are polled by
+// the Shell (which owns the unread badge) and passed in; this page renders the
+// thread, marks it read while open, and sends new messages.
+export function MessagesPage({
+  messages,
+  onChanged,
+}: {
+  messages: ThreadMessageView[];
+  onChanged: () => void;
+}) {
   const [text, setText] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+
+  // While this page is open, seeing the thread means it's read — mark it and
+  // refresh so the nav badge clears. Re-runs when new replies arrive.
+  useEffect(() => {
+    void window.deskhand.dm.read().then(onChanged);
+  }, [messages.length, onChanged]);
 
   async function send() {
     setBusy(true);
@@ -13,7 +27,10 @@ export function MessagesPage() {
     const res = await window.deskhand.dm.send(text);
     setBusy(false);
     setNotice(res.message);
-    if (res.ok) setText("");
+    if (res.ok) {
+      setText("");
+      onChanged();
+    }
   }
 
   return (
@@ -23,13 +40,26 @@ export function MessagesPage() {
         <p>A question, an idea, a bug — this goes straight to Dawid, the person building this.</p>
       </header>
 
+      <div className="thread">
+        {messages.length === 0 ? (
+          <p className="hint">No messages yet. Say hi below.</p>
+        ) : (
+          messages.map((m, i) => (
+            <div key={i} className={m.sender === "founder" ? "bubble from-founder" : "bubble from-you"}>
+              <span className="who">{m.sender === "founder" ? "Dawid" : "You"}</span>
+              <p>{m.body}</p>
+            </div>
+          ))
+        )}
+      </div>
+
       <div className="form">
         <textarea
           aria-label="Your message"
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder="Type your message…"
-          rows={4}
+          rows={3}
         />
         <button
           className="primary"

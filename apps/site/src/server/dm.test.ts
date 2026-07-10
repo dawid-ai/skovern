@@ -126,5 +126,40 @@ it("guards DM send by session, forwards it, and serves an escaped admin thread",
   const posts = ((await feed.json()) as { posts: { slug: string }[] }).posts;
   expect(posts.map((p) => p.slug)).toContain("loop-006");
 
+  // 6. two-way chat: the user's own thread shows their message, unread 0
+  const bearer = { authorization: `Bearer ${session}` };
+  type Thread = { messages: { sender: string; body: string }[]; unread: number };
+  const t1 = (await (await fetch(`${base}/dm/thread`, { headers: bearer })).json()) as Thread;
+  expect(t1.messages.some((m) => m.sender === "user")).toBe(true);
+  expect(t1.unread).toBe(0);
+
+  // 7. the founder replies via the admin form endpoint (accountId from the admin HTML)
+  const accountId = /name="accountId" value="([^"]+)"/.exec(html)![1]!;
+  const replyForm = new URLSearchParams({ accountId, body: "Thanks for reaching out!" }).toString();
+  const formHeaders = { "content-type": "application/x-www-form-urlencoded" };
+  const replyBad = await fetch(`${base}/admin/dm/reply`, {
+    method: "POST",
+    headers: { ...formHeaders, authorization: basic("nope") },
+    body: replyForm,
+  });
+  expect(replyBad.status).toBe(401);
+  const reply = await fetch(`${base}/admin/dm/reply`, {
+    method: "POST",
+    headers: { ...formHeaders, authorization: basic(ADMIN_PW) },
+    body: replyForm,
+    redirect: "manual",
+  });
+  expect([302, 303]).toContain(reply.status);
+
+  // 8. the reply shows up in the user's thread as a founder message; unread now 1
+  const t2 = (await (await fetch(`${base}/dm/thread`, { headers: bearer })).json()) as Thread;
+  expect(t2.messages.some((m) => m.sender === "founder" && m.body === "Thanks for reaching out!")).toBe(true);
+  expect(t2.unread).toBe(1);
+
+  // 9. mark read → unread clears
+  expect((await fetch(`${base}/dm/read`, { method: "POST", headers: bearer })).status).toBe(200);
+  const t3 = (await (await fetch(`${base}/dm/thread`, { headers: bearer })).json()) as Thread;
+  expect(t3.unread).toBe(0);
+
   child.kill("SIGTERM");
 });

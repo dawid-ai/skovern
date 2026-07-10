@@ -16,4 +16,4 @@ export type { AccountClient, Session } from "./account/client.js";
 export { createNewsClient } from "./news/client.js";
 export type { NewsClient, NewsPost } from "./news/client.js";
 export { createDmClient } from "./dm/client.js";
-export type { DmClient, DmResult } from "./dm/client.js";
+export type { DmClient, DmResult, Thread, ThreadMessage, Sender } from "./dm/client.js";

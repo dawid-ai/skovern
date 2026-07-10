@@ -1,6 +1,6 @@
 import type { AppInfo } from "@deskhand/core";
 import type { CurrentAccount, RequestResult, VerifyResult } from "./account.js";
-import type { DmSendResult, NewsPostView } from "./cloud.js";
+import type { DmSendResult, DmThreadView, NewsPostView } from "./cloud.js";
 
 declare global {
   interface Window {
@@ -17,6 +17,8 @@ declare global {
       };
       dm: {
         send(message: string): Promise<DmSendResult>;
+        thread(): Promise<DmThreadView>;
+        read(): Promise<void>;
       };
     };
   }
