@@ -16,4 +16,11 @@ describe("plugin sdk", () => {
     const expected: Capability[] = ["brain", "fetch"];
     expect([...CAPABILITIES].sort()).toEqual(expected.sort());
   });
+
+  it("never returns a blank card for an unrecognized permission (JS caller safety)", () => {
+    // a JS caller can pass anything; the card must warn, not go blank
+    const text = explainCapability("totally-unknown" as Capability);
+    expect(text.length).toBeGreaterThan(0);
+    expect(text.toLowerCase()).toMatch(/not.*allow|don't allow|recognize/);
+  });
 });

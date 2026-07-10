@@ -123,27 +123,60 @@ describe("permission broker", () => {
     expect(sink.receipts).toHaveLength(0);
   });
 
-  it("allows a loopback fetch (dev/test seam), and refuses an invalid address without egress", async () => {
-    const sink = fetchSink();
+  it("allows loopback ONLY with the explicit dev/test flag, and refuses an invalid address", async () => {
     const fetchUrl = vi.fn(async () => "local page");
+    const withFlag = createBroker({
+      manifest: manifest(["fetch"]),
+      brain: fakeRouter("x"),
+      fetchUrl,
+      fetchSink: fetchSink(),
+      allowLoopback: true,
+      now: FIXED,
+    });
+
+    // loopback (incl. IPv6 [::1]) is permitted when the flag is set
+    expect((await withFlag.handle(req("fetch", "http://127.0.0.1:8080/x"))).ok).toBe(true);
+    expect((await withFlag.handle(req("fetch", "http://[::1]:8080/x"))).ok).toBe(true);
+    expect(fetchUrl).toHaveBeenCalledTimes(2);
+
+    // a non-URL string is refused before any egress
+    fetchUrl.mockClear();
+    const bad = await withFlag.handle(req("fetch", "not a url"));
+    expect(bad.ok).toBe(false);
+    expect(fetchUrl).not.toHaveBeenCalled();
+  });
+
+  it("refuses plaintext loopback by DEFAULT (no flag) — no reaching local services", async () => {
+    const sink = fetchSink();
+    const fetchUrl = vi.fn();
     const broker = createBroker({
       manifest: manifest(["fetch"]),
       brain: fakeRouter("x"),
       fetchUrl,
       fetchSink: sink,
       now: FIXED,
-    });
-
-    // loopback (incl. IPv6 [::1]) is permitted
-    expect((await broker.handle(req("fetch", "http://127.0.0.1:8080/x"))).ok).toBe(true);
-    expect((await broker.handle(req("fetch", "http://[::1]:8080/x"))).ok).toBe(true);
-    expect(fetchUrl).toHaveBeenCalledTimes(2);
-
-    // a non-URL string is refused before any egress
-    fetchUrl.mockClear();
-    const bad = await broker.handle(req("fetch", "not a url"));
-    expect(bad.ok).toBe(false);
+    }); // allowLoopback omitted → production posture
+    const res = await broker.handle(req("fetch", "http://127.0.0.1:8787/admin"));
+    expect(res.ok).toBe(false);
     expect(fetchUrl).not.toHaveBeenCalled();
+    expect(sink.receipts).toHaveLength(0);
+  });
+
+  it("drops an unknown capability the manifest tries to smuggle in (no dispatch crash)", async () => {
+    const broker = createBroker({
+      // an untrusted manifest declaring a capability the runtime doesn't know
+      manifest: manifest(["brain", "evil" as PluginManifest["capabilities"][number]]),
+      brain: fakeRouter("hi"),
+      fetchUrl: vi.fn(),
+      fetchSink: fetchSink(),
+      now: FIXED,
+    });
+    // the bogus cap was filtered out of `granted`, so requesting it is denied
+    // (and never reaches the exhaustive switch → no assertNever throw)
+    const res = await broker.handle(req("evil", "do harm"));
+    expect(res.ok).toBe(false);
+    // the real declared capability still works
+    expect((await broker.handle(req("brain", "hi"))).ok).toBe(true);
   });
 
   it("still returns the page if only the finalize (done) receipt write fails", async () => {

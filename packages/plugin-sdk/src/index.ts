@@ -56,13 +56,16 @@ export interface CapabilityResponse {
   error?: string;
 }
 
+// `Record<Capability, …>` keeps this exhaustive at compile time (a new capability
+// without a card fails typecheck), while the `??` gives a safe answer if a JS
+// caller passes something outside the union — never a blank permission card.
+const CARDS: Record<Capability, string> = {
+  brain: "Use your assistant's brain to think.",
+  fetch: "Read pages from the internet — you'll see a receipt for each.",
+};
+
 /** The exact sentence the user is shown to approve for each capability. What
  *  they see here is what the broker enforces — no drift. */
 export function explainCapability(c: Capability): string {
-  switch (c) {
-    case "brain":
-      return "Use your assistant's brain to think.";
-    case "fetch":
-      return "Read pages from the internet — you'll see a receipt for each.";
-  }
+  return CARDS[c] ?? "This skill wants a permission we don't recognize — best not to allow it.";
 }

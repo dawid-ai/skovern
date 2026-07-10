@@ -1,8 +1,9 @@
-import type {
-  Capability,
-  CapabilityRequest,
-  CapabilityResponse,
-  PluginManifest,
+import {
+  CAPABILITIES,
+  type Capability,
+  type CapabilityRequest,
+  type CapabilityResponse,
+  type PluginManifest,
 } from "@deskhand/plugin-sdk";
 import type { Router } from "../router/types.js";
 import type { FetchReceipt, FetchSink } from "./receipt.js";
@@ -21,6 +22,10 @@ export interface BrokerDeps {
   fetchUrl: (url: string) => Promise<string>;
   /** `fetch` egress receipts — written to the same log as model receipts. */
   fetchSink: FetchSink;
+  /** Permit plaintext loopback URLs. A DEV/TEST seam ONLY — default false so
+   *  production is https-only and a skill can't reach local services (the core
+   *  server, admin endpoints, a localhost port scan) behind an "internet" grant. */
+  allowLoopback?: boolean;
   now?: () => Date;
 }
 
@@ -47,7 +52,13 @@ function assertNever(x: never): never {
 export function createBroker(deps: BrokerDeps): Broker {
   const { manifest, brain, fetchUrl, fetchSink } = deps;
   const clock = deps.now ?? (() => new Date());
-  const granted = manifest.capabilities;
+  // Snapshot + validate the declared capabilities: drop anything not a known
+  // capability (an untrusted manifest can't smuggle an unhandled cap into the
+  // dispatch), and freeze so later mutation of the caller's array can't widen
+  // what's enforced.
+  const granted: readonly Capability[] = Object.freeze(
+    manifest.capabilities.filter((c) => CAPABILITIES.includes(c)),
+  );
 
   async function handleFetch(req: CapabilityRequest): Promise<CapabilityResponse> {
     let host: string;
@@ -55,7 +66,8 @@ export function createBroker(deps: BrokerDeps): Broker {
       const u = new URL(req.arg);
       // WHATWG URL keeps IPv6 hosts bracketed, so loopback v6 is "[::1]".
       const loopback =
-        u.hostname === "127.0.0.1" || u.hostname === "localhost" || u.hostname === "[::1]";
+        deps.allowLoopback === true &&
+        (u.hostname === "127.0.0.1" || u.hostname === "localhost" || u.hostname === "[::1]");
       if (u.protocol !== "https:" && !loopback) {
         return deny(req.id, "That skill tried to use an unsafe web address.");
       }
@@ -98,6 +110,8 @@ export function createBroker(deps: BrokerDeps): Broker {
     granted,
     async handle(req: CapabilityRequest): Promise<CapabilityResponse> {
       // Treat the whole request as untrusted (it crossed a process boundary).
+      // (Host-side id correlation / response routing is 012b's job.)
+      if (req === null || typeof req !== "object") return deny(-1, "That skill sent something we couldn't read.");
       if (typeof req.arg !== "string") return deny(req.id, "That skill sent something we couldn't read.");
       if (!granted.includes(req.capability)) {
         return deny(req.id, "That skill didn't ask for permission to do that.");
