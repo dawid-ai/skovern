@@ -2,10 +2,11 @@ import { app, BrowserWindow, Menu, Tray, nativeImage } from "electron";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import electronUpdater from "electron-updater";
-import { createAccountClient, getAppInfo } from "@deskhand/core";
+import { createAccountClient, createDmClient, createNewsClient, getAppInfo } from "@deskhand/core";
 import { registerTrusted } from "./ipc.js";
 import { clearSession, loadSession, saveSession } from "./session.js";
 import type { CurrentAccount, RequestResult, VerifyResult } from "../shared/account.js";
+import type { DmSendResult, NewsPostView } from "../shared/cloud.js";
 
 const { autoUpdater } = electronUpdater;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -154,6 +155,28 @@ app
 
     registerTrusted(TRUST, "account:signOut", (): void => {
       clearSession();
+    });
+
+    const news = createNewsClient(API_BASE);
+    registerTrusted(TRUST, "news:list", async (): Promise<NewsPostView[]> => {
+      try {
+        return await news.list();
+      } catch {
+        return [];
+      }
+    });
+
+    const dm = createDmClient(API_BASE);
+    registerTrusted(TRUST, "dm:send", async (rawMessage: unknown): Promise<DmSendResult> => {
+      const message = typeof rawMessage === "string" ? rawMessage : "";
+      // The bearer token stays in main (keychain) — the renderer never holds it.
+      const session = loadSession();
+      if (!session) return { ok: false, message: "Please sign in first." };
+      try {
+        return await dm.send(session.token, message);
+      } catch {
+        return { ok: false, message: CANT_REACH };
+      }
     });
 
     createWindow();

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { AppInfo } from "@deskhand/core";
+import type { NewsPostView } from "../../shared/cloud.js";
 
 type Phase = "loading" | "email" | "link" | "in";
 
@@ -23,6 +24,10 @@ export function App() {
   const [link, setLink] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [news, setNews] = useState<NewsPostView[] | null>(null);
+  const [dmText, setDmText] = useState("");
+  const [dmNotice, setDmNotice] = useState("");
+  const [dmBusy, setDmBusy] = useState(false);
 
   useEffect(() => {
     void window.deskhand.getAppInfo().then(setInfo);
@@ -35,6 +40,22 @@ export function App() {
       }
     });
   }, []);
+
+  // Load the news feed once the user is signed in.
+  useEffect(() => {
+    if (phase === "in" && news === null) {
+      void window.deskhand.news.list().then(setNews);
+    }
+  }, [phase, news]);
+
+  async function sendDm() {
+    setDmBusy(true);
+    setDmNotice("");
+    const res = await window.deskhand.dm.send(dmText);
+    setDmBusy(false);
+    setDmNotice(res.message);
+    if (res.ok) setDmText("");
+  }
 
   async function sendLink() {
     setBusy(true);
@@ -64,6 +85,9 @@ export function App() {
     setEmail("");
     setLink("");
     setNotice("");
+    setNews(null); // force a fresh fetch on next sign-in, not a stale feed
+    setDmText("");
+    setDmNotice("");
     setPhase("email");
   }
 
@@ -135,6 +159,47 @@ export function App() {
           <>
             <h1>You&apos;re founding user #{ogNumber}. Nice.</h1>
             <p>You&apos;re signed in. Your work stays on this computer unless you say otherwise.</p>
+
+            <section className="news">
+              <h2>What&apos;s new</h2>
+              {news === null ? (
+                <p className="hint">Loading the latest…</p>
+              ) : news.length === 0 ? (
+                <p className="hint">Nothing here yet — check back soon.</p>
+              ) : (
+                <ul className="news-list">
+                  {news.map((post) => (
+                    <li key={post.slug}>
+                      <h3>{post.title}</h3>
+                      <p>{post.body}</p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            <section className="dm">
+              <h2>Message the founder</h2>
+              <p>A question, an idea, a bug — this goes straight to Dawid, the person building this.</p>
+              <div className="form">
+                <textarea
+                  aria-label="Your message"
+                  value={dmText}
+                  onChange={(e) => setDmText(e.target.value)}
+                  placeholder="Type your message…"
+                  rows={3}
+                />
+                <button
+                  className="primary"
+                  onClick={() => void sendDm()}
+                  disabled={dmBusy || dmText.trim().length === 0}
+                >
+                  Send
+                </button>
+                {dmNotice.length > 0 && <p className="notice">{dmNotice}</p>}
+              </div>
+            </section>
+
             <div className="actions">
               <button disabled>
                 Check how AI sees my business <span>coming soon</span>
