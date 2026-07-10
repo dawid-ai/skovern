@@ -2,6 +2,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { AddressInfo } from "node:net";
 import { handleRequestLink, handleVerify, type HttpResult } from "./handlers.js";
 import type { AuthService } from "./service.js";
+import { handleNews } from "../news/handlers.js";
+import type { NewsStore } from "../news/store.js";
 
 // Magic-link payloads are a few hundred bytes; cap hard so a flood can't buffer.
 const MAX_BODY = 4096;
@@ -35,12 +37,23 @@ export interface RunningServer {
  * loop-002 handlers at POST /auth/request and /auth/verify. Returned as a
  * factory so tests (and a future dev runner) can start it in-process.
  */
-export function startAuthServer(opts: { service: AuthService; port?: number }): Promise<RunningServer> {
+export function startAuthServer(opts: {
+  service: AuthService;
+  news?: NewsStore;
+  port?: number;
+}): Promise<RunningServer> {
   const server = createServer((req, res) => {
     void (async () => {
       try {
         const method = req.method ?? "GET";
         const path = (req.url ?? "").split("?")[0] ?? "";
+        // Public news feed — GET only, no auth (readable without account).
+        if (path === "/news" && opts.news) {
+          if (method !== "GET") {
+            return send(res, { status: 405, body: { ok: false, message: "Use GET." } });
+          }
+          return send(res, await handleNews(opts.news));
+        }
         if (path !== "/auth/request" && path !== "/auth/verify") {
           return send(res, { status: 404, body: { ok: false, message: "Not found." } });
         }
