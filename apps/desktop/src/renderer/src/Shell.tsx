@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import type { DmThreadView } from "../../shared/cloud.js";
 import { NewsPage } from "./pages/NewsPage.js";
 import { MessagesPage } from "./pages/MessagesPage.js";
 
@@ -13,8 +14,27 @@ const NAV: { id: Page; label: string }[] = [
   { id: "messages", label: "Messages" },
 ];
 
+// ponytail: naive polling keeps the founder-reply badge live without a push
+// channel. Move to SSE/websocket (or a Telegram webhook fan-out) at scale.
+const POLL_MS = 5000;
+
 export function Shell({ ogNumber, onSignOut }: { ogNumber: number | null; onSignOut: () => void }) {
   const [page, setPage] = useState<Page>("news");
+  const [thread, setThread] = useState<DmThreadView>({ messages: [], unread: 0 });
+
+  const refresh = useCallback(async () => {
+    setThread(await window.deskhand.dm.thread());
+  }, []);
+  // Stable identity: passed to MessagesPage's effect deps, so it must not change
+  // per render or the effect (mark-read + refresh) would loop every render.
+  const onChanged = useCallback(() => void refresh(), [refresh]);
+
+  // Poll for new founder replies so the Messages badge stays live off-page.
+  useEffect(() => {
+    void refresh();
+    const id = setInterval(() => void refresh(), POLL_MS);
+    return () => clearInterval(id);
+  }, [refresh]);
 
   return (
     <div className="shell">
@@ -34,7 +54,13 @@ export function Shell({ ogNumber, onSignOut }: { ogNumber: number | null; onSign
                 aria-current={page === item.id ? "page" : undefined}
                 onClick={() => setPage(item.id)}
               >
-                {item.label}
+                <span>{item.label}</span>
+                {/* No badge on the page you're already reading. */}
+                {item.id === "messages" && page !== "messages" && thread.unread > 0 && (
+                  <span className="nav-badge" aria-label={`${thread.unread} unread`}>
+                    {thread.unread}
+                  </span>
+                )}
               </button>
             </li>
           ))}
@@ -48,7 +74,13 @@ export function Shell({ ogNumber, onSignOut }: { ogNumber: number | null; onSign
         </div>
       </nav>
 
-      <main className="content">{page === "news" ? <NewsPage /> : <MessagesPage />}</main>
+      <main className="content">
+        {page === "news" ? (
+          <NewsPage />
+        ) : (
+          <MessagesPage messages={thread.messages} onChanged={onChanged} />
+        )}
+      </main>
     </div>
   );
 }

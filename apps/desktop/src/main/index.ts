@@ -6,7 +6,7 @@ import { createAccountClient, createDmClient, createNewsClient, getAppInfo } fro
 import { registerTrusted } from "./ipc.js";
 import { clearSession, loadSession, saveSession } from "./session.js";
 import type { CurrentAccount, RequestResult, VerifyResult } from "../shared/account.js";
-import type { DmSendResult, NewsPostView } from "../shared/cloud.js";
+import type { DmSendResult, DmThreadView, NewsPostView } from "../shared/cloud.js";
 
 const { autoUpdater } = electronUpdater;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -176,6 +176,26 @@ app
         return await dm.send(session.token, message);
       } catch {
         return { ok: false, message: CANT_REACH };
+      }
+    });
+
+    registerTrusted(TRUST, "dm:thread", async (): Promise<DmThreadView> => {
+      const session = loadSession();
+      if (!session) return { messages: [], unread: 0 };
+      try {
+        return await dm.thread(session.token);
+      } catch {
+        return { messages: [], unread: 0 };
+      }
+    });
+
+    registerTrusted(TRUST, "dm:read", async (): Promise<void> => {
+      const session = loadSession();
+      if (!session) return;
+      try {
+        await dm.markRead(session.token);
+      } catch {
+        // best-effort; the badge just lingers until the next successful mark
       }
     });
 

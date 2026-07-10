@@ -12,3 +12,17 @@ export interface DmSendResult {
   ok: boolean;
   message: string;
 }
+
+export type Sender = "user" | "founder";
+
+export interface ThreadMessageView {
+  sender: Sender;
+  body: string;
+  createdAt: string;
+}
+
+export interface DmThreadView {
+  messages: ThreadMessageView[];
+  /** Founder replies the user hasn't seen yet — drives the nav badge. */
+  unread: number;
+}

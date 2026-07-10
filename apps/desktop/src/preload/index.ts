@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { AppInfo } from "@deskhand/core";
 import type { CurrentAccount, RequestResult, VerifyResult } from "../shared/account.js";
-import type { DmSendResult, NewsPostView } from "../shared/cloud.js";
+import type { DmSendResult, DmThreadView, NewsPostView } from "../shared/cloud.js";
 
 const api = {
   getAppInfo: (): Promise<AppInfo> => ipcRenderer.invoke("app:info") as Promise<AppInfo>,
@@ -20,6 +20,8 @@ const api = {
   dm: {
     send: (message: string): Promise<DmSendResult> =>
       ipcRenderer.invoke("dm:send", message) as Promise<DmSendResult>,
+    thread: (): Promise<DmThreadView> => ipcRenderer.invoke("dm:thread") as Promise<DmThreadView>,
+    read: (): Promise<void> => ipcRenderer.invoke("dm:read") as Promise<void>,
   },
 };
 

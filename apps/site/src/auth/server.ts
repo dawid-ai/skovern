@@ -4,13 +4,20 @@ import { handleRequestLink, handleVerify, type HttpResult } from "./handlers.js"
 import type { AuthService } from "./service.js";
 import { handleAdminNews, handleNews } from "../news/handlers.js";
 import type { NewsStore } from "../news/store.js";
-import { handleAdminDm, handleDm, type DmDeps } from "../dm/handlers.js";
+import {
+  handleAdminDm,
+  handleAdminDmReply,
+  handleDm,
+  handleDmRead,
+  handleDmThread,
+  type DmDeps,
+} from "../dm/handlers.js";
 import { handlePublish } from "../publish/handlers.js";
 
 // Magic-link payloads are a few hundred bytes; cap hard so a flood can't buffer.
 const MAX_BODY = 4096;
 
-async function readJson(req: IncomingMessage): Promise<unknown> {
+async function readRawBody(req: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
@@ -19,8 +26,16 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
     if (size > MAX_BODY) throw new Error("body too large");
     chunks.push(buf);
   }
-  if (chunks.length === 0) return {};
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  return chunks.length ? Buffer.concat(chunks).toString("utf8") : "";
+}
+
+async function readJson(req: IncomingMessage): Promise<unknown> {
+  const raw = await readRawBody(req);
+  return raw ? JSON.parse(raw) : {};
+}
+
+async function readForm(req: IncomingMessage): Promise<URLSearchParams> {
+  return new URLSearchParams(await readRawBody(req));
 }
 
 function send(res: ServerResponse, result: HttpResult): void {
@@ -46,6 +61,23 @@ function bearer(req: IncomingMessage): string | null {
   const header = req.headers.authorization;
   return header?.startsWith("Bearer ") ? header.slice(7) : null;
 }
+
+// CSRF guard for the Basic-auth admin POSTs. Basic auth is ambient (the browser
+// re-sends cached creds), so a cross-origin form could ride them. A browser
+// ALWAYS sends Origin on a cross-origin POST, so: if Origin/Referer is present
+// it must match our host; a request with neither is a non-browser client
+// (curl/server) and can't be a CSRF vector. Bearer-token routes don't need this.
+function sameOriginOk(req: IncomingMessage): boolean {
+  const source = req.headers.origin ?? req.headers.referer;
+  if (!source) return true;
+  try {
+    return new URL(source).host === req.headers.host;
+  } catch {
+    return false;
+  }
+}
+
+const BAD_ORIGIN: HttpResult = { status: 403, body: { ok: false, message: "Bad origin." } };
 
 export function startAuthServer(opts: {
   service: AuthService;
@@ -87,18 +119,36 @@ export function startAuthServer(opts: {
           }
           return send(res, await handlePublish(opts.news, path.split("/").slice(2), origin));
         }
-        // Founder DM: read-only admin thread (GET, Basic-auth guarded)…
+        // Founder DM inbox: per-user threads + reply boxes (GET, Basic-auth).
         if (path === "/admin/dm" && opts.dm) {
           if (method !== "GET") {
             return send(res, { status: 405, body: { ok: false, message: "Use GET." } });
           }
           return send(res, await handleAdminDm(opts.dm, adminToken, req.headers.authorization ?? null));
         }
+        // Founder reply to a user (form POST from the admin page, Basic-auth).
+        if (path === "/admin/dm/reply" && opts.dm) {
+          if (method !== "POST") {
+            return send(res, { status: 405, body: { ok: false, message: "Use POST." } });
+          }
+          if (!sameOriginOk(req)) return send(res, BAD_ORIGIN);
+          let form: URLSearchParams;
+          try {
+            form = await readForm(req);
+          } catch {
+            return send(res, { status: 400, body: { ok: false, message: "Bad request." } });
+          }
+          return send(
+            res,
+            await handleAdminDmReply(opts.dm, adminToken, req.headers.authorization ?? null, form),
+          );
+        }
         // Founder news publish (POST, same Basic-auth guard).
         if (path === "/admin/news" && opts.news) {
           if (method !== "POST") {
             return send(res, { status: 405, body: { ok: false, message: "Use POST." } });
           }
+          if (!sameOriginOk(req)) return send(res, BAD_ORIGIN);
           let newsBody: unknown;
           try {
             newsBody = await readJson(req);
@@ -122,6 +172,20 @@ export function startAuthServer(opts: {
             return send(res, { status: 400, body: { ok: false, message: "Bad request." } });
           }
           return send(res, await handleDm(opts.dm, bearer(req), dmBody));
+        }
+        // The user's own conversation + unseen-reply count (GET, session).
+        if (path === "/dm/thread" && opts.dm) {
+          if (method !== "GET") {
+            return send(res, { status: 405, body: { ok: false, message: "Use GET." } });
+          }
+          return send(res, await handleDmThread(opts.dm, bearer(req)));
+        }
+        // Mark the user's founder replies as seen (POST, session).
+        if (path === "/dm/read" && opts.dm) {
+          if (method !== "POST") {
+            return send(res, { status: 405, body: { ok: false, message: "Use POST." } });
+          }
+          return send(res, await handleDmRead(opts.dm, bearer(req)));
         }
         if (path !== "/auth/request" && path !== "/auth/verify") {
           return send(res, { status: 404, body: { ok: false, message: "Not found." } });
