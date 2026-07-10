@@ -79,5 +79,12 @@ export async function handleAdminDm(
   const html =
     `<!doctype html><meta charset="utf-8"><title>Deskhand DMs</title>` +
     `<h1>Messages (${messages.length})</h1>${rows || "<p>No messages yet.</p>"}`;
-  return { status: 200, body: html, contentType: "text/html" };
+  return {
+    status: 200,
+    body: html,
+    contentType: "text/html",
+    // Defense-in-depth: this page shows user-submitted content. Escaping is
+    // complete; the CSP means even a missed sink can't load or run anything.
+    headers: { "content-security-policy": "default-src 'none'", "x-content-type-options": "nosniff" },
+  };
 }
