@@ -14,11 +14,15 @@
     "test": "pnpm -r test"
   },
   "devDependencies": {
+    "@vitest/eslint-plugin": "^1.6.22",
     "eslint": "^10.6.0",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.63.0"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["electron", "esbuild"]
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild"
+    ]
   }
 }

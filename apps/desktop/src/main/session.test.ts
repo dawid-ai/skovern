@@ -36,7 +36,7 @@ describe("session storage", () => {
 
   it("refuses to persist when the OS keychain is unavailable — no plaintext on disk", () => {
     state.available = false;
-    expect(() => saveSession({ token: "id.secret", ogNumber: 5 })).toThrow();
+    expect(() => saveSession({ token: "id.secret", ogNumber: 5 })).toThrow(/secure storage unavailable/);
     expect(existsSync(path.join(state.dir, "session.bin"))).toBe(false);
   });
 

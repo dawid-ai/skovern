@@ -239,7 +239,7 @@ describe("auth http server", () => {
     const { service } = makeService();
     const first = await startAuthServer({ service });
     try {
-      await expect(startAuthServer({ service, port: first.port })).rejects.toThrow();
+      await expect(startAuthServer({ service, port: first.port })).rejects.toThrow(/EADDRINUSE/);
     } finally {
       await first.close();
     }
