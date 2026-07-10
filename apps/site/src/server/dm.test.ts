@@ -161,5 +161,13 @@ it("guards DM send by session, forwards it, and serves an escaped admin thread",
   const t3 = (await (await fetch(`${base}/dm/thread`, { headers: bearer })).json()) as Thread;
   expect(t3.unread).toBe(0);
 
+  // 10. isolation: a different account sees NONE of the first account's thread
+  const otherSession = await signIn(base, "someone-else@shop.test");
+  const other = (await (
+    await fetch(`${base}/dm/thread`, { headers: { authorization: `Bearer ${otherSession}` } })
+  ).json()) as Thread;
+  expect(other.messages).toHaveLength(0);
+  expect(other.unread).toBe(0);
+
   child.kill("SIGTERM");
 });

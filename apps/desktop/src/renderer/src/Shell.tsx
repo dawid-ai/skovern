@@ -25,6 +25,9 @@ export function Shell({ ogNumber, onSignOut }: { ogNumber: number | null; onSign
   const refresh = useCallback(async () => {
     setThread(await window.deskhand.dm.thread());
   }, []);
+  // Stable identity: passed to MessagesPage's effect deps, so it must not change
+  // per render or the effect (mark-read + refresh) would loop every render.
+  const onChanged = useCallback(() => void refresh(), [refresh]);
 
   // Poll for new founder replies so the Messages badge stays live off-page.
   useEffect(() => {
@@ -52,7 +55,8 @@ export function Shell({ ogNumber, onSignOut }: { ogNumber: number | null; onSign
                 onClick={() => setPage(item.id)}
               >
                 <span>{item.label}</span>
-                {item.id === "messages" && thread.unread > 0 && (
+                {/* No badge on the page you're already reading. */}
+                {item.id === "messages" && page !== "messages" && thread.unread > 0 && (
                   <span className="nav-badge" aria-label={`${thread.unread} unread`}>
                     {thread.unread}
                   </span>
@@ -74,7 +78,7 @@ export function Shell({ ogNumber, onSignOut }: { ogNumber: number | null; onSign
         {page === "news" ? (
           <NewsPage />
         ) : (
-          <MessagesPage messages={thread.messages} onChanged={() => void refresh()} />
+          <MessagesPage messages={thread.messages} onChanged={onChanged} />
         )}
       </main>
     </div>
