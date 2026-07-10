@@ -52,6 +52,26 @@ function pluginDir(id: string): string {
   return dir;
 }
 
+// Only the OS vars the forked binary needs to boot — never the user's ambient shell
+// environment. The Permission Model locks fs+subprocess but NOT process.env, so
+// inheriting it would hand an untrusted skill any exported secret (AWS_*, tokens) to
+// exfiltrate through its granted fetch (whose receipt logs only the host). The child
+// reads no env of its own, so this allowlist is safe.
+const CHILD_ENV_ALLOW = [
+  "SystemRoot", "SystemDrive", "windir", "PATH", "Path", "PATHEXT", "COMSPEC", "TEMP",
+  "TMP", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "NUMBER_OF_PROCESSORS",
+  "PROCESSOR_ARCHITECTURE", "HOME", "USERPROFILE", "LANG", "LC_ALL",
+];
+
+function childEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ELECTRON_RUN_AS_NODE: "1" };
+  for (const k of CHILD_ENV_ALLOW) {
+    const v = process.env[k];
+    if (v !== undefined) env[k] = v;
+  }
+  return env;
+}
+
 function spawnChild(dir: string): ChildProcess {
   // Grant read to the child's own bundled code (entry + shared chunks, so it can load)
   // and to the plugin's dir (its world) — nothing else. Subprocess is denied by default
@@ -65,7 +85,7 @@ function spawnChild(dir: string): ChildProcess {
       `--allow-fs-read=${CHILD_CHUNKS}`,
       `--allow-fs-read=${dir}`,
     ],
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+    env: childEnv(),
     stdio: ["ignore", "ignore", "ignore", "ipc"],
   });
 }
