@@ -1,8 +1,10 @@
+import { randomBytes } from "node:crypto";
 import type { HttpResult } from "../auth/handlers.js";
 import type { NewsStore } from "../news/store.js";
 import type { AuthService } from "../auth/service.js";
 import type { VisibilityStore } from "./visibility-store.js";
-import { renderOgImage, renderPostPage, renderVisibilityOg, renderVisibilityPage } from "./render.js";
+import { renderOgImage, renderPostPage, renderVisibilityPage } from "./render.js";
+import { renderVisibilityCardPng } from "./og-card.js";
 
 // Public, no-auth pages for published artifacts. First (only) content type is
 // `news`; the shape /u/:type/:id generalizes to other artifacts later. `origin`
@@ -103,7 +105,7 @@ export async function handlePublishVisibility(
   return { status: 200, body: { ok: true, id, url: `${origin}/u/visibility/${id}` } };
 }
 
-/** GET /u/visibility/:id[/og.svg] — the public page + its share card. */
+/** GET /u/visibility/:id[/og.png] — the public page + its rasterised share card. */
 export async function handleVisibilityPage(
   store: VisibilityStore,
   parts: string[],
@@ -120,16 +122,25 @@ export async function handleVisibilityPage(
   const v = await store.getById(key);
   if (!v) return NOT_FOUND;
 
-  if (sub === "og.svg") {
+  if (sub === "og.png") {
+    const png = await renderVisibilityCardPng(v);
     return {
       status: 200,
-      body: renderVisibilityOg(v),
-      contentType: "image/svg+xml",
+      body: png,
+      contentType: "image/png",
       headers: { "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'" },
     };
   }
   if (sub === undefined) {
-    return { status: 200, body: renderVisibilityPage(v, origin), contentType: "text/html", headers: PAGE_HEADERS };
+    // The redesigned page carries one inline <style>. Keep the CSP strict — no
+    // 'unsafe-inline' — by minting a fresh per-response nonce and gating styles on
+    // it. Scripts stay blocked (default-src 'none'); nothing else is loosened.
+    const nonce = randomBytes(16).toString("base64");
+    const headers = {
+      "content-security-policy": `default-src 'none'; img-src 'self'; style-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'`,
+      "x-content-type-options": "nosniff",
+    };
+    return { status: 200, body: renderVisibilityPage(v, origin, nonce), contentType: "text/html", headers };
   }
   return NOT_FOUND;
 }

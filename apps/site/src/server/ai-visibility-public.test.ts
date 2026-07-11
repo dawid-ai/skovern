@@ -93,20 +93,44 @@ it("publishes a visibility result to an escaped, secret-free public page (sessio
   expect(page.status).toBe(200);
   expect(page.headers.get("content-type")).toMatch(/text\/html/);
   const html = await page.text();
-  expect(html).not.toContain("<script>"); // S2 — no live markup from the name
+  // S-esc — the hostile business + competitor names are escaped, never live markup.
+  expect(html).not.toContain("<script>"); // no live markup from the name
   expect(html).not.toContain("<img");
   expect(html).toContain("&lt;script&gt;"); // escaped, not stripped
   expect(html).toContain("Rose &amp; Thorn");
   expect(html).toContain("100/100"); // 150 clamped to 100
   expect(html).toContain('property="og:title"');
-  expect(html).toContain(`/u/visibility/${id}/og.svg`);
+  expect(html).toContain(`/u/visibility/${id}/og.png`); // card is a PNG now (loop 018)
+
+  // CSP is still strict: the one inline <style> rides a per-response nonce, NOT
+  // 'unsafe-inline', and scripts stay blocked. A regression to unsafe-inline (or a
+  // dropped CSP) is a finding.
+  const csp = page.headers.get("content-security-policy") ?? "";
+  expect(csp).toMatch(/style-src 'nonce-[^']+'/);
+  expect(csp).toContain("default-src 'none'");
+  expect(csp).not.toContain("unsafe-inline");
+  const nonce = /style-src 'nonce-([^']+)'/.exec(csp)?.[1] ?? "";
+  expect(nonce.length).toBeGreaterThan(0);
+  expect(html).toContain(`<style nonce="${nonce}">`); // the style tag carries that exact nonce
+
+  // S-summary — summary only: the score + competitors are on the page, but NO
+  // verbatim AI answers and NO API key ever reach it.
+  expect(html).toContain("Petal Pushers"); // a competitor (the summary content)
+  expect(html).not.toContain("sk-"); // no OpenAI/OpenRouter-style key
+  expect(html).not.toMatch(/answer/i); // no verbatim-answer field leaked onto the page
   expect(html).not.toContain(session); // S5 — the session token never lands on the page
   expect(html).not.toContain("account_id");
 
-  // 4. the OG card is an image
-  const og = await fetch(`${url}/og.svg`);
+  // 4. PNG — the OG card is a real rasterised PNG (satori + resvg), not an SVG.
+  const og = await fetch(`${url}/og.png`);
   expect(og.status).toBe(200);
-  expect(og.headers.get("content-type")).toMatch(/image\//);
+  expect(og.headers.get("content-type")).toBe("image/png");
+  const magic = new Uint8Array(await og.arrayBuffer()).subarray(0, 4);
+  expect(Array.from(magic)).toEqual([0x89, 0x50, 0x4e, 0x47]); // PNG magic bytes
+
+  // the retired .svg card route is gone → 404, not a stale image
+  const staleSvg = await fetch(`${url}/og.svg`);
+  expect(staleSvg.status).toBe(404);
 
   // 5. unknown id → clean 404 (not a 500)
   const missing = await fetch(`${base}/u/visibility/does-not-exist`);

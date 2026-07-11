@@ -42,6 +42,12 @@ async function readForm(req: IncomingMessage): Promise<URLSearchParams> {
 function send(res: ServerResponse, result: HttpResult): void {
   const contentType = result.contentType ?? "application/json";
   res.writeHead(result.status, { "content-type": contentType, ...result.headers });
+  // Binary bodies (e.g. the PNG share card) go out untouched — String() would
+  // corrupt them. Everything else is JSON unless a text content-type was set.
+  if (Buffer.isBuffer(result.body)) {
+    res.end(result.body);
+    return;
+  }
   const payload =
     contentType === "application/json" ? JSON.stringify(result.body) : String(result.body);
   res.end(payload);
@@ -118,7 +124,7 @@ export function startAuthServer(opts: {
           return send(res, await handleNews(opts.news));
         }
         // Public published pages + OG cards, e.g. /u/news/<slug> or
-        // /u/visibility/<id> [/og.svg]. GET only, no auth (readable without account).
+        // /u/visibility/<id> [/og.png]. GET only, no auth (readable without account).
         if (path.startsWith("/u/")) {
           if (method !== "GET") {
             return send(res, { status: 405, body: { ok: false, message: "Use GET." } });
