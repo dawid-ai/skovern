@@ -71,6 +71,7 @@ export function AiVisibilityView({ onBack }: { onBack: () => void }) {
           <div className="card av-score">
             <p className="av-score-num">{result.score}<span>/100</span></p>
             <p className="who">{grade(result.score)}</p>
+            <p className="hint">How often AI brought you up on its own — without being handed your name.</p>
           </div>
 
           <h2>What your brain said</h2>
@@ -79,7 +80,9 @@ export function AiVisibilityView({ onBack }: { onBack: () => void }) {
               <li key={i} className="card">
                 <h3>{f.prompt}</h3>
                 <p>{f.answer}</p>
-                <p className="hint">{f.mentioned ? "✓ mentioned you" : "— didn't mention you"}</p>
+                <p className="hint">
+                  {f.scored ? (f.mentioned ? "✓ brought you up on its own" : "— didn't bring you up") : "· you asked directly (doesn't count toward the score)"}
+                </p>
               </li>
             ))}
           </ul>

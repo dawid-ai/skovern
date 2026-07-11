@@ -40,7 +40,7 @@ export const aiVisibilityPlugin: Plugin = {
     let competitors: string[] = [];
     for (const p of buildPrompts(business)) {
       const answer = await ctx.brain.generate(p.text);
-      findings.push({ prompt: p.label, answer, mentioned: mentioned(answer, business.name) });
+      findings.push({ prompt: p.label, answer, scored: p.scored, mentioned: mentioned(answer, business.name) });
       if (p.kind === "competitors") competitors = parseCompetitors(answer, business.name);
     }
 

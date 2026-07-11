@@ -289,7 +289,7 @@ app
 
     // Skills. `list` shows each skill's permission card (exactly what the broker
     // enforces); `run` executes it in the sandboxed host; `sandboxCheck` proves the
-    // lockdown on the real utilityProcess.
+    // lockdown on the real forked child (Electron binary under the Permission Model).
     registerTrusted(TRUST, "plugin:list", (): SkillView[] =>
       SKILLS.map((m) => ({
         id: m.id,

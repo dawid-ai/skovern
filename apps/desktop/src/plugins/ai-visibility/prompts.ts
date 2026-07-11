@@ -16,6 +16,12 @@ export interface Prompt {
   text: string;
   /** The one prompt we parse a competitor list out of. */
   kind: "mention" | "competitors";
+  /** Whether this counts toward the score. Prompts that embed the business name
+   *  (a direct "tell me about X") are `false`: the model repeats the name back
+   *  even when it doesn't know the business, so scoring them would fake recall.
+   *  Only unprompted questions — "recommend a florist", "who's the best", the
+   *  competitor list — are scored. */
+  scored: boolean;
 }
 
 export function buildPrompts({ name, category, city }: BusinessInput): Prompt[] {
@@ -26,21 +32,25 @@ export function buildPrompts({ name, category, city }: BusinessInput): Prompt[] 
       label: `Do you know "${name}"?`,
       text: `What can you tell me about a ${cat} called "${name}"${where}? If you don't know it, say so plainly.`,
       kind: "mention",
+      scored: false, // hands the brain the name — echoed even in a denial
     },
     {
       label: `Would you recommend a ${cat}${where}?`,
       text: `I'm looking for a good ${cat}${where}. Which ones would you recommend, and why?`,
       kind: "mention",
+      scored: true, // unprompted recall
     },
     {
       label: `Is "${name}" a good choice?`,
       text: `Is "${name}" a good ${cat}${where}? What are people likely to say about it?`,
       kind: "mention",
+      scored: false, // hands the brain the name
     },
     {
       label: `Where should a customer go${where}?`,
       text: `If a friend asked you where to go for a ${cat}${where}, what would you tell them?`,
       kind: "mention",
+      scored: true, // unprompted recall
     },
     {
       label: `Who are the top ${cat}s${where}?`,
@@ -48,6 +58,7 @@ export function buildPrompts({ name, category, city }: BusinessInput): Prompt[] 
         `List the top ${cat}s${where}. ` +
         `Return ONLY a JSON array of their names in a fenced \`\`\`json code block, nothing else.`,
       kind: "competitors",
+      scored: true, // unprompted — showing up in the top list IS visibility
     },
   ];
 }
