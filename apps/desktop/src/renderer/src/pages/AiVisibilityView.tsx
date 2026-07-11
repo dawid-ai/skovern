@@ -79,6 +79,11 @@ export function AiVisibilityView({ onBack }: { onBack: () => void }) {
           </button>
         </div>
 
+        {busy && (
+          <p className="hint">
+            This can take a minute or two — I&apos;m asking your brain a few questions, one at a time. Hang tight.
+          </p>
+        )}
         {notice.length > 0 && <p className="notice">{notice}</p>}
       </div>
 

@@ -2,8 +2,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { EventEmitter } from "node:events";
+import type { ChildProcess } from "node:child_process";
 import { createRouter, type Provider } from "@deskhand/core";
-import { claudeCliProvider } from "./claude-cli.js";
+import { claudeCliProvider, collectOutput } from "./claude-cli.js";
 
 // A fake `claude` we can spawn shell-free on any OS: a node script the provider runs
 // via `bin=node, baseArgs=[stub]`. It captures its argv + stdin and prints a canned
@@ -99,6 +101,49 @@ describe("claude-cli provider — output + failure handling", () => {
     const slow = claudeCliProvider({ bin: process.execPath, baseArgs: [stub], timeoutMs: 300 });
     await expect(slow.generate("hi")).rejects.toThrow(/timed out/);
     process.env.STUB_MODE = "echo";
+  });
+});
+
+// collectOutput must turn EVERY failure into a rejection — an unhandled stream
+// 'error' would otherwise crash the host (Electron main → whole app, exit 1). This
+// was the real crash: a `claude` dying mid-pipe under rapid sequential calls.
+function fakeChild(): EventEmitter & { stdout: EventEmitter; stderr: EventEmitter; kill: () => void } {
+  const c = new EventEmitter() as EventEmitter & { stdout: EventEmitter; stderr: EventEmitter; kill: () => void };
+  c.stdout = new EventEmitter();
+  c.stderr = new EventEmitter();
+  c.kill = () => {};
+  return c;
+}
+
+describe("collectOutput — no failure mode can crash the host (the crash fix)", () => {
+  it("rejects (never throws uncaught) when the stdout stream errors", async () => {
+    const c = fakeChild();
+    const p = collectOutput(c as unknown as ChildProcess, 5000);
+    c.stdout.emit("error", Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }));
+    await expect(p).rejects.toThrow(/ECONNRESET/);
+  });
+
+  it("rejects when the stderr stream errors", async () => {
+    const c = fakeChild();
+    const p = collectOutput(c as unknown as ChildProcess, 5000);
+    c.stderr.emit("error", new Error("stderr broke"));
+    await expect(p).rejects.toThrow(/stderr broke/);
+  });
+
+  it("rejects with the exit detail on abnormal termination (e.g. a rate-limited CLI)", async () => {
+    const c = fakeChild();
+    const p = collectOutput(c as unknown as ChildProcess, 5000);
+    c.stderr.emit("data", Buffer.from("rate limited"));
+    c.emit("close", null); // killed / abnormal exit → code null
+    await expect(p).rejects.toThrow(/exited abnormally.*rate limited/s);
+  });
+
+  it("resolves with stdout on a clean close", async () => {
+    const c = fakeChild();
+    const p = collectOutput(c as unknown as ChildProcess, 5000);
+    c.stdout.emit("data", Buffer.from("the answer"));
+    c.emit("close", 0);
+    await expect(p).resolves.toBe("the answer");
   });
 });
 
