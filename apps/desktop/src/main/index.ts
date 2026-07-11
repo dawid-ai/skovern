@@ -315,6 +315,9 @@ app
 
       // Hello reads a fixed page; brain skills take the user's input (a JSON blob).
       const input = manifest.id === "hello" ? HELLO_URL : typeof rawInput === "string" ? rawInput : "";
+      // Bound untrusted renderer input before it reaches the child (the per-call cap
+      // downstream only guards derived prompts, not this buffer). 64KB mirrors MAX_ARG_BYTES.
+      if (input.length > 64 * 1024) return { ok: false, message: "That was too much to check at once." };
       try {
         return await runPlugin({ manifest, brain, allowLoopback: PLUGIN_ALLOW_LOOPBACK }, input);
       } catch {
