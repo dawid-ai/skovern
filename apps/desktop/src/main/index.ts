@@ -12,6 +12,7 @@ import {
   openRouterProvider,
   type Provider,
   type ProviderId,
+  type Router,
 } from "@deskhand/core";
 import { explainCapability } from "@deskhand/plugin-sdk";
 import { registerTrusted } from "./ipc.js";
@@ -20,6 +21,7 @@ import { brainStatus, loadBrain, saveBrain } from "./keys.js";
 import { fileReceiptSink } from "./receipts.js";
 import { runPlugin, sandboxCheck } from "./plugin-host.js";
 import { helloManifest } from "../plugins/hello/manifest.js";
+import { aiVisibilityManifest } from "../plugins/ai-visibility/manifest.js";
 import type { CurrentAccount, RequestResult, VerifyResult } from "../shared/account.js";
 import type { DmSendResult, DmThreadView, NewsPostView } from "../shared/cloud.js";
 import type { BrainStatusView, SaveBrainResult, TestBrainResult } from "../shared/brain.js";
@@ -49,13 +51,28 @@ const CANT_REACH = "Couldn't connect right now. Try again in a moment.";
 
 // Skills: the bundled fixtures for v1. Loopback + a mock target are dev/test seams
 // (mirror of DEV_SERVER_URL) — a shipped app is https-only and reaches real pages.
-const SKILLS = [helloManifest];
+const SKILLS = [helloManifest, aiVisibilityManifest];
 const PLUGIN_ALLOW_LOOPBACK = !app.isPackaged && process.env["DESKHAND_PLUGIN_ALLOW_LOOPBACK"] === "1";
 const HELLO_URL = (!app.isPackaged && process.env["DESKHAND_HELLO_URL"]) || "https://example.com";
 
-// The fixture uses only `fetch`; a brain-using skill rides in later, so this stub
-// just refuses. A skill can't reach it anyway unless its manifest declared `brain`.
-const noBrain = { generate: () => Promise.reject(new Error("no brain configured")) };
+// The Hello fixture uses only `fetch`, so it runs with a stub brain that refuses.
+// A skill can't reach it anyway unless its manifest declared `brain`.
+const noBrain: Router = { generate: () => Promise.reject(new Error("no brain configured")) };
+
+// The user's configured brain as a router, or null if none is set up. One place
+// both "Test my brain" and a brain-using skill get their brain — the key stays in
+// safeStorage (loadBrain), never the renderer, and every call is receipted.
+function buildRouter(): Router | null {
+  const brain = loadBrain();
+  if (!brain) return null;
+  const provider: Provider =
+    brain.provider === "anthropic"
+      ? anthropicProvider({ apiKey: brain.key, model: brain.model, baseURL: BRAIN_BASE.anthropic })
+      : openRouterProvider({ apiKey: brain.key, model: brain.model, baseURL: BRAIN_BASE.openrouter });
+  const providers: Partial<Record<ProviderId, Provider>> = {};
+  providers[brain.provider] = provider;
+  return createRouter({ providers, defaultProvider: brain.provider, sink: fileReceiptSink() });
+}
 
 // ponytail: placeholder 16x16 orange square until the real icon exists
 const TRAY_ICON_DATA_URL =
@@ -257,20 +274,9 @@ app
     });
 
     registerTrusted(TRUST, "brain:test", async (): Promise<TestBrainResult> => {
-      const brain = loadBrain();
-      if (!brain) return { ok: false, message: "Add a brain first, then test it." };
+      const router = buildRouter();
+      if (!router) return { ok: false, message: "Add a brain first, then test it." };
       try {
-        const provider: Provider =
-          brain.provider === "anthropic"
-            ? anthropicProvider({ apiKey: brain.key, model: brain.model, baseURL: BRAIN_BASE.anthropic })
-            : openRouterProvider({ apiKey: brain.key, model: brain.model, baseURL: BRAIN_BASE.openrouter });
-        const providers: Partial<Record<ProviderId, Provider>> = {};
-        providers[brain.provider] = provider;
-        const router = createRouter({
-          providers,
-          defaultProvider: brain.provider,
-          sink: fileReceiptSink(),
-        });
         const { text, receipt } = await router.generate({
           task: "Test my brain",
           prompt: "Say a short, friendly hello so I know you're working.",
@@ -293,13 +299,24 @@ app
       })),
     );
 
-    registerTrusted(TRUST, "plugin:run", async (rawId: unknown): Promise<RunSkillResult> => {
+    registerTrusted(TRUST, "plugin:run", async (rawId: unknown, rawInput: unknown): Promise<RunSkillResult> => {
       const id = typeof rawId === "string" ? rawId : "";
       const manifest = SKILLS.find((m) => m.id === id);
       if (!manifest) return { ok: false, message: "That skill isn't here." };
-      const input = manifest.id === "hello" ? HELLO_URL : "";
+
+      // A skill that declares "brain" runs on the user's real configured brain; if
+      // none is set up, don't run it — say so plainly instead of failing opaquely.
+      let brain = noBrain;
+      if (manifest.capabilities.includes("brain")) {
+        const router = buildRouter();
+        if (!router) return { ok: false, message: "Connect a brain in Settings first, then try again." };
+        brain = router;
+      }
+
+      // Hello reads a fixed page; brain skills take the user's input (a JSON blob).
+      const input = manifest.id === "hello" ? HELLO_URL : typeof rawInput === "string" ? rawInput : "";
       try {
-        return await runPlugin({ manifest, brain: noBrain, allowLoopback: PLUGIN_ALLOW_LOOPBACK }, input);
+        return await runPlugin({ manifest, brain, allowLoopback: PLUGIN_ALLOW_LOOPBACK }, input);
       } catch {
         return { ok: false, message: "That skill couldn't run." };
       }

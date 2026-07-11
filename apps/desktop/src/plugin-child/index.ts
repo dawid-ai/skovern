@@ -1,5 +1,6 @@
 import type { Capability, PluginContext } from "@deskhand/plugin-sdk";
 import { helloPlugin } from "../plugins/hello/index.js";
+import { aiVisibilityPlugin } from "../plugins/ai-visibility/index.js";
 import type { ChildToHost, HostToChild } from "../shared/plugin-rpc.js";
 
 // The sandboxed child. It runs as the shipped Electron binary in ELECTRON_RUN_AS_NODE
@@ -13,8 +14,11 @@ function send(msg: ChildToHost): void {
   process.send?.(msg);
 }
 
-// One plugin for v1; a real registry lands with more skills.
-const PLUGINS = new Map([[helloPlugin.manifest.id, helloPlugin]]);
+// The bundled skills; a real registry lands later.
+const PLUGINS = new Map([
+  [helloPlugin.manifest.id, helloPlugin],
+  [aiVisibilityPlugin.manifest.id, aiVisibilityPlugin],
+]);
 
 // Child-owned pending map: correlates OUR capability calls to their replies. Purely
 // local — a bad reqId only confuses this child, never the host.

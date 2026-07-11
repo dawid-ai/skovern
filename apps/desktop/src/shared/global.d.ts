@@ -29,7 +29,7 @@ declare global {
       };
       plugins: {
         list(): Promise<SkillView[]>;
-        run(id: string): Promise<RunSkillResult>;
+        run(id: string, input?: string): Promise<RunSkillResult>;
         sandboxCheck(): Promise<SandboxCheckResult>;
       };
     };

@@ -1,17 +1,22 @@
 import { useEffect, useState } from "react";
 import type { RunSkillResult, SkillView } from "../../../shared/plugin.js";
+import { AiVisibilityView } from "./AiVisibilityView.js";
 
 // "Skills" — the little helpers you can run. Each shows a plain-English card of
 // exactly what it's allowed to do (the same permissions the app enforces), so you
 // know before you press Run. Results are shown as plain text, never run as code.
+// A skill that needs input (AI Visibility) opens its own dedicated view instead.
 export function SkillsPage() {
   const [skills, setSkills] = useState<SkillView[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, RunSkillResult>>({});
+  const [open, setOpen] = useState<string | null>(null);
 
   useEffect(() => {
     void window.deskhand.plugins.list().then(setSkills);
   }, []);
+
+  if (open === "ai-visibility") return <AiVisibilityView onBack={() => setOpen(null)} />;
 
   async function run(id: string) {
     setBusy(id);
@@ -45,11 +50,17 @@ export function SkillsPage() {
                   ))}
                 </ul>
                 <div className="row">
-                  <button className="primary" onClick={() => void run(skill.id)} disabled={busy !== null}>
-                    {busy === skill.id ? "Running…" : "Run"}
-                  </button>
+                  {skill.id === "ai-visibility" ? (
+                    <button className="primary" onClick={() => setOpen(skill.id)}>
+                      Open
+                    </button>
+                  ) : (
+                    <button className="primary" onClick={() => void run(skill.id)} disabled={busy !== null}>
+                      {busy === skill.id ? "Running…" : "Run"}
+                    </button>
+                  )}
                 </div>
-                {result && (
+                {skill.id !== "ai-visibility" && result && (
                   <div className="brain-reply">
                     <p className="who">{result.ok ? "It found" : "Hmm"}</p>
                     <p>{result.ok ? result.result : result.message}</p>
