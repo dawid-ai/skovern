@@ -3,7 +3,7 @@
 // the bytes that left the machine. The renderer never reaches a provider or a
 // key directly; it goes UI → core → here.
 
-export type ProviderId = "openrouter" | "anthropic";
+export type ProviderId = "openrouter" | "anthropic" | "claude-cli";
 
 /** A single brain the router can call. Adapters (AI SDK-backed) close over the
  *  API key, so the key never reaches the router or a receipt. */

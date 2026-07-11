@@ -20,6 +20,7 @@ import { clearSession, loadSession, saveSession } from "./session.js";
 import { brainStatus, loadBrain, saveBrain } from "./keys.js";
 import { fileReceiptSink } from "./receipts.js";
 import { runPlugin, sandboxCheck } from "./plugin-host.js";
+import { claudeCliProvider } from "./claude-cli.js";
 import { helloManifest } from "../plugins/hello/manifest.js";
 import { aiVisibilityManifest } from "../plugins/ai-visibility/manifest.js";
 import type { CurrentAccount, RequestResult, VerifyResult } from "../shared/account.js";
@@ -47,6 +48,25 @@ const BRAIN_BASE = {
   openrouter: app.isPackaged ? undefined : process.env["DESKHAND_OPENROUTER_BASE_URL"],
   anthropic: app.isPackaged ? undefined : process.env["DESKHAND_ANTHROPIC_BASE_URL"],
 };
+// The Claude Code CLI brain. In a shipped app it's always the real `claude` on PATH;
+// the bin/args overrides are dev/test seams (point at a stub so CI needs no
+// subscription) honored ONLY unpackaged — mirror of BRAIN_BASE. A packaged app must
+// never let an env var redirect the user's prompt to an arbitrary executable.
+const CLAUDE_BIN = (!app.isPackaged && process.env["DESKHAND_CLAUDE_BIN"]) || "claude";
+function devClaudeArgs(): string[] | undefined {
+  if (app.isPackaged) return undefined;
+  const raw = process.env["DESKHAND_CLAUDE_ARGS"];
+  if (!raw) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.every((a) => typeof a === "string") ? (parsed as string[]) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+// A skill on the CLI brain makes several sequential `claude -p` calls, each slower
+// than an HTTP call — the 30s per-run cap would kill a legit run. Give CLI runs room.
+const CLI_RUN_TIMEOUT_MS = 300_000;
 const CANT_REACH = "Couldn't connect right now. Try again in a moment.";
 
 // Skills: the bundled fixtures for v1. Loopback + a mock target are dev/test seams
@@ -66,9 +86,11 @@ function buildRouter(): Router | null {
   const brain = loadBrain();
   if (!brain) return null;
   const provider: Provider =
-    brain.provider === "anthropic"
-      ? anthropicProvider({ apiKey: brain.key, model: brain.model, baseURL: BRAIN_BASE.anthropic })
-      : openRouterProvider({ apiKey: brain.key, model: brain.model, baseURL: BRAIN_BASE.openrouter });
+    brain.provider === "claude-cli"
+      ? claudeCliProvider({ bin: CLAUDE_BIN, baseArgs: devClaudeArgs(), model: brain.model })
+      : brain.provider === "anthropic"
+        ? anthropicProvider({ apiKey: brain.key, model: brain.model, baseURL: BRAIN_BASE.anthropic })
+        : openRouterProvider({ apiKey: brain.key, model: brain.model, baseURL: BRAIN_BASE.openrouter });
   const providers: Partial<Record<ProviderId, Provider>> = {};
   providers[brain.provider] = provider;
   return createRouter({ providers, defaultProvider: brain.provider, sink: fileReceiptSink() });
@@ -257,10 +279,12 @@ app
 
     registerTrusted(TRUST, "brain:save", (raw: unknown): SaveBrainResult => {
       const input = (raw ?? {}) as { provider?: unknown; key?: unknown; model?: unknown };
-      const provider = input.provider === "anthropic" ? "anthropic" : "openrouter";
+      const provider: ProviderId =
+        input.provider === "anthropic" ? "anthropic" : input.provider === "claude-cli" ? "claude-cli" : "openrouter";
       const key = typeof input.key === "string" ? input.key.trim() : "";
       const model = typeof input.model === "string" && input.model.trim() ? input.model.trim() : undefined;
-      if (!key) return { ok: false, message: "Paste your key first." };
+      // The subscription brain has no key; the API-key brains require one.
+      if (provider !== "claude-cli" && !key) return { ok: false, message: "Paste your key first." };
       // No real API key is this long — cap it so a bad/compromised renderer can't
       // write a multi-MB blob into the keychain file.
       if (key.length > 8192) return { ok: false, message: "That doesn't look like a key." };
@@ -283,7 +307,12 @@ app
         });
         return { ok: true, message: "Your brain answered!", reply: text, receipt };
       } catch {
-        return { ok: false, message: "Your brain didn't answer. Check the key and try again." };
+        // The subscription brain has no key — if it failed, the CLI likely isn't there.
+        const msg =
+          loadBrain()?.provider === "claude-cli"
+            ? "We couldn't reach Claude Code on this computer. Is it installed and signed in?"
+            : "Your brain didn't answer. Check the key and try again.";
+        return { ok: false, message: msg };
       }
     });
 
@@ -307,10 +336,13 @@ app
       // A skill that declares "brain" runs on the user's real configured brain; if
       // none is set up, don't run it — say so plainly instead of failing opaquely.
       let brain = noBrain;
+      let runTimeoutMs: number | undefined;
       if (manifest.capabilities.includes("brain")) {
         const router = buildRouter();
         if (!router) return { ok: false, message: "Connect a brain in Settings first, then try again." };
         brain = router;
+        // The CLI brain is much slower per call — give a multi-call skill room to finish.
+        if (loadBrain()?.provider === "claude-cli") runTimeoutMs = CLI_RUN_TIMEOUT_MS;
       }
 
       // Hello reads a fixed page; brain skills take the user's input (a JSON blob).
@@ -319,7 +351,7 @@ app
       // downstream only guards derived prompts, not this buffer). 64KB mirrors MAX_ARG_BYTES.
       if (input.length > 64 * 1024) return { ok: false, message: "That was too much to check at once." };
       try {
-        return await runPlugin({ manifest, brain, allowLoopback: PLUGIN_ALLOW_LOOPBACK }, input);
+        return await runPlugin({ manifest, brain, allowLoopback: PLUGIN_ALLOW_LOOPBACK, runTimeoutMs }, input);
       } catch {
         return { ok: false, message: "That skill couldn't run." };
       }

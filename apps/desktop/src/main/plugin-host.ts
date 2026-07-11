@@ -100,6 +100,9 @@ export interface RunPluginDeps {
   brain: Router;
   /** DEV/TEST seam: allow http/loopback so the e2e can hit a local mock. Off in prod. */
   allowLoopback: boolean;
+  /** Override the whole-run cap. The CLI brain is slow per call, so a multi-call skill
+   *  needs more than the default 30s. Still bounded — a hung skill can't run forever. */
+  runTimeoutMs?: number;
 }
 
 export function runPlugin(deps: RunPluginDeps, input: string): Promise<RunSkillResult> {
@@ -122,7 +125,7 @@ export function runPlugin(deps: RunPluginDeps, input: string): Promise<RunSkillR
 
   return new Promise<RunSkillResult>((resolve) => {
     let settled = false;
-    const timer = setTimeout(() => finish({ ok: false, message: "That skill took too long." }), RUN_TIMEOUT_MS);
+    const timer = setTimeout(() => finish({ ok: false, message: "That skill took too long." }), deps.runTimeoutMs ?? RUN_TIMEOUT_MS);
     function finish(r: RunSkillResult): void {
       if (settled) return;
       settled = true;
