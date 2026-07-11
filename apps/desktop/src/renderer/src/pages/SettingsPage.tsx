@@ -6,6 +6,7 @@ import type { ProviderId, Receipt } from "../../../shared/brain.js";
 // The test shows a receipt so you can see exactly what left your machine.
 
 const BRAINS: { id: ProviderId; label: string; hint: string }[] = [
+  { id: "claude-cli", label: "Claude Code (my subscription)", hint: "Use the Claude app you're already signed into — no key, no extra cost." },
   { id: "openrouter", label: "OpenRouter", hint: "One key, lots of brains to choose from." },
   { id: "anthropic", label: "Claude (Anthropic)", hint: "Your own Claude key." },
 ];
@@ -91,14 +92,23 @@ export function SettingsPage() {
         </select>
         <p className="hint">{BRAINS.find((b) => b.id === provider)?.hint}</p>
 
-        <label htmlFor="key">Your key</label>
-        <input
-          id="key"
-          type="password"
-          value={key}
-          onChange={(e) => setKey(e.target.value)}
-          placeholder={status.configured ? "A key is saved — paste a new one to replace it" : "Paste your key"}
-        />
+        {provider === "claude-cli" ? (
+          <p className="hint">
+            This brain runs on the Claude app on this computer, so there&apos;s nothing to paste. If it&apos;s not
+            installed, we&apos;ll tell you when you test it.
+          </p>
+        ) : (
+          <>
+            <label htmlFor="key">Your key</label>
+            <input
+              id="key"
+              type="password"
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              placeholder={status.configured ? "A key is saved — paste a new one to replace it" : "Paste your key"}
+            />
+          </>
+        )}
 
         <label htmlFor="model">Which model? (optional)</label>
         <input
@@ -110,7 +120,11 @@ export function SettingsPage() {
         />
 
         <div className="row">
-          <button className="primary" onClick={() => void save()} disabled={busy || key.trim().length === 0}>
+          <button
+            className="primary"
+            onClick={() => void save()}
+            disabled={busy || (provider !== "claude-cli" && key.trim().length === 0)}
+          >
             Save brain
           </button>
           <button className="link" onClick={() => void test()} disabled={busy || !status.configured}>

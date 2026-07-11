@@ -5,10 +5,14 @@ import type { ProviderId } from "@deskhand/core";
 
 // The user's brain choice + its API key. The key is a secret: it lives ONLY here,
 // encrypted by the OS keychain (safeStorage), and is NEVER returned to the
-// renderer — only `brainStatus()` (no key) crosses back.
+// renderer — only `brainStatus()` (no key) crosses back. The `claude-cli` brain
+// (the Claude Code subscription) has NO key — it rides the logged-in CLI.
+
+const PROVIDERS: readonly ProviderId[] = ["openrouter", "anthropic", "claude-cli"];
 
 export interface BrainConfig {
   provider: ProviderId;
+  /** Empty for `claude-cli` (no key); the API-key providers require it. */
   key: string;
   model?: string;
 }
@@ -31,9 +35,12 @@ export function loadBrain(): BrainConfig | null {
   if (!existsSync(file) || !safeStorage.isEncryptionAvailable()) return null;
   try {
     const parsed = JSON.parse(safeStorage.decryptString(readFileSync(file))) as BrainConfig;
+    // Validate the trust boundary uniformly: known provider, string key, and (if
+    // present) a string model — a non-string model is rejected, not trusted.
     if (
-      (parsed.provider !== "openrouter" && parsed.provider !== "anthropic") ||
-      typeof parsed.key !== "string"
+      !PROVIDERS.includes(parsed.provider) ||
+      typeof parsed.key !== "string" ||
+      (parsed.model !== undefined && typeof parsed.model !== "string")
     ) {
       return null;
     }
