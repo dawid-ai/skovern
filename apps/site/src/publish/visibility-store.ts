@@ -76,7 +76,9 @@ export class VisibilityStore {
       id: row.id,
       business: row.business,
       score: row.score,
-      competitors: Array.isArray(row.competitors) ? (row.competitors as string[]) : [],
+      // Coerce to strings on read so the render path stays total even against a
+      // future writer or a manual DB edit that stored a non-string element.
+      competitors: Array.isArray(row.competitors) ? row.competitors.map((c) => String(c)) : [],
       createdAt: row.created_at.toISOString(),
     };
   }
