@@ -126,10 +126,12 @@ test("user publishes an AI Visibility result and gets a live public link", async
     expect(html).toContain("Rose &amp; Thorn");
     expect(html).toContain("100/100");
 
-    // the share card is produced + live (an image at the stable card URL)
-    const card = await fetch(`${url}/og.svg`);
+    // the share card is produced + live: a real PNG (loop 018 — satori + resvg)
+    const card = await fetch(`${url}/og.png`);
     expect(card.status).toBe(200);
-    expect(card.headers.get("content-type")).toMatch(/image\//);
+    expect(card.headers.get("content-type")).toBe("image/png");
+    const magic = new Uint8Array(await card.arrayBuffer()).subarray(0, 4);
+    expect(Array.from(magic)).toEqual([0x89, 0x50, 0x4e, 0x47]); // PNG magic bytes
   } finally {
     await app.close();
     rmSync(userDataDir, { recursive: true, force: true });

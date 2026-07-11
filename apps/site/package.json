@@ -14,7 +14,9 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "pg": "^8.13.1"
+    "@resvg/resvg-js": "^2.6.2",
+    "pg": "^8.13.1",
+    "satori": "^0.26.0"
   },
   "devDependencies": {
     "@testcontainers/postgresql": "^10.13.2",

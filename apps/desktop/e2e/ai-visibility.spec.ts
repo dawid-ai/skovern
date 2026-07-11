@@ -15,11 +15,18 @@ import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningSer
 // ESCAPED text (S2), and a model receipt must be on disk with metadata only.
 
 const FAKE_KEY = "sk-fake-test-key-should-never-be-logged";
-// One canned answer for every prompt: it names the business (→ score 100), carries a
-// <script> to prove escaping, and a fenced JSON competitor list to prove parsing.
+// One canned answer for every prompt. It names the business (→ score 100) and, to
+// exercise loop 018's markdown rendering + its safety net, it carries:
+//   - real markdown: **bold** and a "- " bullet list  (M1: renders as <strong>/<li>)
+//   - two injection probes: a raw <script> and a [x](javascript:…) link
+//     (M2: neither becomes a live <script> nor a javascript: href — react-markdown's
+//      default, no rehype-raw + url sanitization, holds)
+//   - a fenced JSON competitor list to prove parsing (unchanged).
 const XSS = "<script>window.__pwned=1</script>";
 const ANSWER =
-  `Yes! Rose & Thorn is a wonderful florist in Leeds. ${XSS} ` +
+  `Yes! **Rose & Thorn** is a wonderful florist in Leeds. ${XSS} ` +
+  "[grab a bouquet](javascript:alert(1))\n\n" +
+  "A few reasons customers love it:\n\n- fresh flowers cut daily\n- friendly, warm staff\n\n" +
   'Other good options:\n```json\n["Petal Pushers", "Bloom Room"]\n```';
 
 let container: StartedPostgreSqlContainer;
@@ -136,6 +143,18 @@ test("user checks their AI visibility and sees a score, verbatim answers, compet
     await expect(page.getByText(XSS).first()).toBeVisible();
     expect(await page.locator(".av-result script").count()).toBe(0);
     expect(await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned)).toBeUndefined();
+
+    // M1 — markdown renders as real elements (loop 018): the answer's **bold** and
+    // "- " list become <strong>/<li>, and the literal "**" is NOT shown as text.
+    const firstAnswer = page.locator(".av-result .answer").first();
+    await expect(firstAnswer.locator("strong")).toHaveCount(1);
+    expect(await firstAnswer.locator("li").count()).toBeGreaterThan(0);
+    expect(await firstAnswer.innerText()).not.toContain("**");
+
+    // M2 — the untrusted answer stays inert: no <script> element and no anchor whose
+    // href starts "javascript:" anywhere in the rendered answers.
+    expect(await page.locator(".av-result .answer script").count()).toBe(0);
+    expect(await page.locator('.av-result .answer a[href^="javascript:"]').count()).toBe(0);
 
     // a model receipt is on disk — metadata only, no key, no answer body
     const log = readFileSync(path.join(userDataDir, "receipts.jsonl"), "utf8");
