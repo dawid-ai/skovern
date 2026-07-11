@@ -7,6 +7,7 @@ import {
   createAccountClient,
   createDmClient,
   createNewsClient,
+  createPublishClient,
   createRouter,
   getAppInfo,
   openRouterProvider,
@@ -24,7 +25,7 @@ import { claudeCliProvider } from "./claude-cli.js";
 import { helloManifest } from "../plugins/hello/manifest.js";
 import { aiVisibilityManifest } from "../plugins/ai-visibility/manifest.js";
 import type { CurrentAccount, RequestResult, VerifyResult } from "../shared/account.js";
-import type { DmSendResult, DmThreadView, NewsPostView } from "../shared/cloud.js";
+import type { DmSendResult, DmThreadView, NewsPostView, PublishResultView } from "../shared/cloud.js";
 import type { BrainStatusView, SaveBrainResult, TestBrainResult } from "../shared/brain.js";
 import type { RunSkillResult, SandboxCheckResult, SkillView } from "../shared/plugin.js";
 
@@ -248,6 +249,27 @@ app
       if (!session) return { ok: false, message: "Please sign in first." };
       try {
         return await dm.send(session.token, message);
+      } catch {
+        return { ok: false, message: CANT_REACH };
+      }
+    });
+
+    // Publish an AI Visibility result to a public link. The renderer passes only
+    // the result; the session token stays in main (keychain). Outbound + opt-in:
+    // only fires on the user's explicit Publish click.
+    const publish = createPublishClient(API_BASE);
+    registerTrusted(TRUST, "visibility:publish", async (raw: unknown): Promise<PublishResultView> => {
+      const o = (raw ?? {}) as { business?: unknown; score?: unknown; competitors?: unknown };
+      const business = typeof o.business === "string" ? o.business : "";
+      const score = typeof o.score === "number" ? o.score : NaN;
+      const competitors = Array.isArray(o.competitors) ? o.competitors.filter((c): c is string => typeof c === "string") : [];
+      if (!business.trim() || !Number.isFinite(score)) {
+        return { ok: false, message: "That result looks off — run the check again." };
+      }
+      const session = loadSession();
+      if (!session) return { ok: false, message: "Sign in first to publish your result." };
+      try {
+        return await publish.publishVisibility(session.token, { business, score, competitors });
       } catch {
         return { ok: false, message: CANT_REACH };
       }

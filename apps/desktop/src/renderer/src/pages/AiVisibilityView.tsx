@@ -19,11 +19,14 @@ export function AiVisibilityView({ onBack }: { onBack: () => void }) {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [result, setResult] = useState<AiVisibilityResult | null>(null);
+  const [publishBusy, setPublishBusy] = useState(false);
+  const [published, setPublished] = useState<{ url?: string; message: string } | null>(null);
 
   async function check() {
     setBusy(true);
     setNotice("");
     setResult(null);
+    setPublished(null);
     const res = await window.deskhand.plugins.run("ai-visibility", JSON.stringify({ name, category, city }));
     setBusy(false);
     if (!res.ok) {
@@ -35,6 +38,19 @@ export function AiVisibilityView({ onBack }: { onBack: () => void }) {
     } catch {
       setNotice("Something came back we couldn't read. Try again.");
     }
+  }
+
+  async function publish() {
+    if (!result) return;
+    setPublishBusy(true);
+    setPublished(null);
+    const res = await window.deskhand.visibility.publish({
+      business: result.business,
+      score: result.score,
+      competitors: result.competitors,
+    });
+    setPublishBusy(false);
+    setPublished({ url: res.url, message: res.message });
   }
 
   return (
@@ -104,6 +120,28 @@ export function AiVisibilityView({ onBack }: { onBack: () => void }) {
               <li key={i}>{f}</li>
             ))}
           </ul>
+
+          <h2>Share it</h2>
+          <p className="hint">Make a public link with a card — good for social or your website. Only what you see here is shared.</p>
+          <div className="row">
+            <button className="primary" onClick={() => void publish()} disabled={publishBusy}>
+              {publishBusy ? "Making your link…" : "Publish a shareable link"}
+            </button>
+          </div>
+          {published && (
+            <div className="brain-reply">
+              <p className="who">{published.url ? "Your link is ready" : "Hmm"}</p>
+              {published.url ? (
+                <p>
+                  <a href={published.url} target="_blank" rel="noreferrer">
+                    {published.url}
+                  </a>
+                </p>
+              ) : (
+                <p>{published.message}</p>
+              )}
+            </div>
+          )}
         </div>
       )}
     </section>

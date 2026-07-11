@@ -26,3 +26,16 @@ export interface DmThreadView {
   /** Founder replies the user hasn't seen yet — drives the nav badge. */
   unread: number;
 }
+
+export interface PublishVisibilityInput {
+  business: string;
+  score: number;
+  competitors: string[];
+}
+
+export interface PublishResultView {
+  ok: boolean;
+  /** The public URL, on success. */
+  url?: string;
+  message: string;
+}

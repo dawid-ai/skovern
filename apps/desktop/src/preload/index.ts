@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { AppInfo } from "@deskhand/core";
 import type { CurrentAccount, RequestResult, VerifyResult } from "../shared/account.js";
-import type { DmSendResult, DmThreadView, NewsPostView } from "../shared/cloud.js";
+import type { DmSendResult, DmThreadView, NewsPostView, PublishResultView, PublishVisibilityInput } from "../shared/cloud.js";
 import type { BrainStatusView, SaveBrainInput, SaveBrainResult, TestBrainResult } from "../shared/brain.js";
 import type { RunSkillResult, SandboxCheckResult, SkillView } from "../shared/plugin.js";
 
@@ -38,6 +38,10 @@ const api = {
       ipcRenderer.invoke("plugin:run", id, input ?? "") as Promise<RunSkillResult>,
     sandboxCheck: (): Promise<SandboxCheckResult> =>
       ipcRenderer.invoke("plugin:sandboxCheck") as Promise<SandboxCheckResult>,
+  },
+  visibility: {
+    publish: (input: PublishVisibilityInput): Promise<PublishResultView> =>
+      ipcRenderer.invoke("visibility:publish", input) as Promise<PublishResultView>,
   },
 };
 
