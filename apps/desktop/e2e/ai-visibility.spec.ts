@@ -33,6 +33,10 @@ function startMockBrain(): Promise<string> {
   return new Promise((resolve) => {
     brain = createServer((req, res) => {
       if (req.method === "POST" && (req.url ?? "").endsWith("/chat/completions")) {
+        // Test-harness only: a small per-call delay so each "Question N of 5…" is
+        // reliably observable by Playwright instead of flashing past. Production
+        // timing is unchanged — the real brain is slow on its own.
+        setTimeout(() => {
         res.writeHead(200, { "content-type": "application/json" });
         res.end(
           JSON.stringify({
@@ -44,6 +48,7 @@ function startMockBrain(): Promise<string> {
             usage: { prompt_tokens: 5, completion_tokens: 8, total_tokens: 13 },
           }),
         );
+        }, 150);
         return;
       }
       res.writeHead(404);
@@ -114,6 +119,11 @@ test("user checks their AI visibility and sees a score, verbatim answers, compet
     await page.getByLabel("What kind of business?").fill("florist");
     await page.getByLabel("Your town or city").fill("Leeds");
     await page.getByRole("button", { name: "Check my visibility" }).click();
+
+    // loop 016: live progress ("Question N of 5…") shows while the run is in flight —
+    // proving progress is emitted from the child, survives the sandbox + both process
+    // hops, and reaches the view BEFORE the final score renders.
+    await expect(page.getByText(/of 5/)).toBeVisible({ timeout: 30_000 });
 
     // the score WE computed (mentioned in all 5) + the pieces of the result
     await expect(page.getByText("100", { exact: false })).toBeVisible({ timeout: 30_000 });

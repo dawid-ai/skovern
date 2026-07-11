@@ -385,7 +385,11 @@ app
       // downstream only guards derived prompts, not this buffer). 64KB mirrors MAX_ARG_BYTES.
       if (input.length > 64 * 1024) return { ok: false, message: "That was too much to check at once." };
       try {
-        return await runPlugin({ manifest, brain, allowLoopback: PLUGIN_ALLOW_LOOPBACK, runTimeoutMs }, input);
+        // Live progress ("Question N of 5…") is main→renderer only; the host hands us
+        // pre-validated integers, we just forward them to the window that asked.
+        const onProgress = (step: number, total: number): void =>
+          mainWindow?.webContents.send("plugin:progress", { step, total });
+        return await runPlugin({ manifest, brain, allowLoopback: PLUGIN_ALLOW_LOOPBACK, runTimeoutMs, onProgress }, input);
       } catch {
         return { ok: false, message: "That skill couldn't run." };
       }

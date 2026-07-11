@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AiVisibilityResult } from "../../../plugins/ai-visibility/result.js";
 
 // The AI Visibility result view — reached from Skills (its own place, not a blob on
@@ -21,13 +21,27 @@ export function AiVisibilityView({ onBack }: { onBack: () => void }) {
   const [result, setResult] = useState<AiVisibilityResult | null>(null);
   const [publishBusy, setPublishBusy] = useState(false);
   const [published, setPublished] = useState<{ url?: string; message: string } | null>(null);
+  const [progress, setProgress] = useState<{ step: number; total: number } | null>(null);
+  // Hold the live-progress unsubscribe so we can tear it down on unmount too.
+  const unsubProgress = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    return () => unsubProgress.current?.();
+  }, []);
 
   async function check() {
     setBusy(true);
     setNotice("");
     setResult(null);
     setPublished(null);
+    setProgress(null);
+    // Subscribe BEFORE the run so we don't miss the first "Question 1 of 5…".
+    unsubProgress.current?.();
+    unsubProgress.current = window.deskhand.plugins.onProgress((p) => setProgress(p));
     const res = await window.deskhand.plugins.run("ai-visibility", JSON.stringify({ name, category, city }));
+    unsubProgress.current?.();
+    unsubProgress.current = null;
+    setProgress(null);
     setBusy(false);
     if (!res.ok) {
       setNotice(res.message);
@@ -81,7 +95,9 @@ export function AiVisibilityView({ onBack }: { onBack: () => void }) {
 
         {busy && (
           <p className="hint">
-            This can take a minute or two — I&apos;m asking your brain a few questions, one at a time. Hang tight.
+            {progress
+              ? `Question ${progress.step} of ${progress.total}… asking your brain, one at a time. Hang tight.`
+              : "This can take a minute or two — I'm asking your brain a few questions, one at a time. Hang tight."}
           </p>
         )}
         {notice.length > 0 && <p className="notice">{notice}</p>}
