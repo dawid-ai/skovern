@@ -156,6 +156,13 @@ describe("key store — claude-cli has no key + model validation (loadbrain-mode
     expect(brainStatus()).toEqual({ configured: true, provider: "claude-cli" });
   });
 
+  it("accepts a claude-cli config with a valid string model (positive control)", async () => {
+    const { saveBrain, loadBrain, clearBrain } = await import("./keys.js");
+    clearBrain();
+    saveBrain({ provider: "claude-cli", key: "", model: "claude-sonnet-5" });
+    expect(loadBrain()).toEqual({ provider: "claude-cli", key: "", model: "claude-sonnet-5" });
+  });
+
   it("rejects a persisted config whose model is not a string", async () => {
     const { loadBrain } = await import("./keys.js");
     const { app, safeStorage } = await import("electron");

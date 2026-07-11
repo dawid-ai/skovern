@@ -37,8 +37,10 @@ export function claudeCliProvider(opts: ClaudeCliOptions = {}): Provider {
         const args = [...(opts.baseArgs ?? []), "-p", ...(model ? ["--model", model] : [])];
         // shell:false (the default) is load-bearing security — do not enable it.
         const child = spawn(bin, args, { stdio: ["pipe", "pipe", "pipe"] });
-        let out = "";
-        let err = "";
+        // Collect raw bytes and decode once — a multibyte char split across two
+        // chunks would corrupt if we decoded per-chunk.
+        const outChunks: Buffer[] = [];
+        const errChunks: Buffer[] = [];
         let settled = false;
 
         const timer = setTimeout(() => {
@@ -60,12 +62,15 @@ export function claudeCliProvider(opts: ClaudeCliOptions = {}): Provider {
         }
 
         child.on("error", (e) => settle(() => reject(e))); // ENOENT (no CLI) lands here
-        child.stdout.on("data", (d: Buffer) => (out += d.toString()));
-        child.stderr.on("data", (d: Buffer) => (err += d.toString()));
+        child.stdout.on("data", (d: Buffer) => outChunks.push(d));
+        child.stderr.on("data", (d: Buffer) => errChunks.push(d));
         child.on("close", (code) =>
           settle(() => {
-            const text = out.trim();
-            if (code !== 0) return reject(new Error(`claude-cli exited ${code}: ${err.trim().slice(0, 200)}`));
+            const text = Buffer.concat(outChunks).toString("utf8").trim();
+            if (code !== 0) {
+              const err = Buffer.concat(errChunks).toString("utf8").trim().slice(0, 200);
+              return reject(new Error(`claude-cli exited ${code}: ${err}`));
+            }
             if (!text) return reject(new Error("claude-cli returned nothing"));
             resolve(text);
           }),
