@@ -41,10 +41,13 @@ function isMessage(x: unknown): x is ThreadMessage {
   );
 }
 
-export function createDmClient(apiBase: string): DmClient {
+// `fetchImpl` defaults to global `fetch`; the desktop main process injects a
+// receipted wrapper so every first-party call lands in the egress log. Not
+// injecting keeps behavior (and these tests) unchanged.
+export function createDmClient(apiBase: string, fetchImpl: typeof fetch = fetch): DmClient {
   return {
     async send(sessionToken: string, message: string): Promise<DmResult> {
-      const res = await fetch(`${apiBase}/dm`, {
+      const res = await fetchImpl(`${apiBase}/dm`, {
         method: "POST",
         headers: { "content-type": "application/json", ...auth(sessionToken) },
         body: JSON.stringify({ message }),
@@ -60,7 +63,7 @@ export function createDmClient(apiBase: string): DmClient {
     },
 
     async thread(sessionToken: string): Promise<Thread> {
-      const res = await fetch(`${apiBase}/dm/thread`, { headers: auth(sessionToken) });
+      const res = await fetchImpl(`${apiBase}/dm/thread`, { headers: auth(sessionToken) });
       if (!res.ok) return { messages: [], unread: 0 };
       const body = (await res.json().catch(() => null)) as
         | { messages?: unknown; unread?: unknown }
@@ -71,7 +74,7 @@ export function createDmClient(apiBase: string): DmClient {
     },
 
     async markRead(sessionToken: string): Promise<void> {
-      await fetch(`${apiBase}/dm/read`, { method: "POST", headers: auth(sessionToken) });
+      await fetchImpl(`${apiBase}/dm/read`, { method: "POST", headers: auth(sessionToken) });
     },
   };
 }

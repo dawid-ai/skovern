@@ -20,10 +20,13 @@ export interface PublishClient {
   publishVisibility(sessionToken: string, result: VisibilityToPublish): Promise<PublishResult>;
 }
 
-export function createPublishClient(apiBase: string): PublishClient {
+// `fetchImpl` defaults to global `fetch`; the desktop main process injects a
+// receipted wrapper so every first-party call lands in the egress log. Not
+// injecting keeps behavior (and these tests) unchanged.
+export function createPublishClient(apiBase: string, fetchImpl: typeof fetch = fetch): PublishClient {
   return {
     async publishVisibility(sessionToken: string, result: VisibilityToPublish): Promise<PublishResult> {
-      const res = await fetch(`${apiBase}/publish/visibility`, {
+      const res = await fetchImpl(`${apiBase}/publish/visibility`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${sessionToken}` },
         body: JSON.stringify(result),
