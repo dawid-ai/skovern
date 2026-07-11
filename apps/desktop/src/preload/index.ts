@@ -34,7 +34,8 @@ const api = {
   },
   plugins: {
     list: (): Promise<SkillView[]> => ipcRenderer.invoke("plugin:list") as Promise<SkillView[]>,
-    run: (id: string): Promise<RunSkillResult> => ipcRenderer.invoke("plugin:run", id) as Promise<RunSkillResult>,
+    run: (id: string, input?: string): Promise<RunSkillResult> =>
+      ipcRenderer.invoke("plugin:run", id, input ?? "") as Promise<RunSkillResult>,
     sandboxCheck: (): Promise<SandboxCheckResult> =>
       ipcRenderer.invoke("plugin:sandboxCheck") as Promise<SandboxCheckResult>,
   },
