@@ -4,6 +4,7 @@ import type { CurrentAccount, RequestResult, VerifyResult } from "../shared/acco
 import type { DmSendResult, DmThreadView, NewsPostView, PublishResultView, PublishVisibilityInput } from "../shared/cloud.js";
 import type { BrainStatusView, SaveBrainInput, SaveBrainResult, TestBrainResult } from "../shared/brain.js";
 import type { RunSkillResult, SandboxCheckResult, SkillView } from "../shared/plugin.js";
+import type { ReceiptView } from "../shared/receipts.js";
 
 const api = {
   getAppInfo: (): Promise<AppInfo> => ipcRenderer.invoke("app:info") as Promise<AppInfo>,
@@ -42,6 +43,9 @@ const api = {
   visibility: {
     publish: (input: PublishVisibilityInput): Promise<PublishResultView> =>
       ipcRenderer.invoke("visibility:publish", input) as Promise<PublishResultView>,
+  },
+  receipts: {
+    list: (): Promise<ReceiptView[]> => ipcRenderer.invoke("receipts:list") as Promise<ReceiptView[]>,
   },
 };
 

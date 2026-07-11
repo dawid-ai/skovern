@@ -14,11 +14,12 @@ export interface AccountClient {
 }
 
 async function postJson(
+  fetchImpl: typeof fetch,
   base: string,
   path: string,
   payload: unknown,
 ): Promise<{ ok: boolean; status: number; body: unknown }> {
-  const res = await fetch(`${base}${path}`, {
+  const res = await fetchImpl(`${base}${path}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
@@ -32,16 +33,19 @@ async function postJson(
   return { ok: res.ok, status: res.status, body };
 }
 
-export function createAccountClient(apiBase: string): AccountClient {
+// `fetchImpl` defaults to global `fetch`; the desktop main process injects a
+// receipted wrapper so every first-party call lands in the egress log. Not
+// injecting keeps behavior (and these tests) unchanged.
+export function createAccountClient(apiBase: string, fetchImpl: typeof fetch = fetch): AccountClient {
   return {
     async requestMagicLink(email: string): Promise<void> {
       // The server always answers 200 here (no account enumeration); a non-ok
       // means the server is unreachable/broken, which the caller surfaces.
-      await postJson(apiBase, "/auth/request", { email });
+      await postJson(fetchImpl, apiBase, "/auth/request", { email });
     },
 
     async verifyMagicLink(token: string): Promise<Session | null> {
-      const res = await postJson(apiBase, "/auth/verify", { token });
+      const res = await postJson(fetchImpl, apiBase, "/auth/verify", { token });
       if (!res.ok) return null;
       const body = res.body as { session?: unknown; ogNumber?: unknown };
       if (typeof body.session !== "string" || typeof body.ogNumber !== "number") {

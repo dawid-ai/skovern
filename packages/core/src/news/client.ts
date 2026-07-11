@@ -22,10 +22,13 @@ function isPost(x: unknown): x is NewsPost {
   );
 }
 
-export function createNewsClient(apiBase: string): NewsClient {
+// `fetchImpl` defaults to global `fetch`; the desktop main process injects a
+// receipted wrapper so every first-party call lands in the egress log. Not
+// injecting keeps behavior (and these tests) unchanged.
+export function createNewsClient(apiBase: string, fetchImpl: typeof fetch = fetch): NewsClient {
   return {
     async list(): Promise<NewsPost[]> {
-      const res = await fetch(`${apiBase}/news`);
+      const res = await fetchImpl(`${apiBase}/news`);
       if (!res.ok) return [];
       const body = (await res.json().catch(() => null)) as { posts?: unknown } | null;
       const posts = body?.posts;

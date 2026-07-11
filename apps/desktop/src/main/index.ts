@@ -19,7 +19,7 @@ import { explainCapability } from "@deskhand/plugin-sdk";
 import { registerTrusted } from "./ipc.js";
 import { clearSession, loadSession, saveSession } from "./session.js";
 import { brainStatus, loadBrain, saveBrain } from "./keys.js";
-import { fileReceiptSink } from "./receipts.js";
+import { fileFetchSink, fileReceiptSink, readReceipts, receiptedFetch } from "./receipts.js";
 import { runPlugin, sandboxCheck } from "./plugin-host.js";
 import { claudeCliProvider } from "./claude-cli.js";
 import { helloManifest } from "../plugins/hello/manifest.js";
@@ -28,6 +28,7 @@ import type { CurrentAccount, RequestResult, VerifyResult } from "../shared/acco
 import type { DmSendResult, DmThreadView, NewsPostView, PublishResultView } from "../shared/cloud.js";
 import type { BrainStatusView, SaveBrainResult, TestBrainResult } from "../shared/brain.js";
 import type { RunSkillResult, SandboxCheckResult, SkillView } from "../shared/plugin.js";
+import type { ReceiptView } from "../shared/receipts.js";
 
 const { autoUpdater } = electronUpdater;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -194,7 +195,13 @@ app
   .then(() => {
     registerTrusted(TRUST, "app:info", () => getAppInfo());
 
-    const account = createAccountClient(API_BASE);
+    // First-party cloud calls are egress too. Each client gets a receipted `fetch`
+    // wrapper (loop 015): a durable "sent" line lands before any byte leaves, so
+    // the Receipts panel shows EVERY outbound byte — not just model + plugin calls.
+    // Metadata only (host + label + bytes), never a key, token, or body.
+    const fetchSink = fileFetchSink();
+
+    const account = createAccountClient(API_BASE, receiptedFetch(fetchSink, "Deskhand: sign-in"));
 
     registerTrusted(TRUST, "account:request", async (rawEmail: unknown): Promise<RequestResult> => {
       const email = typeof rawEmail === "string" ? rawEmail : "";
@@ -232,7 +239,7 @@ app
       clearSession();
     });
 
-    const news = createNewsClient(API_BASE);
+    const news = createNewsClient(API_BASE, receiptedFetch(fetchSink, "Deskhand: news"));
     registerTrusted(TRUST, "news:list", async (): Promise<NewsPostView[]> => {
       try {
         return await news.list();
@@ -241,7 +248,7 @@ app
       }
     });
 
-    const dm = createDmClient(API_BASE);
+    const dm = createDmClient(API_BASE, receiptedFetch(fetchSink, "Deskhand: messages"));
     registerTrusted(TRUST, "dm:send", async (rawMessage: unknown): Promise<DmSendResult> => {
       const message = typeof rawMessage === "string" ? rawMessage : "";
       // The bearer token stays in main (keychain) — the renderer never holds it.
@@ -257,7 +264,7 @@ app
     // Publish an AI Visibility result to a public link. The renderer passes only
     // the result; the session token stays in main (keychain). Outbound + opt-in:
     // only fires on the user's explicit Publish click.
-    const publish = createPublishClient(API_BASE);
+    const publish = createPublishClient(API_BASE, receiptedFetch(fetchSink, "Deskhand: publish"));
     registerTrusted(TRUST, "visibility:publish", async (raw: unknown): Promise<PublishResultView> => {
       const o = (raw ?? {}) as { business?: unknown; score?: unknown; competitors?: unknown };
       const business = typeof o.business === "string" ? o.business : "";
@@ -294,6 +301,11 @@ app
         // best-effort; the badge just lingers until the next successful mark
       }
     });
+
+    // "What leaves your machine" — the panel reads the on-disk egress log. Trusted,
+    // READ-ONLY: returns parsed metadata (bounded, malformed-tolerant); nothing from
+    // the renderer is accepted, and there's no way to trigger egress or edit the log.
+    registerTrusted(TRUST, "receipts:list", (): Promise<ReceiptView[]> => readReceipts());
 
     // Brain (model router). The key lives in the keychain (keys.ts) and never
     // leaves main; the renderer only picks a brain and sees the result + receipt.

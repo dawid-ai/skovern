@@ -3,6 +3,7 @@ import type { CurrentAccount, RequestResult, VerifyResult } from "./account.js";
 import type { DmSendResult, DmThreadView, NewsPostView, PublishResultView, PublishVisibilityInput } from "./cloud.js";
 import type { BrainStatusView, SaveBrainInput, SaveBrainResult, TestBrainResult } from "./brain.js";
 import type { RunSkillResult, SandboxCheckResult, SkillView } from "./plugin.js";
+import type { ReceiptView } from "./receipts.js";
 
 declare global {
   interface Window {
@@ -34,6 +35,9 @@ declare global {
       };
       visibility: {
         publish(input: PublishVisibilityInput): Promise<PublishResultView>;
+      };
+      receipts: {
+        list(): Promise<ReceiptView[]>;
       };
     };
   }
