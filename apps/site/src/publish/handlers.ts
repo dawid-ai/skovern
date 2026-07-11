@@ -15,8 +15,10 @@ const NOT_FOUND: HttpResult = {
   contentType: "text/html",
 };
 
-// Public pages render admin-authored content that's already escaped; a strict
-// CSP is cheap defense-in-depth (no scripts, images from same origin only).
+// Public pages render admin-authored (news) AND user-published (visibility)
+// content — all of it escape-first in render.ts. A strict CSP is cheap
+// defense-in-depth (no scripts, images from same origin only), and it matters
+// more now that some content originates from users + model output.
 const PAGE_HEADERS = {
   "content-security-policy": "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'",
   "x-content-type-options": "nosniff",

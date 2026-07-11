@@ -125,6 +125,11 @@ test("user publishes an AI Visibility result and gets a live public link", async
     const html = await res.text();
     expect(html).toContain("Rose &amp; Thorn");
     expect(html).toContain("100/100");
+
+    // the share card is produced + live (an image at the stable card URL)
+    const card = await fetch(`${url}/og.svg`);
+    expect(card.status).toBe(200);
+    expect(card.headers.get("content-type")).toMatch(/image\//);
   } finally {
     await app.close();
     rmSync(userDataDir, { recursive: true, force: true });
