@@ -38,7 +38,12 @@ export const aiVisibilityPlugin: Plugin = {
 
     const findings: Finding[] = [];
     let competitors: string[] = [];
-    for (const p of buildPrompts(business)) {
+    const prompts = buildPrompts(business);
+    const total = prompts.length;
+    for (let i = 0; i < total; i++) {
+      const p = prompts[i]!;
+      // Tell the UI which question we're on before we start waiting on the brain.
+      ctx.progress?.(i + 1, total);
       const answer = await ctx.brain.generate(p.text);
       findings.push({ prompt: p.label, answer, scored: p.scored, mentioned: mentioned(answer, business.name) });
       if (p.kind === "competitors") competitors = parseCompetitors(answer, business.name);

@@ -32,6 +32,8 @@ declare global {
         list(): Promise<SkillView[]>;
         run(id: string, input?: string): Promise<RunSkillResult>;
         sandboxCheck(): Promise<SandboxCheckResult>;
+        /** Listen for live run progress ("step N of total"). Returns an unsubscribe. */
+        onProgress(cb: (p: { step: number; total: number }) => void): () => void;
       };
       visibility: {
         publish(input: PublishVisibilityInput): Promise<PublishResultView>;

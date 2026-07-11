@@ -39,6 +39,19 @@ const api = {
       ipcRenderer.invoke("plugin:run", id, input ?? "") as Promise<RunSkillResult>,
     sandboxCheck: (): Promise<SandboxCheckResult> =>
       ipcRenderer.invoke("plugin:sandboxCheck") as Promise<SandboxCheckResult>,
+    // Listen-only: the renderer subscribes to progress; it can never emit on this
+    // channel. Re-validate the shape here too (two integers) so a malformed payload
+    // never reaches React. Returns an unsubscribe the view calls on unmount.
+    onProgress: (cb: (p: { step: number; total: number }) => void): (() => void) => {
+      const handler = (_event: unknown, payload: unknown): void => {
+        const p = (payload ?? {}) as { step?: unknown; total?: unknown };
+        if (Number.isInteger(p.step) && Number.isInteger(p.total)) {
+          cb({ step: p.step as number, total: p.total as number });
+        }
+      };
+      ipcRenderer.on("plugin:progress", handler);
+      return () => ipcRenderer.removeListener("plugin:progress", handler);
+    },
   },
   visibility: {
     publish: (input: PublishVisibilityInput): Promise<PublishResultView> =>

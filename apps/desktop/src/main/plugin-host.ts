@@ -94,6 +94,27 @@ function isMessage(raw: unknown): raw is ChildToHost {
   return typeof raw === "object" && raw !== null && typeof (raw as { type?: unknown }).type === "string";
 }
 
+// Progress is the FIRST child→host *notification* (all prior traffic was request/reply),
+// so the child's message is untrusted input crossing the trust boundary. Validate it
+// here, pure and unit-testable (no fork): forward ONLY a clean {step,total} when the
+// echoed runId matches the host-owned active run and the two counters are sane integers
+// (1 ≤ step ≤ total ≤ cap). Anything else → null (drop, no throw). The returned object
+// carries EXACTLY {step,total} — no key from the raw message can ride the channel.
+const MAX_PROGRESS_TOTAL = 1000;
+
+export function validateProgress(raw: unknown, activeRunId: number): { step: number; total: number } | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const m = raw as { runId?: unknown; step?: unknown; total?: unknown };
+  if (m.runId !== activeRunId) return null; // spoofed / stale id → not this run
+  const { step, total } = m;
+  if (!Number.isInteger(step) || !Number.isInteger(total)) return null; // NaN/Infinity/float rejected
+  const s = step as number;
+  const t = total as number;
+  if (t < 1 || t > MAX_PROGRESS_TOTAL) return null;
+  if (s < 1 || s > t) return null;
+  return { step: s, total: t };
+}
+
 export interface RunPluginDeps {
   manifest: PluginManifest;
   /** `brain` capability. The fixture uses only `fetch`; a stub throws if a skill asks. */
@@ -103,6 +124,10 @@ export interface RunPluginDeps {
   /** Override the whole-run cap. The CLI brain is slow per call, so a multi-call skill
    *  needs more than the default 30s. Still bounded — a hung skill can't run forever. */
   runTimeoutMs?: number;
+  /** Optional UI sink for validated progress ("step N of total"). The host forwards
+   *  only clean, runId-matched integers here (see `validateProgress`); it stays
+   *  UI-agnostic — the caller decides where the two numbers go. */
+  onProgress?: (step: number, total: number) => void;
 }
 
 export function runPlugin(deps: RunPluginDeps, input: string): Promise<RunSkillResult> {
@@ -154,6 +179,13 @@ export function runPlugin(deps: RunPluginDeps, input: string): Promise<RunSkillR
       if (raw.type === "result") {
         if (raw.runId !== runId) return; // spoofed / stale id → ignore
         finish(raw.ok ? { ok: true, message: "Done.", result: raw.output ?? "" } : { ok: false, message: "That skill couldn't finish." });
+        return;
+      }
+      if (raw.type === "progress") {
+        // Validated at the trust boundary — a bad/stale/flooded progress is dropped
+        // silently, never thrown, never forwarded to the renderer.
+        const clean = validateProgress(raw, runId);
+        if (clean) deps.onProgress?.(clean.step, clean.total);
         return;
       }
       if (raw.type === "cap") {

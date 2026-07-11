@@ -73,6 +73,9 @@ async function run(runId: number, pluginId: string, input: string): Promise<void
   const ctx: PluginContext = {};
   if (plugin.manifest.capabilities.includes("brain")) ctx.brain = { generate: (p) => callCap("brain", p) };
   if (plugin.manifest.capabilities.includes("fetch")) ctx.fetch = (u) => callCap("fetch", u);
+  // Progress is a pure notification (no power granted) — tag it with THIS run's id so
+  // the host can gate it. The host re-validates step/total; the child is untrusted.
+  ctx.progress = (step, total) => send({ type: "progress", runId, step, total });
   try {
     const output = await plugin.run(ctx, input);
     send({ type: "result", runId, ok: true, output });

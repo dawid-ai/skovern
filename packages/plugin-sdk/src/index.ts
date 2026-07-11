@@ -28,6 +28,10 @@ export interface PluginContext {
   brain?: { generate(prompt: string): Promise<string> };
   /** Read a page from the internet (receipted). Present iff `"fetch"` granted. */
   fetch?: (url: string) => Promise<string>;
+  /** Report progress through a long run ("step N of total") so the UI can show it.
+   *  A pure notification — carries only two integers, never brain output. Always
+   *  present when a skill runs; the host validates every step before forwarding. */
+  progress?: (step: number, total: number) => void;
 }
 
 /** A skill: its manifest + the work it does when run. */

@@ -11,5 +11,6 @@ export type HostToChild =
 export type ChildToHost =
   | { type: "ready" }
   | { type: "result"; runId: number; ok: boolean; output?: string; error?: string }
+  | { type: "progress"; runId: number; step: number; total: number }
   | { type: "cap"; reqId: number; capability: string; arg: string }
   | { type: "sandbox-result"; runId: number; fsReadDenied: boolean; spawnDenied: boolean; detail?: string };
