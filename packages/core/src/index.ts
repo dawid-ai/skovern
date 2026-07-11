@@ -17,6 +17,8 @@ export { createNewsClient } from "./news/client.js";
 export type { NewsClient, NewsPost } from "./news/client.js";
 export { createDmClient } from "./dm/client.js";
 export type { DmClient, DmResult, Thread, ThreadMessage, Sender } from "./dm/client.js";
+export { createPublishClient } from "./publish/client.js";
+export type { PublishClient, PublishResult, VisibilityToPublish } from "./publish/client.js";
 
 export { createRouter } from "./router/router.js";
 export type { RouterConfig } from "./router/router.js";

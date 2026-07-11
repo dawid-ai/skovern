@@ -12,7 +12,8 @@ import {
   handleDmThread,
   type DmDeps,
 } from "../dm/handlers.js";
-import { handlePublish } from "../publish/handlers.js";
+import { handlePublish, handlePublishVisibility, handleVisibilityPage } from "../publish/handlers.js";
+import type { VisibilityStore } from "../publish/visibility-store.js";
 
 // Magic-link payloads are a few hundred bytes; cap hard so a flood can't buffer.
 const MAX_BODY = 4096;
@@ -79,10 +80,22 @@ function sameOriginOk(req: IncomingMessage): boolean {
 
 const BAD_ORIGIN: HttpResult = { status: 403, body: { ok: false, message: "Bad origin." } };
 
+// The absolute public base for links + og:image. Prefer the configured origin;
+// only fall back to the (spoofable) Host header for local dev, honoring a TLS
+// proxy's forwarded scheme.
+function resolveOrigin(req: IncomingMessage, publicOrigin: string | undefined): string {
+  if (publicOrigin) return publicOrigin;
+  const fwd = req.headers["x-forwarded-proto"];
+  const proto = (Array.isArray(fwd) ? fwd[0] : fwd)?.split(",")[0] ?? "http";
+  return `${proto}://${req.headers.host ?? "127.0.0.1"}`;
+}
+
 export function startAuthServer(opts: {
   service: AuthService;
   news?: NewsStore;
   dm?: DmDeps;
+  /** User-published AI Visibility results (loop 013b). */
+  visibility?: VisibilityStore;
   /** Guards the founder admin surface (DM thread, news publish). Null = off. */
   adminToken?: string | null;
   /** Absolute public base (e.g. https://deskhand.app) for og:image URLs. When
@@ -104,20 +117,19 @@ export function startAuthServer(opts: {
           }
           return send(res, await handleNews(opts.news));
         }
-        // Public published pages + OG cards, e.g. /u/news/<slug>[/og.svg].
-        if (path.startsWith("/u/") && opts.news) {
+        // Public published pages + OG cards, e.g. /u/news/<slug> or
+        // /u/visibility/<id> [/og.svg]. GET only, no auth (readable without account).
+        if (path.startsWith("/u/")) {
           if (method !== "GET") {
             return send(res, { status: 405, body: { ok: false, message: "Use GET." } });
           }
-          // Prefer the configured public origin; only fall back to the (spoofable)
-          // Host header for local dev, honoring a TLS proxy's forwarded scheme.
-          let origin = opts.publicOrigin;
-          if (!origin) {
-            const fwd = req.headers["x-forwarded-proto"];
-            const proto = (Array.isArray(fwd) ? fwd[0] : fwd)?.split(",")[0] ?? "http";
-            origin = `${proto}://${req.headers.host ?? "127.0.0.1"}`;
+          const origin = resolveOrigin(req, opts.publicOrigin);
+          const parts = path.split("/").slice(2);
+          if (parts[0] === "visibility" && opts.visibility) {
+            return send(res, await handleVisibilityPage(opts.visibility, parts, origin));
           }
-          return send(res, await handlePublish(opts.news, path.split("/").slice(2), origin));
+          if (opts.news) return send(res, await handlePublish(opts.news, parts, origin));
+          return send(res, { status: 404, body: { ok: false, message: "Not found." } });
         }
         // Founder DM inbox: per-user threads + reply boxes (GET, Basic-auth).
         if (path === "/admin/dm" && opts.dm) {
@@ -179,6 +191,28 @@ export function startAuthServer(opts: {
             return send(res, { status: 405, body: { ok: false, message: "Use GET." } });
           }
           return send(res, await handleDmThread(opts.dm, bearer(req)));
+        }
+        // Publish an AI Visibility result → a public /u/visibility/:id link
+        // (POST, session bearer — an outbound action needs an authenticated owner).
+        if (path === "/publish/visibility" && opts.visibility) {
+          if (method !== "POST") {
+            return send(res, { status: 405, body: { ok: false, message: "Use POST." } });
+          }
+          let pubBody: unknown;
+          try {
+            pubBody = await readJson(req);
+          } catch {
+            return send(res, { status: 400, body: { ok: false, message: "Bad request." } });
+          }
+          return send(
+            res,
+            await handlePublishVisibility(
+              { auth: opts.service, store: opts.visibility },
+              bearer(req),
+              pubBody,
+              resolveOrigin(req, opts.publicOrigin),
+            ),
+          );
         }
         // Mark the user's founder replies as seen (POST, session).
         if (path === "/dm/read" && opts.dm) {

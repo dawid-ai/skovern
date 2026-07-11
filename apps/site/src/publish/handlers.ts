@@ -1,6 +1,8 @@
 import type { HttpResult } from "../auth/handlers.js";
 import type { NewsStore } from "../news/store.js";
-import { renderOgImage, renderPostPage } from "./render.js";
+import type { AuthService } from "../auth/service.js";
+import type { VisibilityStore } from "./visibility-store.js";
+import { renderOgImage, renderPostPage, renderVisibilityOg, renderVisibilityPage } from "./render.js";
 
 // Public, no-auth pages for published artifacts. First (only) content type is
 // `news`; the shape /u/:type/:id generalizes to other artifacts later. `origin`
@@ -13,8 +15,10 @@ const NOT_FOUND: HttpResult = {
   contentType: "text/html",
 };
 
-// Public pages render admin-authored content that's already escaped; a strict
-// CSP is cheap defense-in-depth (no scripts, images from same origin only).
+// Public pages render admin-authored (news) AND user-published (visibility)
+// content — all of it escape-first in render.ts. A strict CSP is cheap
+// defense-in-depth (no scripts, images from same origin only), and it matters
+// more now that some content originates from users + model output.
 const PAGE_HEADERS = {
   "content-security-policy": "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'",
   "x-content-type-options": "nosniff",
@@ -60,6 +64,72 @@ export async function handlePublish(
       contentType: "text/html",
       headers: PAGE_HEADERS,
     };
+  }
+  return NOT_FOUND;
+}
+
+// --- Published AI Visibility results (loop 013b) ---------------------------
+
+export interface PublishDeps {
+  auth: AuthService;
+  store: VisibilityStore;
+}
+
+function field(body: unknown, key: string): unknown {
+  return typeof body === "object" && body !== null ? (body as Record<string, unknown>)[key] : undefined;
+}
+
+/** POST /publish/visibility — a signed-in user publishes their result. Session
+ *  required (an OUTBOUND action → an authenticated owner). Returns the public URL. */
+export async function handlePublishVisibility(
+  deps: PublishDeps,
+  sessionToken: string | null,
+  body: unknown,
+  origin: string,
+): Promise<HttpResult> {
+  const account = sessionToken ? await deps.auth.validateSession(sessionToken) : null;
+  if (!account) return { status: 401, body: { ok: false, message: "Please sign in first." } };
+
+  const business = typeof field(body, "business") === "string" ? (field(body, "business") as string).trim() : "";
+  if (!business) return { status: 400, body: { ok: false, message: "Add your business name first." } };
+  const score = field(body, "score");
+  if (typeof score !== "number" || !Number.isFinite(score)) {
+    return { status: 400, body: { ok: false, message: "That result looks off — run the check again." } };
+  }
+  const rawComp = field(body, "competitors");
+  const competitors = Array.isArray(rawComp) ? rawComp.filter((c): c is string => typeof c === "string") : [];
+
+  const id = await deps.store.create({ accountId: account.accountId, business, score, competitors });
+  return { status: 200, body: { ok: true, id, url: `${origin}/u/visibility/${id}` } };
+}
+
+/** GET /u/visibility/:id[/og.svg] — the public page + its share card. */
+export async function handleVisibilityPage(
+  store: VisibilityStore,
+  parts: string[],
+  origin: string,
+): Promise<HttpResult> {
+  const [, id, sub] = parts;
+  if (!id) return NOT_FOUND;
+  let key: string;
+  try {
+    key = decodeURIComponent(id);
+  } catch {
+    return NOT_FOUND;
+  }
+  const v = await store.getById(key);
+  if (!v) return NOT_FOUND;
+
+  if (sub === "og.svg") {
+    return {
+      status: 200,
+      body: renderVisibilityOg(v),
+      contentType: "image/svg+xml",
+      headers: { "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'" },
+    };
+  }
+  if (sub === undefined) {
+    return { status: 200, body: renderVisibilityPage(v, origin), contentType: "text/html", headers: PAGE_HEADERS };
   }
   return NOT_FOUND;
 }

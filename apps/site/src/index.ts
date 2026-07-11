@@ -11,6 +11,8 @@ export type { HttpResult } from "./auth/handlers.js";
 export { startAuthServer } from "./auth/server.js";
 export type { RunningServer } from "./auth/server.js";
 export { NewsStore } from "./news/store.js";
+export { VisibilityStore } from "./publish/visibility-store.js";
+export type { PublishedVisibility } from "./publish/visibility-store.js";
 export { POSTS } from "./news/posts.js";
 export type { NewsPost } from "./news/posts.js";
 export { DmStore } from "./dm/store.js";

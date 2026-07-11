@@ -7,6 +7,7 @@ import { NewsStore } from "../news/store.js";
 import { POSTS } from "../news/posts.js";
 import { DmStore } from "../dm/store.js";
 import { pickNotifier } from "../dm/notifier.js";
+import { VisibilityStore } from "../publish/visibility-store.js";
 
 // Defaults match docker-compose.yml so `pnpm dev` works right after `db:up`.
 const DEFAULT_DATABASE_URL = "postgres://deskhand:deskhand@localhost:5442/deskhand";
@@ -28,11 +29,13 @@ async function main(): Promise<void> {
 
   const news = new NewsStore(pool);
   const dm = new DmStore(pool);
+  const visibility = new VisibilityStore(pool);
   try {
     await new AuthStore(pool).migrate();
     await news.migrate();
     await news.syncPosts(POSTS);
     await dm.migrate();
+    await visibility.migrate();
   } catch (err) {
     console.error(
       `[auth-server] can't reach the database at ${databaseUrl.replace(/:[^:@/]*@/, ":***@")}.\n` +
@@ -50,6 +53,7 @@ async function main(): Promise<void> {
     service: auth,
     news,
     dm: { auth, store: dm, notifier: pickNotifier() },
+    visibility,
     adminToken: process.env["DESKHAND_ADMIN_TOKEN"] ?? null,
     publicOrigin: (process.env["APP_URL"] ?? "").replace(/\/$/, "") || undefined,
     port,

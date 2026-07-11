@@ -1,5 +1,6 @@
 import { escapeHtml } from "../html.js";
 import type { NewsPost } from "../news/posts.js";
+import type { PublishedVisibility } from "./visibility-store.js";
 
 // The whole safety argument lives here: we ESCAPE first, then emit a fixed,
 // tiny set of structural tags (<p>, <br>) that we generate ourselves. Nothing
@@ -53,4 +54,50 @@ export function renderOgImage(post: NewsPost): string {
 
 function clip(s: string, max: number): string {
   return s.length > max ? s.slice(0, max - 1) + "…" : s;
+}
+
+// --- Published AI Visibility results (loop 013b) ---------------------------
+// Same safety argument as the post page: escape EVERY user/model-supplied string
+// (business name, competitor names) before it touches HTML. Numbers are clamped
+// to 0–100 in the store, so the score is safe to interpolate.
+
+function grade(score: number): string {
+  if (score >= 67) return "AI knows them well";
+  if (score >= 34) return "AI sort of knows them";
+  return "AI barely knows them yet";
+}
+
+export function renderVisibilityPage(v: PublishedVisibility, origin: string): string {
+  const business = escapeHtml(v.business);
+  const ogImage = `${origin}/u/visibility/${encodeURIComponent(v.id)}/og.svg`;
+  const competitors = v.competitors.length
+    ? `<p>AI also brought up: ${v.competitors.map((c) => escapeHtml(c)).join(", ")}</p>`
+    : "";
+  return (
+    `<!doctype html><html lang="en"><head>` +
+    `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">` +
+    `<title>${business} · AI Visibility · Deskhand</title>` +
+    `<meta property="og:type" content="website">` +
+    `<meta property="og:title" content="${business} — AI Visibility ${v.score}/100">` +
+    `<meta property="og:image" content="${escapeHtml(ogImage)}">` +
+    `<meta name="twitter:card" content="summary_large_image">` +
+    `</head><body>` +
+    `<main><h1>${business}</h1>` +
+    `<p><strong>AI Visibility: ${v.score}/100</strong> — ${grade(v.score)}</p>` +
+    competitors +
+    `<p>Made with Deskhand — see what AI says about your business.</p>` +
+    `</main></body></html>`
+  );
+}
+
+export function renderVisibilityOg(v: PublishedVisibility): string {
+  const business = escapeHtml(clip(v.business, 40));
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">` +
+    `<rect width="1200" height="630" fill="#0f172a"/>` +
+    `<text x="80" y="120" font-family="sans-serif" font-size="32" fill="#38bdf8">Deskhand · AI Visibility</text>` +
+    `<text x="80" y="300" font-family="sans-serif" font-size="64" font-weight="bold" fill="#f8fafc">${business}</text>` +
+    `<text x="80" y="420" font-family="sans-serif" font-size="96" font-weight="bold" fill="#38bdf8">${v.score}/100</text>` +
+    `</svg>`
+  );
 }
