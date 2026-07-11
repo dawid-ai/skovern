@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import type { AiVisibilityResult } from "../../../plugins/ai-visibility/result.js";
+import { Answer } from "../components/Answer.js";
 
 // The AI Visibility result view — reached from Skills (its own place, not a blob on
 // the Skills list). You tell it about your business, it asks your brain, and shows
 // what came back: a score WE compute, the verbatim answers, competitors, and fix-its.
-// Every answer string is untrusted model output — React escapes it on render.
+// Every answer string is untrusted model output — the <Answer> component renders it
+// as markdown at react-markdown's SAFE default (no raw HTML, dangerous link
+// protocols dropped), so formatting shows but nothing can inject.
 
 function grade(score: number): string {
   if (score >= 67) return "AI knows you well";
@@ -116,7 +119,7 @@ export function AiVisibilityView({ onBack }: { onBack: () => void }) {
             {result.findings.map((f, i) => (
               <li key={i} className="card">
                 <h3>{f.prompt}</h3>
-                <p>{f.answer}</p>
+                <Answer>{f.answer}</Answer>
                 <p className="hint">
                   {f.scored ? (f.mentioned ? "✓ brought you up on its own" : "— didn't bring you up") : "· you asked directly (doesn't count toward the score)"}
                 </p>

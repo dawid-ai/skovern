@@ -487,3 +487,76 @@ footer {
   color: var(--muted);
   font-weight: 400;
 }
+
+/* Formatted brain answers (rendered markdown). Keep the reading rhythm tight so
+   lists and headings sit well inside the answer card. */
+.answer {
+  font-size: 13px;
+  color: var(--ink);
+  line-height: 1.55;
+}
+
+.answer > *:first-child {
+  margin-top: 0;
+}
+
+.answer > *:last-child {
+  margin-bottom: 0;
+}
+
+.answer p {
+  font-size: 13px;
+  color: var(--ink);
+  margin: 8px 0;
+}
+
+.answer h1,
+.answer h2,
+.answer h3,
+.answer h4 {
+  font-size: 14px;
+  color: var(--ink);
+  margin: 12px 0 4px;
+}
+
+.answer ul,
+.answer ol {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.answer li {
+  font-size: 13px;
+  color: var(--ink);
+  margin: 2px 0;
+}
+
+.answer a {
+  color: var(--accent);
+}
+
+.answer code {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 12px;
+  background: #f1e9df;
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+
+.answer pre {
+  background: #f1e9df;
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+
+.answer pre code {
+  background: none;
+  padding: 0;
+}
+
+.answer strong {
+  font-weight: 700;
+  color: var(--ink);
+}
