@@ -1,5 +1,5 @@
 import { app } from "electron";
-import { appendFileSync, createReadStream, existsSync } from "node:fs";
+import { appendFileSync, createReadStream, existsSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import path from "node:path";
@@ -15,9 +15,35 @@ export function receiptsFile(): string {
   return path.join(app.getPath("userData"), "receipts.jsonl");
 }
 
+// The single rotated log. One `.1` is enough: ~2 MB holds thousands of receipts,
+// far more than the panel's 500, so aging out the oldest costs no visible history.
+const MAX_BYTES = 2 * 1024 * 1024; // ~2 MB before the current log rotates to .1
+
+function rotatedFile(): string {
+  return receiptsFile() + ".1";
+}
+
+// Bound the log on disk: when the current file reaches the cap, rename it to `.1`
+// (replacing any prior `.1`) so on-disk usage stays ~2×cap. Renames are atomic and
+// never truncate the live file mid-write. Called BEFORE every append, and NOT
+// wrapped in a try/catch: if it throws, the append fails closed — same as an append
+// failure today, so no byte leaves the machine unrecorded.
+function rotateIfNeeded(): void {
+  const file = receiptsFile();
+  if (!existsSync(file)) return; // nothing written yet
+  if (statSync(file).size < MAX_BYTES) return;
+  const rotated = rotatedFile();
+  // Windows renameSync throws if the target already exists (EEXIST/EPERM); POSIX
+  // would overwrite. Clear any prior `.1` first so a single rotated file is kept
+  // uniformly on both platforms.
+  if (existsSync(rotated)) unlinkSync(rotated);
+  renameSync(file, rotated);
+}
+
 export function fileReceiptSink(): ReceiptSink {
   return {
     append(receipt: Receipt): void {
+      rotateIfNeeded();
       appendFileSync(receiptsFile(), JSON.stringify(receipt) + "\n");
     },
   };
@@ -30,6 +56,7 @@ export function fileReceiptSink(): ReceiptSink {
 export function fileFetchSink(): FetchSink {
   return {
     async append(receipt: FetchReceipt): Promise<void> {
+      rotateIfNeeded();
       const fh = await open(receiptsFile(), "a");
       try {
         await fh.write(JSON.stringify(receipt) + "\n");
@@ -70,13 +97,10 @@ function parseLine(line: string): ReceiptView | null {
   return null;
 }
 
-// Read the egress log for the panel: at most the last MAX_RECEIPTS entries,
-// newest first, malformed lines skipped, [] if the file doesn't exist yet.
-// Read-only — the renderer can never write here.
-export async function readReceipts(): Promise<ReceiptView[]> {
-  const file = receiptsFile();
-  if (!existsSync(file)) return [];
-  const ring: ReceiptView[] = [];
+// Stream one log file's lines into the shared ring, keeping only the newest N.
+// Missing file → no-op (the `.1` may not exist, or the current log not yet written).
+async function streamInto(file: string, ring: ReceiptView[]): Promise<void> {
+  if (!existsSync(file)) return;
   const rl = createInterface({ input: createReadStream(file, "utf8"), crlfDelay: Infinity });
   try {
     for await (const line of rl) {
@@ -89,6 +113,17 @@ export async function readReceipts(): Promise<ReceiptView[]> {
   } finally {
     rl.close();
   }
+}
+
+// Read the egress log for the panel: at most the last MAX_RECEIPTS entries,
+// newest first, malformed lines skipped, [] if the file doesn't exist yet.
+// Reads the rotated `.1` (older) THEN the current file (newer) into the SAME ring,
+// so the newest-N window and the final reverse fall out naturally across a rotation.
+// Read-only — the renderer can never write here.
+export async function readReceipts(): Promise<ReceiptView[]> {
+  const ring: ReceiptView[] = [];
+  await streamInto(rotatedFile(), ring);
+  await streamInto(receiptsFile(), ring);
   return ring.reverse(); // newest first
 }
 
