@@ -55,12 +55,24 @@ This reconciles the original "no Ollama" rule: we never *require* Ollama or a te
 ### Updatability (a Dawid concern — answered by design)
 
 Two clocks, only one slow:
-- **The model catalog is data** (a JSON list). Host it remotely → new models appear
-  **without an app update**. Fast clock, our control.
+- **The model catalog is data** (a JSON list), and it's **live from day one.** It lives
+  in a dedicated **`catalog/` folder in this public repo** and the app **fetches it at
+  use-time** from `https://raw.githubusercontent.com/dawid-ai/deskhand/main/catalog/models.json`
+  (repo is public → unauthenticated). So we ship a new/updated model list by **merging a
+  JSON change — no app update.** A **bundled snapshot** is the offline fallback; the
+  catalog fetch is **egress → receipted** ("checked the model list · github.com"); a
+  failed/missing/malformed fetch surfaces a **descriptive error** and falls back to the
+  snapshot, never a silent break.
 - **The engine version** (llama.cpp via node-llama-cpp) updates on **app-release
   cadence**; only a brand-new architecture forces a bump. For Ollama users the runtime
   is *always current* (Ollama updates itself). So the abstraction gives us both a
   self-updating path (Ollama) and a controlled path (embedded) — no lock-in.
+
+**Descriptive errors everywhere (a Dawid requirement).** Every failure in this flow —
+Ollama not running, catalog unreachable, model file missing, a pull that stalls, a
+model that won't load — surfaces a **specific, plain-language** message ("We couldn't
+reach the model list — check your internet" / "Ollama isn't running — start it and try
+again"), not a generic "something went wrong," so a user or support can pinpoint it.
 
 ## The honesty engine: hardware scan → verdict
 
@@ -94,15 +106,22 @@ well-understood heuristic over our maintainable (remote-updatable) catalog.
 
 - The **Settings brain-picker** (011/014) gains **"On this computer — free & private."**
 - Choosing it opens a dedicated **local-brain setup view** (its own place, per the IA
-  rule): the **hardware verdict**, the runnable models with **fit dots**, a
-  **recommended** one up front and an **"Advanced / see all models"** reveal for the
-  curious, and a **"Check my computer again"** action (re-scan is always available —
-  hardware changes, upgrades, and especially **migrating the tool to a new machine**,
-  where settings travel but the model file may not).
-- **Per-model transparency** (plain language, for a non-tech user): each model says
+  rule): the **hardware verdict**; the models shown in two clear groups —
+  **what you already have** (the user's pulled Ollama models, marked "already on your
+  computer", fit-checked) and **our suggestions** (a couple of curated picks with their
+  **trade-offs** spelled out — e.g. "fastest, lighter answers" vs "smarter, needs more
+  memory / slower", each marked *already downloaded* or *needs a download*); the **best
+  choice highlighted** (whether it's already downloaded or needs a fresh pull); an
+  **"Advanced / see all models"** reveal; and a **"Check my computer again"** action
+  (re-scan is always available — hardware changes, upgrades, and especially **migrating
+  the tool to a new machine**, where settings travel but the model file may not).
+- **Getting a suggested model needs no downloader of ours in Loop 1:** a "Get this one"
+  on a not-yet-downloaded suggestion calls **Ollama's own pull API** (`POST /api/pull`,
+  streamed) and shows a progress bar — Ollama does the fetching, so still no native dep
+  and no download plumbing on our side.
+- **Per-model transparency** (plain language, for a non-tech user): each suggestion says
   *"Made by XYZ, not by Deskhand — a free file you run privately. Where it comes from →"*
-  with a real link to its Hugging Face / homepage + its license in plain words. (Most
-  relevant to Loop 2's download flow; Loop 1 shows provenance where Ollama exposes it.)
+  with a real link to its Hugging Face / homepage + its license in plain words.
 - **Receipts:** a `local` call has **no egress**, so its receipt reads **"stayed on
   your computer — nothing left,"** not a false "sent." This makes the privacy claim
   *visible* on the receipts panel (015).
@@ -117,16 +136,27 @@ proving nothing left the machine. Builds the whole spine (interface, verdict, pr
 receipts, UI, re-scan) with **no native dep and no multi-GB download**.
 
 ### In scope
-- `LocalEngine` interface + **Ollama backend** (`detect` via `GET /api/tags`;
-  `listModels` from the tags; `generate` via `/api/generate` or `/api/chat`).
+- `LocalEngine` interface + **Ollama backend**: `detect` via `GET /api/tags`;
+  `listModels` from the tags; `generate` via `/api/generate` or `/api/chat`; **`pull`
+  via `POST /api/pull`** (streamed progress) for getting a suggested model.
+- **Curated model catalog**, live: `catalog/models.json` in this repo, **fetched at
+  use-time** from raw.githubusercontent + **bundled snapshot fallback**; the fetch is
+  **receipted** (github) and a failure surfaces a **descriptive error** + falls back.
+  Each entry: id, label, params, size, quant, **creator, homepage/HF link, license
+  (plain words)**, and a short **trade-off blurb**.
 - `HardwareProfile` scan (best-effort GPU/VRAM + RAM/CPU/disk) + `verdict()` pure fn.
 - `local` provider in the router (`ProviderId += "local"`), backed by the Ollama
-  engine; selected by `buildRouter()`; robust — a dead/again Ollama yields a friendly
-  failure, never a main-process crash (the `claude-cli`/`collectOutput` discipline).
-- **No-egress receipts** for `local` calls (router receipt logic marks provider
-  `local` as on-machine — "stayed on your computer").
-- Settings brain-picker option + the local-brain setup view (verdict, model list w/
-  fit dots, recommended + Advanced reveal, **re-scan**).
+  engine; selected by `buildRouter()`; robust — a dead/absent Ollama yields a friendly
+  **descriptive** failure, never a main-process crash (the `claude-cli`/`collectOutput`
+  discipline).
+- **No-egress receipts** for `local` generate calls (router receipt logic marks
+  provider `local` as on-machine — "stayed on your computer").
+- Settings brain-picker option + the local-brain setup view: **what-you-have** vs
+  **our-suggestions** (trade-offs, downloaded/needs-download, best highlighted), fit
+  dots, per-model transparency + link, **"Get this one" → Ollama pull w/ progress**,
+  **Advanced** reveal, **re-scan**.
+- **Descriptive errors** across the flow (Ollama down, catalog unreachable, pull
+  failed, model won't load).
 - **Loopback-only guard:** the Ollama base URL is `http://127.0.0.1:11434` by default;
   any override is a dev/test seam (`DESKHAND_OLLAMA_URL`, gated `!app.isPackaged`), so
   the "local" backend can never be pointed at a remote host to exfiltrate prompts.
@@ -135,18 +165,23 @@ receipts, UI, re-scan) with **no native dep and no multi-GB download**.
 - **Unit — verdict honesty table:** potato / laptop / workstation profiles ×
   representative models → correct fit + usability + the right plain verdict, **including
   the "can't run well → use the cloud" case**.
-- **Unit — Ollama backend:** parses `/api/tags`, `generate` returns text, and every
-  failure mode (Ollama down, non-200, malformed) becomes a friendly rejection, not a
-  crash. Against a **fixture HTTP server**, not a real Ollama, in CI.
+- **Unit — Ollama backend:** parses `/api/tags`, `generate` returns text, `pull`
+  streams progress, and every failure mode (Ollama down, non-200, malformed) becomes a
+  **specific descriptive** rejection, not a crash. Against a **fixture HTTP server**,
+  not a real Ollama, in CI.
+- **Unit — catalog:** live fetch parses a valid `models.json`; a failed/malformed fetch
+  **falls back to the bundled snapshot** and yields a **descriptive** error/notice; the
+  fetch writes a **github receipt**. (Fixture server, not real GitHub, in CI.)
 - **Unit/negative — no false egress:** a `local` generate writes a receipt marked
   on-machine (no network "sent" line); assert the receipt shape.
 - **Negative — loopback guard:** a non-loopback `DESKHAND_OLLAMA_URL` is refused when
   packaged (or the override is inert when packaged). Assert it can't point off-box.
-- **App e2e:** Settings → "On this computer" → (fixture Ollama w/ fake models) →
-  verdict + model list render → pick one → run a skill → the Receipts page shows a
-  **"stayed on your computer"** entry, no egress line.
+- **App e2e:** Settings → "On this computer" → (fixture Ollama + fixture catalog) →
+  verdict + "what you have" + "our suggestions" (trade-offs, download state) render →
+  pick an already-downloaded model → run a skill → the Receipts page shows a
+  **"stayed on your computer"** entry (no egress line) **and** a github catalog receipt.
 - **Hand-validation (Dawid):** with a **real** Ollama running, the flow works end to
-  end on a real model.
+  end on a real model (incl. a "Get this one" pull if a suggestion isn't downloaded).
 
 ### Out of scope (→ later loops)
 - **Loop 2:** embedded `node-llama-cpp` runtime + the curated model **catalog** +
@@ -159,18 +194,23 @@ receipts, UI, re-scan) with **no native dep and no multi-GB download**.
 ### Security notes (for the reviewer)
 - **Loopback-only** for the Ollama backend (above) — the whole "local = private" claim
   depends on it; the override must be inert when packaged. (Testable → metric.)
-- **No false egress receipt** for local calls; and if the download path ever lands
-  (Loop 2) that download IS egress and must be receipted.
+- **No false egress receipt** for local *generate* calls (they stay on-machine). But
+  the **catalog fetch IS egress** (to github) and **must be receipted** in Loop 1; the
+  Loop 2 model download likewise.
+- **Untrusted catalog:** `models.json` is fetched from the network, so it's untrusted
+  input — validate its shape, and treat every string (labels, links, blurbs) as
+  untrusted when rendered (escape; links get `rel="noreferrer"`, no `javascript:`).
 - **Untrusted model output** from a local model is the same untrusted text as any
   brain — it flows through the existing escaping (render/markdown) unchanged.
 - Robustness: a local backend can never crash the trusted main process (mirror
   `claude-cli`).
 
-## Open questions for Dawid
-1. Loop 1 shows the user's **already-pulled** Ollama models. Do you also want it to
-   **suggest models to pull** (with a copy-paste `ollama pull …` hint) in Loop 1, or
-   keep Loop 1 to "use what you have" and leave model-getting to Loop 2's embedded
-   downloader? (Default: use-what-you-have; simplest.)
-2. The remote-updatable catalog (host the models JSON so new models ship without an app
-   update): build the remote-fetch in Loop 2 (when it first matters), or bake a local
-   JSON now and add remote later? (Default: local JSON now, remote in Loop 2.)
+## Resolved (Dawid, 2026-07-12)
+1. **Show both** — the user's already-pulled Ollama models (marked "already on your
+   computer") **and** our curated suggestions with trade-offs (marked downloaded /
+   needs-download), best choice highlighted. Getting a not-downloaded suggestion uses
+   **Ollama's own pull API** (progress bar) — no downloader of ours in Loop 1.
+2. **Live catalog now** — `catalog/models.json` in this public repo, fetched at
+   use-time (raw.githubusercontent), bundled-snapshot fallback, receipted, descriptive
+   errors. Not deferred.
+3. **Descriptive errors** are a cross-cutting requirement for the whole flow.
