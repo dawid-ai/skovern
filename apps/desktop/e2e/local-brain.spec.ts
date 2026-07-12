@@ -17,6 +17,21 @@ import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningSer
 
 const LOCAL_REPLY = "Hello from your private local brain.";
 
+// A fixed CPU-only machine so the verdict is deterministic on ANY runner (CI is
+// CPU-only; a dev box may have a big GPU). With 16 GB RAM and no usable GPU:
+// mistral:7b + qwen2.5:3b are amber (usable), qwen2.5:235b is red — so the pulled
+// mistral:7b is always the biggest-usable recommendation. Fed via the DESKHAND_HARDWARE
+// dev/test seam (inert when packaged).
+const CPU_HARDWARE = JSON.stringify({
+  ramBytes: 16 * 1024 ** 3,
+  cpuCores: 8,
+  gpus: [],
+  bestVramBytes: null,
+  unifiedMemory: false,
+  diskFreeBytes: 200 * 1024 ** 3,
+  notes: [],
+});
+
 // The fake Ollama exposes /api/tags (one downloaded model) + /api/generate. Kept in
 // a small object so the test can shut it down to exercise the "not running" error.
 let ollama: Server | null = null;
@@ -27,10 +42,14 @@ function startOllama(): Promise<string> {
     ollama = createServer((req, res) => {
       const url = req.url ?? "";
       if (req.method === "GET" && url === "/api/tags") {
+        // The user's OWN pulled model — NOT in the catalog — and big enough to be the
+        // best fit. This is what surfaces the 019 contradiction: the catalog-only
+        // verdict (old headline) would pick a smaller catalog model, while the
+        // catalog+own verdict (the hero) picks this. Post-fix they must agree.
         res.writeHead(200, { "content-type": "application/json" });
         res.end(
           JSON.stringify({
-            models: [{ name: "qwen2.5:3b", size: 2_000_000_000, details: { quantization_level: "Q4_K_M", parameter_size: "3.1B" } }],
+            models: [{ name: "mistral:7b", size: 4_700_000_000, details: { quantization_level: "Q4_K_M", parameter_size: "7B" } }],
           }),
         );
         return;
@@ -40,6 +59,13 @@ function startOllama(): Promise<string> {
         res.end(JSON.stringify({ response: LOCAL_REPLY }));
         return;
       }
+      if (req.method === "POST" && url === "/api/pull") {
+        // Stream a tick of progress then success (NDJSON), so "Get this one" resolves.
+        res.writeHead(200, { "content-type": "application/x-ndjson" });
+        res.write(JSON.stringify({ status: "pulling", completed: 50_000_000, total: 100_000_000 }) + "\n");
+        res.end(JSON.stringify({ status: "success" }) + "\n");
+        return;
+      }
       res.writeHead(404);
       res.end("{}");
     });
@@ -47,7 +73,9 @@ function startOllama(): Promise<string> {
   });
 }
 
-// A fake catalog server: one already-downloaded model + one that needs a download.
+// A fake catalog: a smaller green suggestion (needs a download → exercises
+// "Get this one" download-and-use) + an always-red huge one. Neither is the user's
+// own model, so the best fit is the pulled `mistral:7b` above — that's the point.
 function startCatalog(): Promise<string> {
   return new Promise((resolve) => {
     catalog = createServer((_req, res) => {
@@ -68,13 +96,13 @@ function startCatalog(): Promise<string> {
               tradeoff: "A solid everyday pick — good balance of speed and smarts.",
             },
             {
-              // Deliberately huge so it's RED on any machine — keeps the downloaded
-              // 3B as the deterministic recommendation, and this one always lands in
-              // "Other options" (the honest "too big for this computer" advanced pick).
-              id: "qwen2.5:72b",
-              label: "Qwen2.5 72B",
-              params: 72,
-              sizeBytes: 42_000_000_000,
+              // Deliberately enormous (235B, ~140 GB) so its footprint exceeds any
+              // realistic machine's memory → RED everywhere (CPU CI and big dGPU hosts
+              // alike), so it's always an "Other options" pick, never the recommendation.
+              id: "qwen2.5:235b",
+              label: "Qwen2.5 235B",
+              params: 235,
+              sizeBytes: 140_000_000_000,
               quant: "Q4_K_M",
               creator: "Alibaba (Qwen team)",
               homepage: "https://huggingface.co/Qwen/Qwen2.5-72B-Instruct",
@@ -117,7 +145,7 @@ test.afterAll(async () => {
   catalog?.close();
 });
 
-test("user sets up a private on-computer brain, runs it, and sees a 'stayed on your computer' receipt", async () => {
+test("user sets up a private on-computer brain, always sees which brain is active, and runs it", async () => {
   test.setTimeout(180_000);
   const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
   const app = await electron.launch({
@@ -127,6 +155,7 @@ test("user sets up a private on-computer brain, runs it, and sees a 'stayed on y
       DESKHAND_API_URL: server.url,
       DESKHAND_OLLAMA_URL: ollamaUrl,
       DESKHAND_CATALOG_URL: catalogUrl,
+      DESKHAND_HARDWARE: CPU_HARDWARE,
     },
   });
 
@@ -141,6 +170,9 @@ test("user sets up a private on-computer brain, runs it, and sees a 'stayed on y
     await page.getByRole("button", { name: "Verify" }).click();
     await expect(page.getByText(/founding user #1/i)).toBeVisible();
 
+    // the always-visible active-brain readout starts empty for a fresh user
+    await expect(page.getByText("No brain yet")).toBeVisible();
+
     // Settings → pick the local brain → open its dedicated setup view
     await page.getByRole("button", { name: "Settings" }).click();
     await page.getByLabel("Your brain").selectOption("local");
@@ -150,30 +182,39 @@ test("user sets up a private on-computer brain, runs it, and sees a 'stayed on y
     await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible();
     await expect(page.getByText(/private brain|cloud brain|subscription/i).first()).toBeVisible({ timeout: 30_000 });
 
-    // ONE obvious pick up front: the single recommendation renders as the hero, with
-    // its trade-off, download state, best-highlight, and transparency line — no
-    // decision to make.
-    await expect(page.getByRole("heading", { name: "Our pick for your computer" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Qwen2.5 3B" })).toBeVisible();
-    await expect(page.getByText(/A solid everyday pick/)).toBeVisible();
+    // CONSISTENCY (regression for the 019 contradiction): the verdict headline names
+    // the SAME model as the "Our pick" hero. The user's own mistral:7b outranks the
+    // catalog picks, so it's the recommendation — before the fix, the headline (scored
+    // over the catalog ONLY) would name a catalog model while the hero named mistral.
+    // Asserted wording-independently (the headline copy differs on a green vs amber
+    // machine — CI is CPU-only — but the MODEL it names must match the hero either way).
+    await expect(page.getByRole("heading", { name: "Our pick for your computer" })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("heading", { name: "mistral:7b" })).toBeVisible();
+    await expect(page.locator(".local-headline")).toContainText("mistral:7b");
     await expect(page.getByText("Already on your computer").first()).toBeVisible();
     await expect(page.getByText("Best for your computer").first()).toBeVisible();
+
+    // everything else folds under "Other options" (hidden by default)
+    await expect(page.getByText("Qwen2.5 235B")).toBeHidden();
+    await expect(page.getByRole("heading", { name: "Qwen2.5 3B" })).toBeHidden();
+    await page.getByText("Other options", { exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Qwen2.5 3B" })).toBeVisible();
     await expect(page.getByText(/Made by Alibaba .* not by Deskhand/).first()).toBeVisible();
 
-    // the OTHER model is folded away by default — not shown until "Other options" opens
-    await expect(page.getByText("Qwen2.5 72B")).toBeHidden();
-    await page.getByText("Other options", { exact: true }).click();
-    await expect(page.getByText("Qwen2.5 72B")).toBeVisible();
-    // a not-yet-downloaded model offers "Get this one" (same one-click action the hero
-    // shows when the recommendation isn't downloaded — proven here since 72B isn't)
-    await expect(page.getByRole("button", { name: "Get this one" })).toBeVisible();
-
-    // pick the already-downloaded recommendation as the brain (one click)
+    // pick the recommended hero (mistral:7b, already downloaded) — one click
     await page.getByRole("button", { name: "Use this one" }).first().click();
     await expect(page.getByRole("button", { name: "This is your brain ✓" })).toBeVisible();
 
-    // back to Settings, run a real call on the local brain (Test my brain)
+    // ACTIVE-BRAIN WIDGET: the sidebar readout (above "Sign out") names the provider +
+    // model, and updated the instant we picked.
+    await expect(page.getByText("On this computer · mistral:7b")).toBeVisible({ timeout: 10_000 });
+
+    // back to Settings: the "right now you're using" line names the active provider+model
     await page.getByRole("button", { name: "← Back to Settings" }).click();
+    await expect(page.locator(".active-brain")).toContainText("On this computer");
+    await expect(page.locator(".active-brain")).toContainText("mistral:7b");
+
+    // run a real call on the local brain (Test my brain)
     await page.getByRole("button", { name: "Test my brain" }).click();
     await expect(page.getByText(LOCAL_REPLY)).toBeVisible({ timeout: 30_000 });
 
@@ -191,11 +232,23 @@ test("user sets up a private on-computer brain, runs it, and sees a 'stayed on y
     expect(log).toContain('"task":"Deskhand: model list"');
     expect(log).not.toContain(LOCAL_REPLY);
 
+    // IN-USE MARKER ON LOAD: reopening the local setup shows the active model as in use
+    // ("This is your brain ✓") without clicking anything.
+    await page.getByRole("button", { name: "Settings" }).click();
+    await page.getByRole("button", { name: "Set up the local brain →" }).click();
+    await expect(page.getByRole("button", { name: "This is your brain ✓" })).toBeVisible({ timeout: 30_000 });
+
+    // DOWNLOAD-AND-USE IN ONE CLICK: "Get this one" on a not-downloaded model (Qwen2.5
+    // 3B, under Other options) pulls AND selects it — the sidebar flips to the new model.
+    await page.getByText("Other options", { exact: true }).click();
+    await page.getByRole("button", { name: "Get this one" }).first().click();
+    await expect(page.getByText("On this computer · qwen2.5:3b")).toBeVisible({ timeout: 30_000 });
+
     // descriptive error when Ollama becomes unreachable: stop the fake server, reopen
-    // the setup view, and the plain-language "isn't running" message shows.
+    // the setup view → plain-language "isn't running" + NO dangling hero pick.
     await new Promise<void>((resolve) => (ollama ? ollama.close(() => resolve()) : resolve()));
     ollama = null;
-    await page.getByRole("button", { name: "Settings" }).click();
+    await page.getByRole("button", { name: "← Back to Settings" }).click();
     await page.getByRole("button", { name: "Set up the local brain →" }).click();
     await expect(page.getByText(/Ollama isn't running/i).first()).toBeVisible({ timeout: 30_000 });
     // and NO hero pick is shown when Ollama is down — the verdict still scores the

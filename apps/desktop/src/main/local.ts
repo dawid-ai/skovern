@@ -39,6 +39,22 @@ function catalogUrl(): string | undefined {
   return !app.isPackaged ? process.env["DESKHAND_CATALOG_URL"] || undefined : undefined;
 }
 
+// Hardware override: an unpackaged dev/test seam (mirror of the URL seams) that pins
+// a HardwareProfile so the verdict is deterministic on any runner (CI is CPU-only, a
+// dev box may have a big GPU). Inert when packaged — production always scans the real
+// machine. A malformed override falls back to a real scan, never a crash.
+async function scanProfile(): Promise<HardwareProfile> {
+  const override = !app.isPackaged ? process.env["DESKHAND_HARDWARE"] : undefined;
+  if (override) {
+    try {
+      return JSON.parse(override) as HardwareProfile;
+    } catch {
+      // malformed → fall through to a real scan
+    }
+  }
+  return scanHardware();
+}
+
 export function makeEngine(): LocalEngine {
   return ollamaEngine({ baseUrl: ollamaBaseUrl() });
 }
@@ -79,6 +95,20 @@ function toVerdictModel(m: { id: string; label: string; params?: number; sizeByt
   return { id: m.id, label: m.label, params, sizeBytes: m.sizeBytes };
 }
 
+// The candidate set the verdict scores: the catalog suggestions PLUS the user's own
+// pulled models (dedup'd against the catalog). BOTH `localStatus` (the headline) and
+// `localModels` (the hero) MUST score this same set, or the recommendation they name
+// diverges — the headline would pick the best catalog model while the hero picks a
+// bigger already-installed one. Single source → they always agree.
+function candidateVerdictModels(
+  catalogModels: { id: string; label: string; params?: number; sizeBytes?: number }[],
+  have: LocalModelInfo[],
+): VerdictModel[] {
+  const catalogIds = new Set(catalogModels.map((m) => m.id));
+  const ownHave = have.filter((m) => !catalogIds.has(m.id));
+  return [...catalogModels.map(toVerdictModel), ...ownHave.map(toVerdictModel)];
+}
+
 async function detectAndList(engine: LocalEngine): Promise<{ ready: boolean; have: LocalModelInfo[] }> {
   const ready = await engine.detect();
   if (!ready) return { ready: false, have: [] };
@@ -94,11 +124,11 @@ async function detectAndList(engine: LocalEngine): Promise<{ ready: boolean; hav
 export async function localStatus(): Promise<LocalStatusView> {
   const engine = makeEngine();
   const [profile, catalog, det] = await Promise.all([
-    scanHardware(),
+    scanProfile(),
     loadCatalog(fileFetchSink(), catalogUrl()),
     detectAndList(engine),
   ]);
-  const v = verdict(profile, catalog.models.map(toVerdictModel));
+  const v = verdict(profile, candidateVerdictModels(catalog.models, det.have));
   return {
     ollamaReady: det.ready,
     hardware: hardwareView(profile),
@@ -115,19 +145,18 @@ export async function localStatus(): Promise<LocalStatusView> {
 export async function localModels(): Promise<LocalModelsView> {
   const engine = makeEngine();
   const [profile, catalog, det] = await Promise.all([
-    scanHardware(),
+    scanProfile(),
     loadCatalog(fileFetchSink(), catalogUrl()),
     detectAndList(engine),
   ]);
 
   const haveIds = new Set(det.have.map((m) => m.id));
   const catalogIds = new Set(catalog.models.map((m) => m.id));
-
-  // Verdict over the union so the single recommendation spans both groups.
-  const suggestedVms = catalog.models.map(toVerdictModel);
   const ownHave = det.have.filter((m) => !catalogIds.has(m.id));
-  const haveVms = ownHave.map(toVerdictModel);
-  const v = verdict(profile, [...suggestedVms, ...haveVms]);
+
+  // Same candidate set as `localStatus` — so the headline and the hero name the
+  // SAME recommendation (see candidateVerdictModels).
+  const v = verdict(profile, candidateVerdictModels(catalog.models, det.have));
   const tierOf = (id: string) => v.fits.find((f) => f.modelId === id);
 
   const suggested: LocalModelView[] = catalog.models.map((c: CatalogModel) => {
