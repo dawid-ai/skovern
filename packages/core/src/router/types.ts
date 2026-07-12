@@ -3,13 +3,16 @@
 // the bytes that left the machine. The renderer never reaches a provider or a
 // key directly; it goes UI → core → here.
 
-export type ProviderId = "openrouter" | "anthropic" | "claude-cli";
+export type ProviderId = "openrouter" | "anthropic" | "claude-cli" | "local";
 
 /** A single brain the router can call. Adapters (AI SDK-backed) close over the
  *  API key, so the key never reaches the router or a receipt. */
 export interface Provider {
   readonly id: ProviderId;
   readonly model: string;
+  /** True when this provider runs ON the machine (e.g. a local model): the call
+   *  never leaves, so the router marks its receipt `local` instead of egress. */
+  readonly onMachine?: boolean;
   /** Send a prompt, get text back. Throws on a provider/network error. */
   generate(prompt: string): Promise<string>;
 }
@@ -33,6 +36,10 @@ export interface Receipt {
   ok: boolean;
   /** `"sent"` = recorded before egress; `"done"` = the outcome. */
   phase: "sent" | "done";
+  /** True when the call ran ON this machine (a local model) and NOTHING left it.
+   *  Absent/false for cloud brains. Lets the receipts panel prove "stayed on your
+   *  computer" instead of showing a false "sent". */
+  local?: boolean;
 }
 
 /** Where receipts go. Append-only. Injected, so core stays Electron-agnostic

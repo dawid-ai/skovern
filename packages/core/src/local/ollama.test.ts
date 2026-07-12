@@ -1,0 +1,155 @@
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { afterEach, describe, expect, it } from "vitest";
+import { ollamaEngine } from "./ollama.js";
+import type { PullProgress } from "./types.js";
+
+// O1 — the Ollama backend against a FIXTURE server (no real Ollama in CI): detect,
+// listModels, generate, and streamed pull parse correctly, and EVERY failure mode
+// becomes a specific, descriptive rejection (lint bans a bare .toThrow()).
+// O2 — the loopback-only guard: a non-loopback base URL is refused at construction.
+
+type Handler = (method: string, url: string, body: string) => { status: number; body: string; ndjson?: string[] };
+
+let server: Server | null = null;
+
+function startFixture(handler: Handler): Promise<string> {
+  return new Promise((resolve) => {
+    server = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        const out = handler(req.method ?? "", req.url ?? "", Buffer.concat(chunks).toString("utf8"));
+        if (out.ndjson) {
+          res.writeHead(out.status, { "content-type": "application/x-ndjson" });
+          for (const line of out.ndjson) res.write(line + "\n");
+          res.end();
+          return;
+        }
+        res.writeHead(out.status, { "content-type": "application/json" });
+        res.end(out.body);
+      });
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server!.address() as AddressInfo;
+      resolve(`http://127.0.0.1:${port}`);
+    });
+  });
+}
+
+afterEach(async () => {
+  await new Promise<void>((resolve) => (server ? server.close(() => resolve()) : resolve()));
+  server = null;
+});
+
+describe("ollamaEngine — happy paths (fixture server)", () => {
+  it("detects a running Ollama via GET /api/tags", async () => {
+    const base = await startFixture((_m, url) =>
+      url === "/api/tags" ? { status: 200, body: JSON.stringify({ models: [] }) } : { status: 404, body: "{}" },
+    );
+    const engine = ollamaEngine({ baseUrl: base });
+    expect(await engine.detect()).toBe(true);
+  });
+
+  it("lists the user's pulled models with size/quant/params parsed", async () => {
+    const base = await startFixture(() => ({
+      status: 200,
+      body: JSON.stringify({
+        models: [
+          { name: "qwen2.5:3b", size: 1_900_000_000, details: { quantization_level: "Q4_K_M", parameter_size: "3.1B" } },
+          { name: "llama3.2:1b", size: 800_000_000, details: { quantization_level: "Q8_0", parameter_size: "1.2B" } },
+        ],
+      }),
+    }));
+    const engine = ollamaEngine({ baseUrl: base });
+    const models = await engine.listModels();
+    expect(models.map((m) => m.id)).toEqual(["qwen2.5:3b", "llama3.2:1b"]);
+    expect(models[0]).toMatchObject({ sizeBytes: 1_900_000_000, quant: "Q4_K_M", params: 3.1 });
+  });
+
+  it("generates text from POST /api/generate", async () => {
+    const base = await startFixture((_m, url) =>
+      url === "/api/generate" ? { status: 200, body: JSON.stringify({ response: "Hello from a local model." }) } : { status: 404, body: "{}" },
+    );
+    const engine = ollamaEngine({ baseUrl: base });
+    expect(await engine.generate("qwen2.5:3b", "hi")).toBe("Hello from a local model.");
+  });
+
+  it("streams pull progress and completes", async () => {
+    const base = await startFixture((_m, url) =>
+      url === "/api/pull"
+        ? {
+            status: 200,
+            body: "",
+            ndjson: [
+              JSON.stringify({ status: "pulling manifest" }),
+              JSON.stringify({ status: "downloading", completed: 50, total: 100 }),
+              JSON.stringify({ status: "downloading", completed: 100, total: 100 }),
+              JSON.stringify({ status: "success" }),
+            ],
+          }
+        : { status: 404, body: "{}" },
+    );
+    const engine = ollamaEngine({ baseUrl: base });
+    const ticks: PullProgress[] = [];
+    await engine.pull("qwen2.5:3b", (p) => ticks.push(p));
+    expect(ticks.map((t) => t.status)).toContain("success");
+    expect(ticks.some((t) => t.percent === 50)).toBe(true);
+    expect(ticks.some((t) => t.percent === 100)).toBe(true);
+  });
+});
+
+describe("ollamaEngine — descriptive failures", () => {
+  it("names Ollama-not-running when the server is unreachable", async () => {
+    // A loopback port with nothing listening → connection refused.
+    const engine = ollamaEngine({ baseUrl: "http://127.0.0.1:1" });
+    await expect(engine.listModels()).rejects.toThrow(/Ollama isn't running/i);
+    // detect() is a soft probe: it resolves false, never rejects.
+    expect(await engine.detect()).toBe(false);
+  });
+
+  it("reports a non-200 status with the code", async () => {
+    const base = await startFixture(() => ({ status: 503, body: "busy" }));
+    const engine = ollamaEngine({ baseUrl: base });
+    await expect(engine.listModels()).rejects.toThrow(/error \(503\)/i);
+  });
+
+  it("reports a malformed models body clearly", async () => {
+    const base = await startFixture(() => ({ status: 200, body: "not json at all" }));
+    const engine = ollamaEngine({ baseUrl: base });
+    await expect(engine.listModels()).rejects.toThrow(/couldn't read/i);
+  });
+
+  it("reports an empty generate reply clearly", async () => {
+    const base = await startFixture(() => ({ status: 200, body: JSON.stringify({ response: "" }) }));
+    const engine = ollamaEngine({ baseUrl: base });
+    await expect(engine.generate("m", "hi")).rejects.toThrow(/answered with nothing/i);
+  });
+
+  it("surfaces an Ollama error line during a pull (bad model name, disk full…)", async () => {
+    const base = await startFixture(() => ({
+      status: 200,
+      body: "",
+      ndjson: [JSON.stringify({ status: "pulling manifest" }), JSON.stringify({ error: "model 'nope' not found" })],
+    }));
+    const engine = ollamaEngine({ baseUrl: base });
+    await expect(engine.pull("nope")).rejects.toThrow(/couldn't get that model.*not found/i);
+  });
+});
+
+describe("ollamaEngine — loopback-only guard (O2)", () => {
+  it("refuses a non-loopback base URL at construction", () => {
+    expect(() => ollamaEngine({ baseUrl: "http://10.0.0.5:11434" })).toThrow(/only talk to this computer/i);
+    expect(() => ollamaEngine({ baseUrl: "http://evil.example.com:11434" })).toThrow(/only talk to this computer/i);
+  });
+
+  it("accepts every loopback form", () => {
+    expect(() => ollamaEngine({ baseUrl: "http://127.0.0.1:11434" })).not.toThrow();
+    expect(() => ollamaEngine({ baseUrl: "http://localhost:11434" })).not.toThrow();
+    expect(() => ollamaEngine({ baseUrl: "http://[::1]:11434" })).not.toThrow();
+  });
+
+  it("rejects a non-http scheme", () => {
+    expect(() => ollamaEngine({ baseUrl: "file:///etc/passwd" })).toThrow(/must use http/i);
+  });
+});

@@ -19,7 +19,8 @@
     "electron-updater": "^6.8.9",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "react-markdown": "^10.1.0"
+    "react-markdown": "^10.1.0",
+    "systeminformation": "^5.31.16"
   },
   "devDependencies": {
     "@deskhand/site": "workspace:^",

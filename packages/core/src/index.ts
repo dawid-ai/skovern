@@ -34,6 +34,21 @@ export type {
   GenerateResult,
 } from "./router/types.js";
 
+export { ollamaEngine, localProvider, verdict } from "./local/index.js";
+export type {
+  OllamaOptions,
+  LocalEngine,
+  LocalModelInfo,
+  PullProgress,
+  GpuInfo,
+  HardwareProfile,
+  CatalogModel,
+  FitTier,
+  ModelFit,
+  Verdict,
+  VerdictModel,
+} from "./local/index.js";
+
 export { createBroker } from "./plugin/broker.js";
 export type { Broker, BrokerDeps } from "./plugin/broker.js";
 export type { FetchReceipt, FetchSink } from "./plugin/receipt.js";

@@ -42,7 +42,11 @@ export function createRouter(config: RouterConfig): Router {
       if (!provider) throw new Error(`provider "${id}" is not configured`);
 
       const bytesSent = bytes(input.prompt);
-      const base = { provider: id, model: provider.model, task: input.task, bytesSent };
+      // A local provider runs ON the machine — mark every receipt for it `local`
+      // so it's recorded as on-machine, never as egress.
+      const onMachine = provider.onMachine === true;
+      // Only tag `local` when true, so cloud receipts keep their exact prior shape.
+      const base = { provider: id, model: provider.model, task: input.task, bytesSent, ...(onMachine ? { local: true } : {}) };
 
       // Record the egress BEFORE it happens. This append is awaited and NOT
       // swallowed: if it throws, we reject here and the provider is never
