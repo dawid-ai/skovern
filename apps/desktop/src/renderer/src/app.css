@@ -305,6 +305,50 @@ button.link {
   padding: 4px 10px;
 }
 
+/* The always-visible active-brain readout (green) above "Sign out". */
+.brain-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  font-size: 12px;
+  font-weight: 600;
+  color: #2f6f3e;
+  background: #e6f1e8;
+  border: 1px solid #cfe5d4;
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+
+.brain-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #3f8a4f;
+  flex: none;
+}
+
+.brain-chip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brain-chip-empty {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+/* The Settings "what you're using right now" line. */
+.active-brain {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--ink);
+  margin-bottom: 16px;
+}
+
 .content {
   padding: 44px 48px;
   overflow-y: auto;

@@ -31,10 +31,17 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
 
   const refresh = useCallback(async () => {
     setBusy(true);
-    const [s, m] = await Promise.all([window.deskhand.local.status(), window.deskhand.local.models()]);
+    const [s, m, b] = await Promise.all([
+      window.deskhand.local.status(),
+      window.deskhand.local.models(),
+      window.deskhand.brain.status(),
+    ]);
     setStatus(s);
     setModels(m.models);
     setNotice(m.notice || s.notice || "");
+    // Mark the model you're actually using as in use ("This is your brain ✓"),
+    // even before you click anything this session.
+    setSavedId(b.provider === "local" ? b.model : null);
     setBusy(false);
   }, []);
 
@@ -68,7 +75,10 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
         delete next[id];
         return next;
       });
-      await refresh(); // it's downloaded now → the row flips to "Use this"
+      // Download AND use in one click: you asked for this model, so make it your
+      // brain. `refresh` then flips the row to "This is your brain ✓".
+      await useModel(id);
+      await refresh();
     } else {
       setNotice(res.message);
     }

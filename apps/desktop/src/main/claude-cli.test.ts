@@ -198,7 +198,7 @@ describe("key store — claude-cli has no key + model validation (loadbrain-mode
     saveBrain({ provider: "claude-cli", key: "" });
     expect(loadBrain()).toEqual({ provider: "claude-cli", key: "" });
     // brainStatus never leaks a key — and there isn't one here anyway
-    expect(brainStatus()).toEqual({ configured: true, provider: "claude-cli" });
+    expect(brainStatus()).toEqual({ configured: true, provider: "claude-cli", model: null });
   });
 
   it("accepts a claude-cli config with a valid string model (positive control)", async () => {

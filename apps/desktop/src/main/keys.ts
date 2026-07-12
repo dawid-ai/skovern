@@ -51,10 +51,12 @@ export function loadBrain(): BrainConfig | null {
   }
 }
 
-/** Renderer-safe: whether a brain is set and which one — never the key. */
-export function brainStatus(): { configured: boolean; provider: ProviderId | null } {
+/** Renderer-safe: whether a brain is set, which one, and its model — never the key.
+ *  The model id is a public name (e.g. "qwen2.5:3b"), safe to show; the API key
+ *  stays in this process only. */
+export function brainStatus(): { configured: boolean; provider: ProviderId | null; model: string | null } {
   const brain = loadBrain();
-  return { configured: brain !== null, provider: brain?.provider ?? null };
+  return { configured: brain !== null, provider: brain?.provider ?? null, model: brain?.model ?? null };
 }
 
 export function clearBrain(): void {

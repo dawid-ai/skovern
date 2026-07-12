@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import type { ProviderId, Receipt } from "../../../shared/brain.js";
+import type { BrainStatusView, ProviderId, Receipt } from "../../../shared/brain.js";
+import { providerName } from "../../../shared/brain.js";
 import { LocalBrainSetup } from "./LocalBrainSetup.js";
 
 // "Settings" — for now, the brain picker: choose where your assistant thinks,
@@ -26,13 +27,14 @@ function receiptLine(r: Receipt): string {
   return `Sent ${fmtBytes(r.bytesSent)} to ${brainLabel(r.provider)} at ${time} — and it answered.`;
 }
 
-export function SettingsPage() {
+export function SettingsPage({ onBrainChanged }: { onBrainChanged?: () => void }) {
   const [provider, setProvider] = useState<ProviderId>("openrouter");
   const [key, setKey] = useState("");
   const [model, setModel] = useState("");
-  const [status, setStatus] = useState<{ configured: boolean; provider: ProviderId | null }>({
+  const [status, setStatus] = useState<BrainStatusView>({
     configured: false,
     provider: null,
+    model: null,
   });
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -40,7 +42,12 @@ export function SettingsPage() {
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [localOpen, setLocalOpen] = useState(false);
 
-  const refreshStatus = () => void window.deskhand.brain.status().then(setStatus);
+  // Refetch our own status AND tell the shell so the sidebar readout stays in step.
+  const refreshStatus = () =>
+    void window.deskhand.brain.status().then((s) => {
+      setStatus(s);
+      onBrainChanged?.();
+    });
 
   useEffect(() => {
     void window.deskhand.brain.status().then((s) => {
@@ -70,7 +77,7 @@ export function SettingsPage() {
     setNotice(res.message);
     if (res.ok) {
       setKey("");
-      setStatus(await window.deskhand.brain.status());
+      refreshStatus();
     }
   }
 
@@ -94,6 +101,24 @@ export function SettingsPage() {
         <h1>Settings</h1>
         <p>Pick the brain that powers your desk hand. Your key stays safe on this computer.</p>
       </header>
+
+      <p className="active-brain">
+        {status.configured && status.provider ? (
+          <>
+            <span className="brain-dot" aria-hidden="true" /> Right now you’re using{" "}
+            <strong>{providerName(status.provider)}</strong>
+            {status.model ? (
+              <>
+                {" "}
+                — <strong>{status.model}</strong>
+              </>
+            ) : null}
+            .
+          </>
+        ) : (
+          "You haven’t picked a brain yet — choose one below."
+        )}
+      </p>
 
       <div className="form">
         <label htmlFor="brain">Your brain</label>

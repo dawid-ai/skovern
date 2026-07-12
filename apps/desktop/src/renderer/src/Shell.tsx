@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { DmThreadView } from "../../shared/cloud.js";
+import type { BrainStatusView } from "../../shared/brain.js";
+import { providerName } from "../../shared/brain.js";
 import { NewsPage } from "./pages/NewsPage.js";
 import { MessagesPage } from "./pages/MessagesPage.js";
 import { SkillsPage } from "./pages/SkillsPage.js";
@@ -27,9 +29,14 @@ const POLL_MS = 5000;
 export function Shell({ ogNumber, onSignOut }: { ogNumber: number | null; onSignOut: () => void }) {
   const [page, setPage] = useState<Page>("news");
   const [thread, setThread] = useState<DmThreadView>({ messages: [], unread: 0 });
+  const [brain, setBrain] = useState<BrainStatusView | null>(null);
 
   const refresh = useCallback(async () => {
     setThread(await window.deskhand.dm.thread());
+  }, []);
+  // The always-visible active-brain readout. Refetched when Settings changes it.
+  const refreshBrain = useCallback(async () => {
+    setBrain(await window.deskhand.brain.status());
   }, []);
   // Stable identity: passed to MessagesPage's effect deps, so it must not change
   // per render or the effect (mark-read + refresh) would loop every render.
@@ -41,6 +48,10 @@ export function Shell({ ogNumber, onSignOut }: { ogNumber: number | null; onSign
     const id = setInterval(() => void refresh(), POLL_MS);
     return () => clearInterval(id);
   }, [refresh]);
+
+  useEffect(() => {
+    void refreshBrain();
+  }, [refreshBrain]);
 
   return (
     <div className="shell">
@@ -74,6 +85,19 @@ export function Shell({ ogNumber, onSignOut }: { ogNumber: number | null; onSign
 
         <div className="sidebar-foot">
           {ogNumber !== null && <p className="og-badge">Founding user #{ogNumber}</p>}
+          {brain !== null && (
+            <div className="brain-chip" title="Your active brain">
+              <span className="brain-dot" aria-hidden="true" />
+              {brain.configured && brain.provider ? (
+                <span className="brain-chip-text">
+                  {providerName(brain.provider)}
+                  {brain.model ? ` · ${brain.model}` : ""}
+                </span>
+              ) : (
+                <span className="brain-chip-text brain-chip-empty">No brain yet</span>
+              )}
+            </div>
+          )}
           <button className="link" onClick={onSignOut}>
             Sign out
           </button>
@@ -85,7 +109,7 @@ export function Shell({ ogNumber, onSignOut }: { ogNumber: number | null; onSign
         {page === "messages" && <MessagesPage messages={thread.messages} onChanged={onChanged} />}
         {page === "skills" && <SkillsPage />}
         {page === "receipts" && <ReceiptsPage />}
-        {page === "settings" && <SettingsPage />}
+        {page === "settings" && <SettingsPage onBrainChanged={refreshBrain} />}
       </main>
     </div>
   );
