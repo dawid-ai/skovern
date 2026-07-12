@@ -205,9 +205,9 @@ test("user sets up a private on-computer brain, always sees which brain is activ
     await page.getByRole("button", { name: "Use this one" }).first().click();
     await expect(page.getByRole("button", { name: "This is your brain ✓" })).toBeVisible();
 
-    // ACTIVE-BRAIN WIDGET: the sidebar readout (above "Sign out") names the provider +
-    // model, and updated the instant we picked.
-    await expect(page.getByText("On this computer · mistral:7b")).toBeVisible({ timeout: 10_000 });
+    // ACTIVE-BRAIN WIDGET: the compact sidebar readout (above "Sign out") names the
+    // provider + model, and updated the instant we picked.
+    await expect(page.getByText("Local: mistral:7b")).toBeVisible({ timeout: 10_000 });
 
     // back to Settings: the "right now you're using" line names the active provider+model
     await page.getByRole("button", { name: "← Back to Settings" }).click();
@@ -242,7 +242,7 @@ test("user sets up a private on-computer brain, always sees which brain is activ
     // 3B, under Other options) pulls AND selects it — the sidebar flips to the new model.
     await page.getByText("Other options", { exact: true }).click();
     await page.getByRole("button", { name: "Get this one" }).first().click();
-    await expect(page.getByText("On this computer · qwen2.5:3b")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText("Local: qwen2.5:3b")).toBeVisible({ timeout: 30_000 });
 
     // descriptive error when Ollama becomes unreachable: stop the fake server, reopen
     // the setup view → plain-language "isn't running" + NO dangling hero pick.

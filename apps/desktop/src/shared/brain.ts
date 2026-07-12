@@ -12,8 +12,8 @@ export interface BrainStatusView {
   model: string | null;
 }
 
-/** Short, florist-facing name for a brain provider — for the active-brain readouts
- *  (the sidebar widget + the Settings "currently active" line). */
+/** Short, florist-facing name for a brain provider — for the Settings "currently
+ *  active" line, which has room for a full phrase. */
 export function providerName(id: ProviderId): string {
   switch (id) {
     case "local":
@@ -22,6 +22,22 @@ export function providerName(id: ProviderId): string {
       return "Claude Code";
     case "anthropic":
       return "Claude (Anthropic)";
+    case "openrouter":
+      return "OpenRouter";
+    default:
+      return id;
+  }
+}
+
+/** Compact provider tag for the tight sidebar chip (e.g. "Local: mistral:7b"). */
+export function providerShort(id: ProviderId): string {
+  switch (id) {
+    case "local":
+      return "Local";
+    case "claude-cli":
+      return "Claude Code";
+    case "anthropic":
+      return "Anthropic";
     case "openrouter":
       return "OpenRouter";
     default:

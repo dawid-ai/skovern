@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { DmThreadView } from "../../shared/cloud.js";
 import type { BrainStatusView } from "../../shared/brain.js";
-import { providerName } from "../../shared/brain.js";
+import { providerShort } from "../../shared/brain.js";
 import { NewsPage } from "./pages/NewsPage.js";
 import { MessagesPage } from "./pages/MessagesPage.js";
 import { SkillsPage } from "./pages/SkillsPage.js";
@@ -90,8 +90,8 @@ export function Shell({ ogNumber, onSignOut }: { ogNumber: number | null; onSign
               <span className="brain-dot" aria-hidden="true" />
               {brain.configured && brain.provider ? (
                 <span className="brain-chip-text">
-                  {providerName(brain.provider)}
-                  {brain.model ? ` · ${brain.model}` : ""}
+                  {providerShort(brain.provider)}
+                  {brain.model ? `: ${brain.model}` : ""}
                 </span>
               ) : (
                 <span className="brain-chip-text brain-chip-empty">No brain yet</span>
