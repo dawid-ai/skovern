@@ -25,7 +25,6 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
   const [models, setModels] = useState<LocalModelView[] | null>(null);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
-  const [showAll, setShowAll] = useState(false);
   const [savedId, setSavedId] = useState<string | null>(null);
   const [pulling, setPulling] = useState<Record<string, PullProgressView>>({});
   const unsubPull = useRef<(() => void) | null>(null);
@@ -75,11 +74,14 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
     }
   }
 
-  const have = (models ?? []).filter((m) => m.group === "have");
-  const suggested = (models ?? []).filter((m) => m.group === "suggested");
-  // Default: usable suggestions; "Advanced" reveals everything (incl. red).
-  const shownSuggested = showAll ? suggested : suggested.filter((m) => m.usable);
-  const hiddenCount = suggested.length - shownSuggested.length;
+  // One obvious pick up front (the verdict's single recommendation, spanning both
+  // groups); EVERYTHING else — your other models + the other suggestions — folds
+  // under "Other options" so a zero-knowledge user just clicks the one thing.
+  const all = models ?? [];
+  const recommended = all.find((m) => m.recommended) ?? null;
+  const others = all.filter((m) => !m.recommended);
+  const otherHave = others.filter((m) => m.group === "have");
+  const otherSuggested = others.filter((m) => m.group === "suggested");
 
   function modelCard(m: LocalModelView) {
     const prog = pulling[m.id];
@@ -179,30 +181,42 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
 
           {notice.length > 0 && <p className="notice">{notice}</p>}
 
-          {have.length > 0 && (
-            <>
-              <h2>What you already have</h2>
-              <ul className="news-list">{have.map(modelCard)}</ul>
-            </>
-          )}
-
-          <h2>Our suggestions</h2>
           {!status.ollamaReady ? (
+            // Ollama not running → no actionable pick exists; lead with the honest
+            // guidance (the verdict still scores the catalog, but there's nothing to
+            // click yet), and fold any models under "Other options".
             <p className="hint">
               Start Ollama (the free helper that runs a private brain), then choose “Check my computer again.”
             </p>
-          ) : shownSuggested.length === 0 ? (
-            <p className="hint">No suggestions fit this computer well right now.</p>
+          ) : recommended ? (
+            <>
+              <h2>Our pick for your computer</h2>
+              <p className="hint">One click and you’re set — nothing to figure out.</p>
+              <ul className="news-list">{modelCard(recommended)}</ul>
+            </>
           ) : (
-            <ul className="news-list">{shownSuggested.map(modelCard)}</ul>
+            <p className="hint">
+              No private brain runs well on this computer — your free cloud brain or your subscription will
+              serve you better.
+            </p>
           )}
 
-          {suggested.length > 0 && (hiddenCount > 0 || showAll) && (
-            <div className="row">
-              <button className="link" onClick={() => setShowAll((v) => !v)}>
-                {showAll ? "Show fewer" : `Advanced — see all models (${hiddenCount} more)`}
-              </button>
-            </div>
+          {others.length > 0 && (
+            <details className="other-options">
+              <summary>Other options</summary>
+              {otherHave.length > 0 && (
+                <>
+                  <h3>Models you already have</h3>
+                  <ul className="news-list">{otherHave.map(modelCard)}</ul>
+                </>
+              )}
+              {otherSuggested.length > 0 && (
+                <>
+                  <h3>Other suggestions</h3>
+                  <ul className="news-list">{otherSuggested.map(modelCard)}</ul>
+                </>
+              )}
+            </details>
           )}
         </>
       )}

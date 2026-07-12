@@ -68,16 +68,19 @@ function startCatalog(): Promise<string> {
               tradeoff: "A solid everyday pick — good balance of speed and smarts.",
             },
             {
-              id: "qwen2.5:7b",
-              label: "Qwen2.5 7B",
-              params: 7,
-              sizeBytes: 4_700_000_000,
+              // Deliberately huge so it's RED on any machine — keeps the downloaded
+              // 3B as the deterministic recommendation, and this one always lands in
+              // "Other options" (the honest "too big for this computer" advanced pick).
+              id: "qwen2.5:72b",
+              label: "Qwen2.5 72B",
+              params: 72,
+              sizeBytes: 42_000_000_000,
               quant: "Q4_K_M",
               creator: "Alibaba (Qwen team)",
-              homepage: "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct",
+              homepage: "https://huggingface.co/Qwen/Qwen2.5-72B-Instruct",
               license: "Apache 2.0 — free to use.",
               licenseUrl: "https://www.apache.org/licenses/LICENSE-2.0",
-              tradeoff: "The smartest of these, but it needs more memory.",
+              tradeoff: "The smartest of these, but it needs a lot of memory.",
             },
           ],
         }),
@@ -146,17 +149,26 @@ test("user sets up a private on-computer brain, runs it, and sees a 'stayed on y
     // the honest verdict + a hardware line render
     await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible();
     await expect(page.getByText(/private brain|cloud brain|subscription/i).first()).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByRole("heading", { name: "Our suggestions" })).toBeVisible();
 
-    // our suggestions render with trade-offs, download state, and a best-highlight
-    await expect(page.getByText("Qwen2.5 3B")).toBeVisible();
+    // ONE obvious pick up front: the single recommendation renders as the hero, with
+    // its trade-off, download state, best-highlight, and transparency line — no
+    // decision to make.
+    await expect(page.getByRole("heading", { name: "Our pick for your computer" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Qwen2.5 3B" })).toBeVisible();
     await expect(page.getByText(/A solid everyday pick/)).toBeVisible();
     await expect(page.getByText("Already on your computer").first()).toBeVisible();
     await expect(page.getByText("Best for your computer").first()).toBeVisible();
-    // the transparency line names the maker (not Deskhand) with an external link
     await expect(page.getByText(/Made by Alibaba .* not by Deskhand/).first()).toBeVisible();
 
-    // pick the already-downloaded model as the brain
+    // the OTHER model is folded away by default — not shown until "Other options" opens
+    await expect(page.getByText("Qwen2.5 72B")).toBeHidden();
+    await page.getByText("Other options", { exact: true }).click();
+    await expect(page.getByText("Qwen2.5 72B")).toBeVisible();
+    // a not-yet-downloaded model offers "Get this one" (same one-click action the hero
+    // shows when the recommendation isn't downloaded — proven here since 72B isn't)
+    await expect(page.getByRole("button", { name: "Get this one" })).toBeVisible();
+
+    // pick the already-downloaded recommendation as the brain (one click)
     await page.getByRole("button", { name: "Use this one" }).first().click();
     await expect(page.getByRole("button", { name: "This is your brain ✓" })).toBeVisible();
 
@@ -186,6 +198,9 @@ test("user sets up a private on-computer brain, runs it, and sees a 'stayed on y
     await page.getByRole("button", { name: "Settings" }).click();
     await page.getByRole("button", { name: "Set up the local brain →" }).click();
     await expect(page.getByText(/Ollama isn't running/i).first()).toBeVisible({ timeout: 30_000 });
+    // and NO hero pick is shown when Ollama is down — the verdict still scores the
+    // catalog, but there's nothing to click, so we don't dangle a dead button.
+    await expect(page.getByRole("heading", { name: "Our pick for your computer" })).toBeHidden();
   } finally {
     await app.close();
     rmSync(userDataDir, { recursive: true, force: true });
