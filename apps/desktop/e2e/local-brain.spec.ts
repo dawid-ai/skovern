@@ -164,6 +164,9 @@ test("user sets up a private on-computer brain, runs it, and sees a 'stayed on y
     await expect(page.getByText("Qwen2.5 72B")).toBeHidden();
     await page.getByText("Other options", { exact: true }).click();
     await expect(page.getByText("Qwen2.5 72B")).toBeVisible();
+    // a not-yet-downloaded model offers "Get this one" (same one-click action the hero
+    // shows when the recommendation isn't downloaded — proven here since 72B isn't)
+    await expect(page.getByRole("button", { name: "Get this one" })).toBeVisible();
 
     // pick the already-downloaded recommendation as the brain (one click)
     await page.getByRole("button", { name: "Use this one" }).first().click();
@@ -195,6 +198,9 @@ test("user sets up a private on-computer brain, runs it, and sees a 'stayed on y
     await page.getByRole("button", { name: "Settings" }).click();
     await page.getByRole("button", { name: "Set up the local brain →" }).click();
     await expect(page.getByText(/Ollama isn't running/i).first()).toBeVisible({ timeout: 30_000 });
+    // and NO hero pick is shown when Ollama is down — the verdict still scores the
+    // catalog, but there's nothing to click, so we don't dangle a dead button.
+    await expect(page.getByRole("heading", { name: "Our pick for your computer" })).toBeHidden();
   } finally {
     await app.close();
     rmSync(userDataDir, { recursive: true, force: true });

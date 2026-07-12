@@ -181,16 +181,19 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
 
           {notice.length > 0 && <p className="notice">{notice}</p>}
 
-          {recommended ? (
+          {!status.ollamaReady ? (
+            // Ollama not running → no actionable pick exists; lead with the honest
+            // guidance (the verdict still scores the catalog, but there's nothing to
+            // click yet), and fold any models under "Other options".
+            <p className="hint">
+              Start Ollama (the free helper that runs a private brain), then choose “Check my computer again.”
+            </p>
+          ) : recommended ? (
             <>
               <h2>Our pick for your computer</h2>
               <p className="hint">One click and you’re set — nothing to figure out.</p>
               <ul className="news-list">{modelCard(recommended)}</ul>
             </>
-          ) : !status.ollamaReady ? (
-            <p className="hint">
-              Start Ollama (the free helper that runs a private brain), then choose “Check my computer again.”
-            </p>
           ) : (
             <p className="hint">
               No private brain runs well on this computer — your free cloud brain or your subscription will
