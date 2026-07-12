@@ -8,12 +8,13 @@ import type { ProviderId } from "@deskhand/core";
 // renderer — only `brainStatus()` (no key) crosses back. The `claude-cli` brain
 // (the Claude Code subscription) has NO key — it rides the logged-in CLI.
 
-const PROVIDERS: readonly ProviderId[] = ["openrouter", "anthropic", "claude-cli"];
+const PROVIDERS: readonly ProviderId[] = ["openrouter", "anthropic", "claude-cli", "local"];
 
 export interface BrainConfig {
   provider: ProviderId;
-  /** Empty for `claude-cli` (no key); the API-key providers require it. */
+  /** Empty for `claude-cli` and `local` (no key); the API-key providers require it. */
   key: string;
+  /** For `local`, this is the chosen Ollama model id (e.g. "qwen2.5:3b"). */
   model?: string;
 }
 

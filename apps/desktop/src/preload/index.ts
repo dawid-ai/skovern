@@ -3,6 +3,7 @@ import type { AppInfo } from "@deskhand/core";
 import type { CurrentAccount, RequestResult, VerifyResult } from "../shared/account.js";
 import type { DmSendResult, DmThreadView, NewsPostView, PublishResultView, PublishVisibilityInput } from "../shared/cloud.js";
 import type { BrainStatusView, SaveBrainInput, SaveBrainResult, TestBrainResult } from "../shared/brain.js";
+import type { LocalActionResult, LocalModelsView, LocalStatusView, PullProgressView } from "../shared/local.js";
 import type { RunSkillResult, SandboxCheckResult, SkillView } from "../shared/plugin.js";
 import type { ReceiptView } from "../shared/receipts.js";
 
@@ -56,6 +57,38 @@ const api = {
   visibility: {
     publish: (input: PublishVisibilityInput): Promise<PublishResultView> =>
       ipcRenderer.invoke("visibility:publish", input) as Promise<PublishResultView>,
+  },
+  local: {
+    status: (): Promise<LocalStatusView> => ipcRenderer.invoke("local:status") as Promise<LocalStatusView>,
+    rescan: (): Promise<LocalStatusView> => ipcRenderer.invoke("local:rescan") as Promise<LocalStatusView>,
+    models: (): Promise<LocalModelsView> => ipcRenderer.invoke("local:models") as Promise<LocalModelsView>,
+    pull: (modelId: string): Promise<LocalActionResult> =>
+      ipcRenderer.invoke("local:pull", modelId) as Promise<LocalActionResult>,
+    // Listen-only: the renderer subscribes to pull progress; it can never emit here.
+    // Re-validate the shape so a malformed payload never reaches React. Returns an
+    // unsubscribe the view calls on unmount.
+    onPullProgress: (cb: (p: PullProgressView) => void): (() => void) => {
+      const handler = (_event: unknown, payload: unknown): void => {
+        const p = (payload ?? {}) as Record<string, unknown>;
+        if (
+          typeof p["modelId"] === "string" &&
+          typeof p["percent"] === "number" &&
+          typeof p["status"] === "string" &&
+          typeof p["done"] === "boolean" &&
+          typeof p["ok"] === "boolean"
+        ) {
+          cb({
+            modelId: p["modelId"],
+            percent: p["percent"],
+            status: p["status"],
+            done: p["done"],
+            ok: p["ok"],
+          });
+        }
+      };
+      ipcRenderer.on("local:pullProgress", handler);
+      return () => ipcRenderer.removeListener("local:pullProgress", handler);
+    },
   },
   receipts: {
     list: (): Promise<ReceiptView[]> => ipcRenderer.invoke("receipts:list") as Promise<ReceiptView[]>,

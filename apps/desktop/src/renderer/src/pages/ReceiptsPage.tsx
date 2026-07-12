@@ -22,11 +22,17 @@ const BRAIN_LABEL: Record<string, string> = {
   openrouter: "OpenRouter",
   anthropic: "Claude",
   "claude-cli": "Claude Code",
+  local: "your computer",
 };
+
+// A local (on-machine) model call — nothing left the machine.
+function isLocal(r: ReceiptView): boolean {
+  return !isFetch(r) && r.local === true;
+}
 
 // Who made the call, in florist words.
 function who(r: ReceiptView): string {
-  if (!isFetch(r)) return "Your brain";
+  if (!isFetch(r)) return isLocal(r) ? "Your private brain" : "Your brain";
   if (r.task.startsWith("Deskhand:")) return "Deskhand";
   if (r.task.startsWith("skill:")) return "A connector";
   return "A website";
@@ -76,16 +82,24 @@ export function ReceiptsPage() {
                 <span className="receipt-who">{who(r)}</span>
                 <span className="receipt-why">{why(r)}</span>
               </div>
-              <div className="receipt-meta">
-                <span className="receipt-where">to {where(r)}</span>
-                <span className="receipt-bytes">
-                  {fmtBytes(r.bytesSent)} out, {fmtBytes(r.bytesReceived)} back
-                </span>
-                <span className={r.ok ? "receipt-ok" : "receipt-fail"}>
-                  {r.ok ? "went through" : "didn't get through"}
-                </span>
-                <span className="receipt-time">{fmtTime(r.ts)}</span>
-              </div>
+              {isLocal(r) ? (
+                // A local model call is on-machine — make the privacy claim visible.
+                <div className="receipt-meta">
+                  <span className="receipt-ok">stayed on your computer — nothing left</span>
+                  <span className="receipt-time">{fmtTime(r.ts)}</span>
+                </div>
+              ) : (
+                <div className="receipt-meta">
+                  <span className="receipt-where">to {where(r)}</span>
+                  <span className="receipt-bytes">
+                    {fmtBytes(r.bytesSent)} out, {fmtBytes(r.bytesReceived)} back
+                  </span>
+                  <span className={r.ok ? "receipt-ok" : "receipt-fail"}>
+                    {r.ok ? "went through" : "didn't get through"}
+                  </span>
+                  <span className="receipt-time">{fmtTime(r.ts)}</span>
+                </div>
+              )}
             </li>
           ))}
         </ul>
