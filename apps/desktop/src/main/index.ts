@@ -10,9 +10,11 @@ import {
   createPublishClient,
   createRouter,
   getAppInfo,
+  localProvider,
   openRouterProvider,
   type Provider,
   type ProviderId,
+  type PullProgress,
   type Router,
 } from "@deskhand/core";
 import { explainCapability } from "@deskhand/plugin-sdk";
@@ -22,11 +24,13 @@ import { brainStatus, loadBrain, saveBrain } from "./keys.js";
 import { fileFetchSink, fileReceiptSink, readReceipts, receiptedFetch } from "./receipts.js";
 import { runPlugin, sandboxCheck } from "./plugin-host.js";
 import { claudeCliProvider } from "./claude-cli.js";
+import { localModels, localStatus, makeEngine, pullModel } from "./local.js";
 import { helloManifest } from "../plugins/hello/manifest.js";
 import { aiVisibilityManifest } from "../plugins/ai-visibility/manifest.js";
 import type { CurrentAccount, RequestResult, VerifyResult } from "../shared/account.js";
 import type { DmSendResult, DmThreadView, NewsPostView, PublishResultView } from "../shared/cloud.js";
 import type { BrainStatusView, SaveBrainResult, TestBrainResult } from "../shared/brain.js";
+import type { LocalActionResult, LocalModelsView, LocalStatusView, PullProgressView } from "../shared/local.js";
 import type { RunSkillResult, SandboxCheckResult, SkillView } from "../shared/plugin.js";
 import type { ReceiptView } from "../shared/receipts.js";
 
@@ -88,11 +92,14 @@ function buildRouter(): Router | null {
   const brain = loadBrain();
   if (!brain) return null;
   const provider: Provider =
-    brain.provider === "claude-cli"
-      ? claudeCliProvider({ bin: CLAUDE_BIN, baseArgs: devClaudeArgs(), model: brain.model })
-      : brain.provider === "anthropic"
-        ? anthropicProvider({ apiKey: brain.key, model: brain.model, baseURL: BRAIN_BASE.anthropic })
-        : openRouterProvider({ apiKey: brain.key, model: brain.model, baseURL: BRAIN_BASE.openrouter });
+    brain.provider === "local"
+      ? // A local model has no model id → no brain to run; guard with a clear id.
+        localProvider(makeEngine(), brain.model ?? "")
+      : brain.provider === "claude-cli"
+        ? claudeCliProvider({ bin: CLAUDE_BIN, baseArgs: devClaudeArgs(), model: brain.model })
+        : brain.provider === "anthropic"
+          ? anthropicProvider({ apiKey: brain.key, model: brain.model, baseURL: BRAIN_BASE.anthropic })
+          : openRouterProvider({ apiKey: brain.key, model: brain.model, baseURL: BRAIN_BASE.openrouter });
   const providers: Partial<Record<ProviderId, Provider>> = {};
   providers[brain.provider] = provider;
   return createRouter({ providers, defaultProvider: brain.provider, sink: fileReceiptSink() });
@@ -314,11 +321,19 @@ app
     registerTrusted(TRUST, "brain:save", (raw: unknown): SaveBrainResult => {
       const input = (raw ?? {}) as { provider?: unknown; key?: unknown; model?: unknown };
       const provider: ProviderId =
-        input.provider === "anthropic" ? "anthropic" : input.provider === "claude-cli" ? "claude-cli" : "openrouter";
+        input.provider === "anthropic"
+          ? "anthropic"
+          : input.provider === "claude-cli"
+            ? "claude-cli"
+            : input.provider === "local"
+              ? "local"
+              : "openrouter";
       const key = typeof input.key === "string" ? input.key.trim() : "";
       const model = typeof input.model === "string" && input.model.trim() ? input.model.trim() : undefined;
-      // The subscription brain has no key; the API-key brains require one.
-      if (provider !== "claude-cli" && !key) return { ok: false, message: "Paste your key first." };
+      // The local brain needs a chosen model but no key; the subscription brain has
+      // neither; the API-key brains require a key.
+      if (provider === "local" && !model) return { ok: false, message: "Pick a model to run on this computer first." };
+      if (provider !== "claude-cli" && provider !== "local" && !key) return { ok: false, message: "Paste your key first." };
       // No real API key is this long — cap it so a bad/compromised renderer can't
       // write a multi-MB blob into the keychain file.
       if (key.length > 8192) return { ok: false, message: "That doesn't look like a key." };
@@ -341,12 +356,44 @@ app
         });
         return { ok: true, message: "Your brain answered!", reply: text, receipt };
       } catch {
-        // The subscription brain has no key — if it failed, the CLI likely isn't there.
+        // The subscription/local brains have no key — a failure means the CLI or
+        // Ollama isn't there, so say that instead of "check the key".
+        const p = loadBrain()?.provider;
         const msg =
-          loadBrain()?.provider === "claude-cli"
+          p === "claude-cli"
             ? "We couldn't reach Claude Code on this computer. Is it installed and signed in?"
-            : "Your brain didn't answer. Check the key and try again.";
+            : p === "local"
+              ? "We couldn't reach the local brain. Is Ollama running, and have you picked a model that's downloaded?"
+              : "Your brain didn't answer. Check the key and try again.";
         return { ok: false, message: msg };
+      }
+    });
+
+    // Local Brain (loop 019). The renderer NEVER touches Ollama or the network —
+    // main runs the scan, the loopback Ollama, the receipted catalog fetch, and the
+    // pull; the renderer only reads these views and drives them by IPC.
+    registerTrusted(TRUST, "local:status", (): Promise<LocalStatusView> => localStatus());
+    registerTrusted(TRUST, "local:rescan", (): Promise<LocalStatusView> => localStatus());
+    registerTrusted(TRUST, "local:models", (): Promise<LocalModelsView> => localModels());
+
+    // Start a pull; progress streams back on `local:pullProgress` (reuse the 016
+    // main→renderer channel). We forward derived, pre-validated fields only.
+    registerTrusted(TRUST, "local:pull", async (rawId: unknown): Promise<LocalActionResult> => {
+      const modelId = typeof rawId === "string" ? rawId.trim() : "";
+      // Ollama model ids are short tags — cap so a bad renderer can't send a blob.
+      if (!modelId || modelId.length > 200) return { ok: false, message: "That model name doesn't look right." };
+      const send = (view: PullProgressView): void => mainWindow?.webContents.send("local:pullProgress", view);
+      try {
+        await pullModel(modelId, (p: PullProgress) => {
+          send({ modelId, percent: p.percent ?? 0, status: p.status, done: false, ok: true });
+        });
+        send({ modelId, percent: 100, status: "done", done: true, ok: true });
+        return { ok: true, message: "Downloaded — it's ready to use." };
+      } catch (err) {
+        // The engine's message is already plain-language + safe (no key/prompt).
+        const message = err instanceof Error ? err.message : "The download didn't finish. Try again.";
+        send({ modelId, percent: 0, status: message, done: true, ok: false });
+        return { ok: false, message };
       }
     });
 

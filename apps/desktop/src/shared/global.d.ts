@@ -2,6 +2,7 @@ import type { AppInfo } from "@deskhand/core";
 import type { CurrentAccount, RequestResult, VerifyResult } from "./account.js";
 import type { DmSendResult, DmThreadView, NewsPostView, PublishResultView, PublishVisibilityInput } from "./cloud.js";
 import type { BrainStatusView, SaveBrainInput, SaveBrainResult, TestBrainResult } from "./brain.js";
+import type { LocalActionResult, LocalModelsView, LocalStatusView, PullProgressView } from "./local.js";
 import type { RunSkillResult, SandboxCheckResult, SkillView } from "./plugin.js";
 import type { ReceiptView } from "./receipts.js";
 
@@ -37,6 +38,14 @@ declare global {
       };
       visibility: {
         publish(input: PublishVisibilityInput): Promise<PublishResultView>;
+      };
+      local: {
+        status(): Promise<LocalStatusView>;
+        rescan(): Promise<LocalStatusView>;
+        models(): Promise<LocalModelsView>;
+        pull(modelId: string): Promise<LocalActionResult>;
+        /** Listen for live pull progress. Returns an unsubscribe. */
+        onPullProgress(cb: (p: PullProgressView) => void): () => void;
       };
       receipts: {
         list(): Promise<ReceiptView[]>;
