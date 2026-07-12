@@ -39,6 +39,22 @@ function catalogUrl(): string | undefined {
   return !app.isPackaged ? process.env["DESKHAND_CATALOG_URL"] || undefined : undefined;
 }
 
+// Hardware override: an unpackaged dev/test seam (mirror of the URL seams) that pins
+// a HardwareProfile so the verdict is deterministic on any runner (CI is CPU-only, a
+// dev box may have a big GPU). Inert when packaged — production always scans the real
+// machine. A malformed override falls back to a real scan, never a crash.
+async function scanProfile(): Promise<HardwareProfile> {
+  const override = !app.isPackaged ? process.env["DESKHAND_HARDWARE"] : undefined;
+  if (override) {
+    try {
+      return JSON.parse(override) as HardwareProfile;
+    } catch {
+      // malformed → fall through to a real scan
+    }
+  }
+  return scanHardware();
+}
+
 export function makeEngine(): LocalEngine {
   return ollamaEngine({ baseUrl: ollamaBaseUrl() });
 }
@@ -108,7 +124,7 @@ async function detectAndList(engine: LocalEngine): Promise<{ ready: boolean; hav
 export async function localStatus(): Promise<LocalStatusView> {
   const engine = makeEngine();
   const [profile, catalog, det] = await Promise.all([
-    scanHardware(),
+    scanProfile(),
     loadCatalog(fileFetchSink(), catalogUrl()),
     detectAndList(engine),
   ]);
@@ -129,7 +145,7 @@ export async function localStatus(): Promise<LocalStatusView> {
 export async function localModels(): Promise<LocalModelsView> {
   const engine = makeEngine();
   const [profile, catalog, det] = await Promise.all([
-    scanHardware(),
+    scanProfile(),
     loadCatalog(fileFetchSink(), catalogUrl()),
     detectAndList(engine),
   ]);

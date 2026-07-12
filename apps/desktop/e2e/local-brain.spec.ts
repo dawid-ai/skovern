@@ -17,6 +17,21 @@ import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningSer
 
 const LOCAL_REPLY = "Hello from your private local brain.";
 
+// A fixed CPU-only machine so the verdict is deterministic on ANY runner (CI is
+// CPU-only; a dev box may have a big GPU). With 16 GB RAM and no usable GPU:
+// mistral:7b + qwen2.5:3b are amber (usable), qwen2.5:235b is red — so the pulled
+// mistral:7b is always the biggest-usable recommendation. Fed via the DESKHAND_HARDWARE
+// dev/test seam (inert when packaged).
+const CPU_HARDWARE = JSON.stringify({
+  ramBytes: 16 * 1024 ** 3,
+  cpuCores: 8,
+  gpus: [],
+  bestVramBytes: null,
+  unifiedMemory: false,
+  diskFreeBytes: 200 * 1024 ** 3,
+  notes: [],
+});
+
 // The fake Ollama exposes /api/tags (one downloaded model) + /api/generate. Kept in
 // a small object so the test can shut it down to exercise the "not running" error.
 let ollama: Server | null = null;
@@ -81,12 +96,13 @@ function startCatalog(): Promise<string> {
               tradeoff: "A solid everyday pick — good balance of speed and smarts.",
             },
             {
-              // Deliberately huge so it's RED on any machine → always an "Other
-              // options" pick, never the recommendation.
-              id: "qwen2.5:72b",
-              label: "Qwen2.5 72B",
-              params: 72,
-              sizeBytes: 42_000_000_000,
+              // Deliberately enormous (235B, ~140 GB) so its footprint exceeds any
+              // realistic machine's memory → RED everywhere (CPU CI and big dGPU hosts
+              // alike), so it's always an "Other options" pick, never the recommendation.
+              id: "qwen2.5:235b",
+              label: "Qwen2.5 235B",
+              params: 235,
+              sizeBytes: 140_000_000_000,
               quant: "Q4_K_M",
               creator: "Alibaba (Qwen team)",
               homepage: "https://huggingface.co/Qwen/Qwen2.5-72B-Instruct",
@@ -139,6 +155,7 @@ test("user sets up a private on-computer brain, always sees which brain is activ
       DESKHAND_API_URL: server.url,
       DESKHAND_OLLAMA_URL: ollamaUrl,
       DESKHAND_CATALOG_URL: catalogUrl,
+      DESKHAND_HARDWARE: CPU_HARDWARE,
     },
   });
 
@@ -167,16 +184,18 @@ test("user sets up a private on-computer brain, always sees which brain is activ
 
     // CONSISTENCY (regression for the 019 contradiction): the verdict headline names
     // the SAME model as the "Our pick" hero. The user's own mistral:7b outranks the
-    // catalog picks, so both must name it — before the fix the headline (scored over
-    // the catalog only) would name a catalog model while the hero named mistral.
-    await expect(page.getByText(/Our pick for it: mistral:7b/)).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByRole("heading", { name: "Our pick for your computer" })).toBeVisible();
+    // catalog picks, so it's the recommendation — before the fix, the headline (scored
+    // over the catalog ONLY) would name a catalog model while the hero named mistral.
+    // Asserted wording-independently (the headline copy differs on a green vs amber
+    // machine — CI is CPU-only — but the MODEL it names must match the hero either way).
+    await expect(page.getByRole("heading", { name: "Our pick for your computer" })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByRole("heading", { name: "mistral:7b" })).toBeVisible();
+    await expect(page.locator(".local-headline")).toContainText("mistral:7b");
     await expect(page.getByText("Already on your computer").first()).toBeVisible();
     await expect(page.getByText("Best for your computer").first()).toBeVisible();
 
     // everything else folds under "Other options" (hidden by default)
-    await expect(page.getByText("Qwen2.5 72B")).toBeHidden();
+    await expect(page.getByText("Qwen2.5 235B")).toBeHidden();
     await expect(page.getByRole("heading", { name: "Qwen2.5 3B" })).toBeHidden();
     await page.getByText("Other options", { exact: true }).click();
     await expect(page.getByRole("heading", { name: "Qwen2.5 3B" })).toBeVisible();
