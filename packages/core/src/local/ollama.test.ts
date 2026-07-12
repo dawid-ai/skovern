@@ -38,9 +38,24 @@ function startFixture(handler: Handler): Promise<string> {
 }
 
 afterEach(async () => {
+  // Destroy any still-open sockets (a deliberately-stalled fixture keeps a
+  // connection open) so close() resolves instead of hanging the teardown.
+  server?.closeAllConnections?.();
   await new Promise<void>((resolve) => (server ? server.close(() => resolve()) : resolve()));
   server = null;
 });
+
+// A fixture with direct (req,res) control — for streaming/stalling scenarios the
+// canned-response helper can't express. Assigned to `server` so afterEach cleans it.
+function startRawServer(handler: (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => void): Promise<string> {
+  return new Promise((resolve) => {
+    server = createServer(handler);
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server!.address() as AddressInfo;
+      resolve(`http://127.0.0.1:${port}`);
+    });
+  });
+}
 
 describe("ollamaEngine — happy paths (fixture server)", () => {
   it("detects a running Ollama via GET /api/tags", async () => {
@@ -151,5 +166,70 @@ describe("ollamaEngine — loopback-only guard (O2)", () => {
 
   it("rejects a non-http scheme", () => {
     expect(() => ollamaEngine({ baseUrl: "file:///etc/passwd" })).toThrow(/must use http/i);
+  });
+});
+
+// The timeout must bound the WHOLE operation (connect + body/stream), not just the
+// connect/header phase — a 200 with a stalled body, or a pull whose stream goes
+// silent, must fail fast with a descriptive message, never hang. Short injected
+// timeouts keep these tests quick.
+describe("ollamaEngine — whole-operation timeouts (no hangs)", () => {
+  it("generate: 200 headers then a stalled body is bounded by the timeout, not hung", async () => {
+    // Send the status line but NEVER the body and NEVER end — the classic header-stall.
+    const base = await startRawServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      // deliberately no res.write(body) / res.end(): the body never arrives
+    });
+    const engine = ollamaEngine({ baseUrl: base, timeoutMs: 250 });
+    const started = Date.now();
+    await expect(engine.generate("m", "hi")).rejects.toThrow(/took too long/i);
+    // proves it didn't hang: resolved well within a few multiples of the timeout
+    expect(Date.now() - started).toBeLessThan(5000);
+  });
+
+  it("pull: a stream that goes silent trips the idle timeout with a descriptive message", async () => {
+    // Stream two progress chunks, then keep the connection open and send nothing more.
+    const base = await startRawServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/x-ndjson" });
+      res.write(JSON.stringify({ status: "pulling manifest" }) + "\n");
+      res.write(JSON.stringify({ status: "downloading", completed: 10, total: 100 }) + "\n");
+      // then silence — no further chunks, no end
+    });
+    const engine = ollamaEngine({ baseUrl: base, pullIdleMs: 250 });
+    const ticks: PullProgress[] = [];
+    const started = Date.now();
+    await expect(engine.pull("qwen2.5:3b", (p) => ticks.push(p))).rejects.toThrow(/stalled/i);
+    expect(Date.now() - started).toBeLessThan(5000);
+    // it DID make progress before stalling (so the failure is a genuine mid-stream stall)
+    expect(ticks.length).toBeGreaterThan(0);
+  });
+
+  it("pull: a slow-but-STEADY stream succeeds even past a fixed cap (idle-based, not total)", async () => {
+    // Emit chunks every ~80ms for a total (~800ms) far beyond the 250ms idle cap. Each
+    // chunk resets the idle timer, so a healthy download never trips — proving the cap
+    // is idle-based, not a total wall-clock limit that would kill a big model.
+    const base = await startRawServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/x-ndjson" });
+      let i = 0;
+      const total = 10;
+      const tick = (): void => {
+        if (i >= total) {
+          res.write(JSON.stringify({ status: "success" }) + "\n");
+          res.end();
+          return;
+        }
+        res.write(JSON.stringify({ status: "downloading", completed: i * 10, total: 100 }) + "\n");
+        i++;
+        setTimeout(tick, 80);
+      };
+      tick();
+    });
+    const engine = ollamaEngine({ baseUrl: base, pullIdleMs: 250 });
+    const ticks: PullProgress[] = [];
+    const started = Date.now();
+    await engine.pull("qwen2.5:3b", (p) => ticks.push(p));
+    // it ran longer than the idle cap (proving idle-based) and still completed
+    expect(Date.now() - started).toBeGreaterThan(250);
+    expect(ticks.map((t) => t.status)).toContain("success");
   });
 });

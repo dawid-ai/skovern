@@ -5,21 +5,39 @@ import type { LocalEngine, LocalModelInfo, PullProgress } from "./types.js";
 // host to exfiltrate a prompt. Every failure becomes a specific, plain-language
 // REJECTION (never a bare throw), so a dead/absent Ollama surfaces a message a
 // non-technical user (or support) can act on — and never crashes the host.
+//
+// Timeouts cover the WHOLE operation, not just connecting (mirror claude-cli's
+// collectOutput, whose timer bounds the entire read): a server that returns 200
+// headers then stalls the body is bounded, and a `pull` whose stream goes silent
+// trips an IDLE timeout (reset on every progress chunk) so a healthy multi-GB
+// download never trips while a truly stalled one still fails fast.
 
 export interface OllamaOptions {
   /** Base URL of the Ollama server. MUST be loopback; anything else is refused. */
   baseUrl: string;
   /** Injected fetch for tests (a fixture server). Defaults to global `fetch`. */
   fetchImpl?: typeof fetch;
-  /** Hard per-call cap so a hung generate/pull can't wedge forever. */
+  /** Hard per-call cap (connect + full body read) for non-streaming calls. */
   timeoutMs?: number;
+  /** Idle cap for a streamed pull: if NO progress chunk arrives for this long, the
+   *  download is treated as stalled. A steadily-progressing pull never trips it. */
+  pullIdleMs?: number;
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000;
+// A healthy pull emits progress frequently; a minute of total silence means stalled.
+const DEFAULT_PULL_IDLE_MS = 60_000;
+
+const TOO_SLOW = "The local brain took too long to answer and was stopped.";
+const PULL_STALLED = "The download stalled — check your connection and try again.";
 
 // Loopback = this machine only. Accept the three names that always resolve to it;
 // reject everything else (including any DNS name that could resolve off-box).
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
+
+function isAbort(cause: unknown): boolean {
+  return cause instanceof Error && cause.name === "AbortError";
+}
 
 function assertLoopback(baseUrl: string): URL {
   let url: URL;
@@ -57,50 +75,52 @@ export function ollamaEngine(opts: OllamaOptions): LocalEngine {
   const base = assertLoopback(opts.baseUrl);
   const doFetch = opts.fetchImpl ?? fetch;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const pullIdleMs = opts.pullIdleMs ?? DEFAULT_PULL_IDLE_MS;
   const origin = base.origin;
 
-  // One fetch with a timeout that always rejects with a clear cause. `signal`
-  // aborts a hung request so a wedged Ollama can't block forever.
-  async function call(path: string, init?: RequestInit): Promise<Response> {
+  // Fetch AND read the whole JSON body under ONE deadline. The AbortController
+  // stays armed until the body is fully parsed, so a server that sends headers then
+  // stalls the body is bounded (the abort rejects `res.json()`), not hung. Every
+  // failure path is a specific rejection.
+  async function getJson(path: string, init: RequestInit | undefined, what: string): Promise<unknown> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      return await doFetch(`${origin}${path}`, { ...init, signal: controller.signal });
-    } catch (cause) {
-      if (cause instanceof Error && cause.name === "AbortError") {
-        throw new Error("The local brain took too long to answer and was stopped.");
+      let res: Response;
+      try {
+        res = await doFetch(`${origin}${path}`, { ...init, signal: controller.signal });
+      } catch (cause) {
+        throw isAbort(cause) ? new Error(TOO_SLOW) : notRunning(cause);
       }
-      throw notRunning(cause);
+      if (!res.ok) {
+        throw new Error(`Ollama answered with an error (${res.status}) while ${what}.`);
+      }
+      try {
+        return await res.json();
+      } catch (cause) {
+        // An abort during the body read lands here — report the timeout, not a
+        // generic parse error.
+        if (isAbort(cause) || controller.signal.aborted) throw new Error(TOO_SLOW);
+        throw new Error(`Ollama sent back something we couldn't read while ${what}.`);
+      }
     } finally {
       clearTimeout(timer);
     }
   }
 
-  async function readJson(res: Response, what: string): Promise<unknown> {
-    if (!res.ok) {
-      throw new Error(`Ollama answered with an error (${res.status}) while ${what}.`);
-    }
-    try {
-      return await res.json();
-    } catch {
-      throw new Error(`Ollama sent back something we couldn't read while ${what}.`);
-    }
-  }
-
   return {
     async detect(): Promise<boolean> {
+      // A yes/no probe: reachable + answering on /api/tags. Any failure = "no".
       try {
-        const res = await call("/api/tags");
-        return res.ok;
+        await getJson("/api/tags", undefined, "checking");
+        return true;
       } catch {
-        // detect is a yes/no probe — a failure just means "not reachable".
         return false;
       }
     },
 
     async listModels(): Promise<LocalModelInfo[]> {
-      const res = await call("/api/tags");
-      const body = await readJson(res, "listing your models");
+      const body = await getJson("/api/tags", undefined, "listing your models");
       const models = (body as { models?: unknown }).models;
       if (!Array.isArray(models)) {
         throw new Error("Ollama's model list came back in a shape we didn't expect.");
@@ -118,13 +138,16 @@ export function ollamaEngine(opts: OllamaOptions): LocalEngine {
     },
 
     async generate(modelId: string, prompt: string): Promise<string> {
-      const res = await call("/api/generate", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        // stream:false → one JSON object with the whole reply.
-        body: JSON.stringify({ model: modelId, prompt, stream: false }),
-      });
-      const body = await readJson(res, "thinking");
+      const body = await getJson(
+        "/api/generate",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          // stream:false → one JSON object with the whole reply.
+          body: JSON.stringify({ model: modelId, prompt, stream: false }),
+        },
+        "thinking",
+      );
       const text = (body as { response?: unknown }).response;
       if (typeof text !== "string" || text.length === 0) {
         throw new Error("The local brain answered with nothing — try a different model.");
@@ -133,18 +156,52 @@ export function ollamaEngine(opts: OllamaOptions): LocalEngine {
     },
 
     async pull(modelId: string, onProgress?: (p: PullProgress) => void): Promise<void> {
-      const res = await call("/api/pull", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ model: modelId, stream: true }),
-      });
-      if (!res.ok) {
-        throw new Error(`Ollama couldn't start the download (${res.status}). Check the model name.`);
+      // Idle timer: a healthy pull resets it on every chunk; total silence past
+      // pullIdleMs aborts as "stalled" (a fixed total cap would wrongly kill a big,
+      // steadily-downloading model).
+      const controller = new AbortController();
+      let stalled = false;
+      // undefined until first armed; clearTimeout(undefined) is a safe no-op. Typed
+      // this way because TS can't see the assignment happens inside the `arm` closure.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const arm = (): void => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          stalled = true;
+          controller.abort();
+        }, pullIdleMs);
+      };
+      arm();
+
+      try {
+        let res: Response;
+        try {
+          res = await doFetch(`${origin}/api/pull`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ model: modelId, stream: true }),
+            signal: controller.signal,
+          });
+        } catch (cause) {
+          throw stalled || isAbort(cause) ? new Error(PULL_STALLED) : notRunning(cause);
+        }
+        if (!res.ok) {
+          throw new Error(`Ollama couldn't start the download (${res.status}). Check the model name.`);
+        }
+        if (!res.body) {
+          throw new Error("Ollama didn't send any download progress — try again.");
+        }
+        try {
+          // `arm` resets the idle timer each time a chunk arrives.
+          await consumePull(res.body, onProgress, arm);
+        } catch (cause) {
+          // A stall abort surfaces here as an AbortError; report it plainly.
+          if (stalled || isAbort(cause)) throw new Error(PULL_STALLED);
+          throw cause; // handlePullLine's error (bad model, disk full…) is already descriptive
+        }
+      } finally {
+        clearTimeout(timer);
       }
-      if (!res.body) {
-        throw new Error("Ollama didn't send any download progress — try again.");
-      }
-      await consumePull(res.body, onProgress);
     },
   };
 }
@@ -160,10 +217,12 @@ function parseParamSize(s: string): number | undefined {
 
 // Ollama's /api/pull streams newline-delimited JSON objects. Parse each complete
 // line, forward progress, and reject on the first error line (a bad model name,
-// disk full…) with its message so the user sees the real reason.
+// disk full…) with its message so the user sees the real reason. `onChunk` fires
+// on every received chunk so the caller can reset its idle/stall timer.
 async function consumePull(
   body: ReadableStream<Uint8Array>,
   onProgress?: (p: PullProgress) => void,
+  onChunk?: () => void,
 ): Promise<void> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -171,7 +230,10 @@ async function consumePull(
   try {
     for (;;) {
       const { done, value } = await reader.read();
-      if (value) buffer += decoder.decode(value, { stream: true });
+      if (value) {
+        onChunk?.();
+        buffer += decoder.decode(value, { stream: true });
+      }
       let nl: number;
       while ((nl = buffer.indexOf("\n")) >= 0) {
         const line = buffer.slice(0, nl).trim();
