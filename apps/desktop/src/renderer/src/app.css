@@ -656,3 +656,26 @@ footer {
   border-radius: 999px;
   transition: width 0.2s ease;
 }
+
+/* "Other options" — everything that isn't the one recommended pick, folded away
+   so a zero-knowledge user never has to choose. */
+.other-options {
+  margin-top: 8px;
+}
+
+.other-options > summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 14px;
+  padding: 6px 0;
+  list-style: none;
+}
+
+.other-options > summary::-webkit-details-marker {
+  display: none;
+}
+
+.other-options[open] > summary {
+  margin-bottom: 8px;
+}
