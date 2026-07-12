@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { localProvider } from "./provider.js";
 import { createRouter } from "../router/router.js";
-import type { LocalEngine, LocalModelInfo, PullProgress } from "./types.js";
+import type { LocalEngine, LocalModelInfo } from "./types.js";
 import type { Receipt, ReceiptSink } from "../router/types.js";
 
 // R1 — no false egress. A `local` generate must be recorded as ON-MACHINE
@@ -12,8 +12,8 @@ function fakeEngine(reply: string | Error): LocalEngine {
   return {
     detect: () => Promise.resolve(true),
     listModels: (): Promise<LocalModelInfo[]> => Promise.resolve([]),
-    generate: (_id, _prompt) => (reply instanceof Error ? Promise.reject(reply) : Promise.resolve(reply)),
-    pull: (_id: string, _cb?: (p: PullProgress) => void) => Promise.resolve(),
+    generate: () => (reply instanceof Error ? Promise.reject(reply) : Promise.resolve(reply)),
+    pull: () => Promise.resolve(),
   };
 }
 

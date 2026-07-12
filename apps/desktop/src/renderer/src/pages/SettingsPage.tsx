@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import type { ProviderId, Receipt } from "../../../shared/brain.js";
+import { LocalBrainSetup } from "./LocalBrainSetup.js";
 
 // "Settings" — for now, the brain picker: choose where your assistant thinks,
 // paste your key (kept safe on this computer), and test it with one real call.
 // The test shows a receipt so you can see exactly what left your machine.
 
 const BRAINS: { id: ProviderId; label: string; hint: string }[] = [
+  { id: "local", label: "On this computer — free & private", hint: "Runs a brain right on your machine. Free, and nothing you type ever leaves." },
   { id: "claude-cli", label: "Claude Code (my subscription)", hint: "Use the Claude app you're already signed into — no key, no extra cost." },
   { id: "openrouter", label: "OpenRouter", hint: "One key, lots of brains to choose from." },
   { id: "anthropic", label: "Claude (Anthropic)", hint: "Your own Claude key." },
@@ -36,6 +38,9 @@ export function SettingsPage() {
   const [busy, setBusy] = useState(false);
   const [reply, setReply] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const [localOpen, setLocalOpen] = useState(false);
+
+  const refreshStatus = () => void window.deskhand.brain.status().then(setStatus);
 
   useEffect(() => {
     void window.deskhand.brain.status().then((s) => {
@@ -43,6 +48,19 @@ export function SettingsPage() {
       if (s.provider) setProvider(s.provider);
     });
   }, []);
+
+  // The local brain has its own dedicated setup view (its own place, per the IA rule).
+  if (localOpen) {
+    return (
+      <LocalBrainSetup
+        onBack={() => {
+          setLocalOpen(false);
+          refreshStatus();
+        }}
+        onSaved={refreshStatus}
+      />
+    );
+  }
 
   async function save() {
     setBusy(true);
@@ -92,7 +110,20 @@ export function SettingsPage() {
         </select>
         <p className="hint">{BRAINS.find((b) => b.id === provider)?.hint}</p>
 
-        {provider === "claude-cli" ? (
+        {provider === "local" ? (
+          <>
+            <p className="hint">
+              {status.provider === "local"
+                ? "Your local brain is set up. Open it to change your model or check your computer again."
+                : "Set this up in its own place: we'll check your computer and help you pick a private brain."}
+            </p>
+            <div className="row">
+              <button className="primary" onClick={() => setLocalOpen(true)}>
+                Set up the local brain →
+              </button>
+            </div>
+          </>
+        ) : provider === "claude-cli" ? (
           <p className="hint">
             This brain runs on the Claude app on this computer, so there&apos;s nothing to paste. If it&apos;s not
             installed, we&apos;ll tell you when you test it.
@@ -110,23 +141,30 @@ export function SettingsPage() {
           </>
         )}
 
-        <label htmlFor="model">Which model? (optional)</label>
-        <input
-          id="model"
-          type="text"
-          value={model}
-          onChange={(e) => setModel(e.target.value)}
-          placeholder="Leave blank for a good default"
-        />
+        {/* The local brain picks its model in its own setup view, not here. */}
+        {provider !== "local" && (
+          <>
+            <label htmlFor="model">Which model? (optional)</label>
+            <input
+              id="model"
+              type="text"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              placeholder="Leave blank for a good default"
+            />
+          </>
+        )}
 
         <div className="row">
-          <button
-            className="primary"
-            onClick={() => void save()}
-            disabled={busy || (provider !== "claude-cli" && key.trim().length === 0)}
-          >
-            Save brain
-          </button>
+          {provider !== "local" && (
+            <button
+              className="primary"
+              onClick={() => void save()}
+              disabled={busy || (provider !== "claude-cli" && key.trim().length === 0)}
+            >
+              Save brain
+            </button>
+          )}
           <button className="link" onClick={() => void test()} disabled={busy || !status.configured}>
             Test my brain
           </button>
