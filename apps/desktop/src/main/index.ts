@@ -24,7 +24,7 @@ import { brainStatus, loadBrain, saveBrain } from "./keys.js";
 import { fileFetchSink, fileReceiptSink, readReceipts, receiptedFetch } from "./receipts.js";
 import { runPlugin, sandboxCheck } from "./plugin-host.js";
 import { claudeCliProvider } from "./claude-cli.js";
-import { localModels, localStatus, makeEngine, pullModel } from "./local.js";
+import { disposeLocal, engineForModel, localModels, localStatus, pullModel } from "./local.js";
 import { initialNewness, observeThread } from "./dm-newness.js";
 import { helloManifest } from "../plugins/hello/manifest.js";
 import { aiVisibilityManifest } from "../plugins/ai-visibility/manifest.js";
@@ -94,8 +94,9 @@ function buildRouter(): Router | null {
   if (!brain) return null;
   const provider: Provider =
     brain.provider === "local"
-      ? // A local model has no model id → no brain to run; guard with a clear id.
-        localProvider(makeEngine(), brain.model ?? "")
+      ? // A local model has no model id → no brain to run; guard with a clear id. The
+        // dispatcher picks the embedded runtime for a gguf model, Ollama otherwise.
+        localProvider(engineForModel(brain.model ?? ""), brain.model ?? "")
       : brain.provider === "claude-cli"
         ? claudeCliProvider({ bin: CLAUDE_BIN, baseArgs: devClaudeArgs(), model: brain.model })
         : brain.provider === "anthropic"
@@ -191,6 +192,7 @@ function checkForUpdatesSafely(): void {
 
 app.on("before-quit", () => {
   quitting = true;
+  disposeLocal(); // kill the embedded runtime child, if one is warm
 });
 
 app.on("window-all-closed", () => {

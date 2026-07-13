@@ -1,4 +1,4 @@
-import type { CatalogModel } from "@deskhand/core";
+import type { CatalogModel, GgufSource } from "@deskhand/core";
 import type { FetchSink } from "@deskhand/core";
 import { receiptedFetch } from "./receipts.js";
 import snapshotJson from "./catalog-snapshot.json";
@@ -30,6 +30,45 @@ function safeHttpUrl(value: unknown): string | null {
   }
 }
 
+// A GGUF filename that can't escape the models dir: safe charset, ends `.gguf`, no
+// separators, no "..". This is the string that becomes a path in the downloader, so a
+// malformed one must DROP the whole model (an embedded model we can't safely fetch is
+// worse than absent) rather than reach a path sink. (ledger: local-catalog-id-charset.)
+const SAFE_GGUF_FILENAME = /^[A-Za-z0-9][A-Za-z0-9._-]*\.gguf$/;
+const HEX64 = /^[0-9a-f]{64}$/;
+
+// Validate an optional `gguf` block. `undefined` when the field is absent (Ollama-only
+// model — fine). Returns `null` to signal "present but MALFORMED" so the caller drops
+// the model. https-only url; 64-hex sha256; safe filename; positive finite sizes.
+function validateGguf(raw: unknown): GgufSource | null | undefined {
+  if (raw === undefined) return undefined; // no embedded source — legitimate
+  if (raw === null || typeof raw !== "object") return null;
+  const g = raw as Record<string, unknown>;
+  const url = g["url"];
+  const sha256 = g["sha256"];
+  const sizeBytes = g["sizeBytes"];
+  const filename = g["filename"];
+  const contextSize = g["contextSize"];
+  let httpsUrl = false;
+  if (typeof url === "string") {
+    try {
+      httpsUrl = new URL(url).protocol === "https:";
+    } catch {
+      httpsUrl = false;
+    }
+  }
+  if (
+    !httpsUrl ||
+    typeof sha256 !== "string" || !HEX64.test(sha256) ||
+    typeof filename !== "string" || filename.includes("..") || !SAFE_GGUF_FILENAME.test(filename) ||
+    typeof sizeBytes !== "number" || !Number.isFinite(sizeBytes) || sizeBytes <= 0 ||
+    typeof contextSize !== "number" || !Number.isFinite(contextSize) || contextSize <= 0
+  ) {
+    return null;
+  }
+  return { url: url as string, sha256, sizeBytes, filename, contextSize };
+}
+
 // Validate ONE entry: every field the right type, params/size finite positive,
 // links http(s). Returns a clean CatalogModel or null (dropped).
 function validateModel(raw: unknown): CatalogModel | null {
@@ -45,6 +84,8 @@ function validateModel(raw: unknown): CatalogModel | null {
   const sizeBytes = m["sizeBytes"];
   const homepage = safeHttpUrl(m["homepage"]);
   const licenseUrl = safeHttpUrl(m["licenseUrl"]);
+  // A present-but-malformed gguf block drops the whole model (null); absent → undefined.
+  const gguf = validateGguf(m["gguf"]);
   if (
     typeof id !== "string" || id.length === 0 || id.length > 200 ||
     typeof label !== "string" || label.length === 0 ||
@@ -55,11 +96,12 @@ function validateModel(raw: unknown): CatalogModel | null {
     typeof params !== "number" || !Number.isFinite(params) || params <= 0 ||
     typeof sizeBytes !== "number" || !Number.isFinite(sizeBytes) || sizeBytes <= 0 ||
     homepage === null ||
-    licenseUrl === null
+    licenseUrl === null ||
+    gguf === null
   ) {
     return null;
   }
-  return { id, label, params, sizeBytes, quant, creator, homepage, license, licenseUrl, tradeoff };
+  return { id, label, params, sizeBytes, quant, creator, homepage, license, licenseUrl, tradeoff, ...(gguf ? { gguf } : {}) };
 }
 
 // Validate the whole document: an object with a non-empty `models` array of valid

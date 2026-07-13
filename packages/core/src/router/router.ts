@@ -23,6 +23,15 @@ function bytes(s: string): number {
   return new TextEncoder().encode(s).length;
 }
 
+// An on-machine engine reports its own token counts; don't stamp a garbage value onto
+// a receipt. Accept only a finite, non-negative integer; anything else → undefined (the
+// receipt just omits the count, never shows a fabricated one). Guards a future on-machine
+// backend that returns a non-integer — the current engines already sanitize, so this is
+// defense-in-depth at the trust boundary (ledger: router-onmachine-token-trust).
+function countOf(v: number | undefined): number | undefined {
+  return typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : undefined;
+}
+
 export function createRouter(config: RouterConfig): Router {
   const { providers, defaultProvider, sink } = config;
   // Fail-closed at construction: no sink → no router. A missing sink is the one
@@ -66,8 +75,9 @@ export function createRouter(config: RouterConfig): Router {
           // Only an on-machine brain's token counts belong on the receipt — a cloud
           // provider returning this shape would still be egress, told in bytes.
           if (onMachine) {
-            tokensIn = out.tokensIn;
-            tokensOut = out.tokensOut;
+            // Re-validate at the trust boundary — never stamp a non-integer count.
+            tokensIn = countOf(out.tokensIn);
+            tokensOut = countOf(out.tokensOut);
           }
         }
       } catch {

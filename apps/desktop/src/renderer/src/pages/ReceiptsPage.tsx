@@ -30,6 +30,7 @@ function who(r: ReceiptView): string {
   if (!isFetch(r)) return isLocal(r) ? "Your private brain" : "Your brain";
   if (r.task.startsWith("Deskhand:")) return "Deskhand";
   if (r.task.startsWith("skill:")) return "A connector";
+  if (r.task.startsWith("Downloading")) return "A model download";
   return "A website";
 }
 

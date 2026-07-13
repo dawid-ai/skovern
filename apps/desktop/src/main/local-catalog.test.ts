@@ -175,3 +175,52 @@ describe("validateCatalog — untrusted input", () => {
     expect(models).toBeNull();
   });
 });
+
+describe("validateCatalog — gguf block (embedded runtime, untrusted input)", () => {
+  const goodGguf = {
+    url: "https://huggingface.co/x/m.gguf",
+    sha256: "a".repeat(64),
+    sizeBytes: 2_000_000_000,
+    filename: "m-q4.gguf",
+    contextSize: 4096,
+  };
+  function modelWith(gguf: unknown): unknown {
+    return { ...JSON.parse(GOOD_DOC).models[0], gguf };
+  }
+
+  it("keeps a model with a well-formed gguf block (populated)", () => {
+    const models = validateCatalog({ models: [modelWith(goodGguf)] });
+    expect(models).not.toBeNull();
+    expect(models![0]!.gguf).toEqual(goodGguf);
+  });
+
+  it("keeps a model with NO gguf block (Ollama-only) — gguf undefined", () => {
+    const models = validateCatalog(JSON.parse(GOOD_DOC)); // GOOD_DOC has no gguf
+    expect(models).not.toBeNull();
+    expect(models![0]!.gguf).toBeUndefined();
+  });
+
+  // A present-but-malformed gguf DROPS the whole model, so a bad url/sha256/filename can
+  // never reach the downloader (a path/network sink). Each bad field → entry gone.
+  it("drops the model when gguf.url is not https", () => {
+    expect(validateCatalog({ models: [modelWith({ ...goodGguf, url: "http://x/m.gguf" })] })).toBeNull();
+    expect(validateCatalog({ models: [modelWith({ ...goodGguf, url: "file:///etc/passwd" })] })).toBeNull();
+  });
+
+  it("drops the model when gguf.sha256 isn't 64 lowercase hex", () => {
+    expect(validateCatalog({ models: [modelWith({ ...goodGguf, sha256: "not-hex" })] })).toBeNull();
+    expect(validateCatalog({ models: [modelWith({ ...goodGguf, sha256: "A".repeat(64) })] })).toBeNull(); // uppercase
+    expect(validateCatalog({ models: [modelWith({ ...goodGguf, sha256: "a".repeat(63) })] })).toBeNull(); // too short
+  });
+
+  it("drops the model when gguf.filename could traverse or isn't a .gguf", () => {
+    expect(validateCatalog({ models: [modelWith({ ...goodGguf, filename: "../evil.gguf" })] })).toBeNull();
+    expect(validateCatalog({ models: [modelWith({ ...goodGguf, filename: "sub/dir.gguf" })] })).toBeNull();
+    expect(validateCatalog({ models: [modelWith({ ...goodGguf, filename: "model.bin" })] })).toBeNull();
+  });
+
+  it("drops the model when gguf sizes aren't positive finite numbers", () => {
+    expect(validateCatalog({ models: [modelWith({ ...goodGguf, sizeBytes: 0 })] })).toBeNull();
+    expect(validateCatalog({ models: [modelWith({ ...goodGguf, contextSize: -1 })] })).toBeNull();
+  });
+});

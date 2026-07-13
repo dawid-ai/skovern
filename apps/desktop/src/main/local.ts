@@ -11,7 +11,9 @@ import {
 } from "@deskhand/core";
 import { fileFetchSink } from "./receipts.js";
 import { scanHardware } from "./hardware.js";
-import { createCachedCatalogLoader } from "./catalog.js";
+import { createCachedCatalogLoader, snapshotCatalog } from "./catalog.js";
+import { modelDownloaded } from "./download.js";
+import { llamaEngine, type ChildLike, type EmbeddedModel, type FromChild } from "./llama-engine.js";
 import type {
   HardwareView,
   LocalModelsView,
@@ -62,6 +64,77 @@ async function scanProfile(): Promise<HardwareProfile> {
 
 export function makeEngine(): LocalEngine {
   return ollamaEngine({ baseUrl: ollamaBaseUrl() });
+}
+
+// The embedded runtime. `latestEmbedded` is the current set of catalog models that carry
+// a `gguf` block (runnable without Ollama). It's seeded from the bundled snapshot and
+// refreshed whenever a view loads the live/fixture catalog — so a pull/generate uses the
+// SAME gguf (url/sha256/filename) the user saw, and the set is never empty.
+function embeddedFrom(catalog: CatalogModel[]): EmbeddedModel[] {
+  const out: EmbeddedModel[] = [];
+  for (const m of catalog) if (m.gguf) out.push({ id: m.id, label: m.label, gguf: m.gguf });
+  return out;
+}
+// Seeded from the snapshot so a pre-view call (a saved local brain at startup) resolves;
+// then set to whatever the loaded catalog actually carries — INCLUDING empty, so a
+// catalog with no gguf models correctly has zero embedded models (never a stale seed).
+let latestEmbedded: EmbeddedModel[] = embeddedFrom(snapshotCatalog());
+function rememberEmbedded(catalog: CatalogModel[]): void {
+  latestEmbedded = embeddedFrom(catalog);
+}
+function hasEmbedded(): boolean {
+  return latestEmbedded.length > 0;
+}
+
+// A dev/test seam (unpackaged only, mirror of DESKHAND_OLLAMA_URL / DESKHAND_CLAUDE_BIN):
+// when set, the embedded engine uses a FAKE in-process child that answers with canned
+// text — so the app e2e can drive the real UI + real downloader without the native
+// runtime. Inert (undefined) in a packaged app, which always forks the real child.
+function fakeLlamaSpawn(): (() => ChildLike) | undefined {
+  if (app.isPackaged || process.env["DESKHAND_LLAMA_FAKE"] !== "1") return undefined;
+  return () => {
+    const listeners: { message: ((m: FromChild) => void)[] } = { message: [] };
+    const emit = (m: FromChild): void => queueMicrotask(() => listeners.message.forEach((cb) => cb(m)));
+    emit({ type: "ready" });
+    return {
+      send: (msg) => emit({ type: "result", id: msg.id, text: "Hello — I'm your private brain, running right here on your computer.", tokensIn: 12, tokensOut: 13 }),
+      on: (event, cb) => {
+        if (event === "message") listeners.message.push(cb as (m: FromChild) => void);
+      },
+      kill: () => {},
+    };
+  };
+}
+
+// A dev/test seam (unpackaged only): redirect the model DOWNLOAD fetch to a loopback
+// fixture so the app e2e exercises the real streaming + sha256 downloader without a 2 GB
+// transfer. The catalog url stays a real https link (validator-happy, receipt shows the
+// real host); only the bytes come from the fixture. Inert (undefined) when packaged.
+function downloadFetchSeam(): typeof fetch | undefined {
+  if (app.isPackaged) return undefined;
+  const override = process.env["DESKHAND_MODEL_DOWNLOAD_URL"];
+  return override ? ((() => fetch(override)) as typeof fetch) : undefined;
+}
+
+// One warm embedded engine for the app's life.
+let llama: (LocalEngine & { dispose(): void }) | null = null;
+function makeLlamaEngine(): LocalEngine {
+  if (!llama) {
+    llama = llamaEngine({ models: () => latestEmbedded, fetchSink: fileFetchSink(), spawn: fakeLlamaSpawn(), fetchImpl: downloadFetchSeam() });
+  }
+  return llama;
+}
+
+/** Dispatch a chosen model to its backend: a model with a catalog `gguf` block runs on
+ *  the EMBEDDED runtime (no Ollama needed); anything else runs on Ollama. */
+export function engineForModel(modelId: string): LocalEngine {
+  return latestEmbedded.some((m) => m.id === modelId) ? makeLlamaEngine() : makeEngine();
+}
+
+/** Kill the embedded child (called on app quit). */
+export function disposeLocal(): void {
+  llama?.dispose();
+  llama = null;
 }
 
 function fmtGB(bytes: number | null): string | null {
@@ -133,12 +206,14 @@ export async function localStatus(): Promise<LocalStatusView> {
     loadCatalog(fileFetchSink(), catalogUrl()),
     detectAndList(engine),
   ]);
+  rememberEmbedded(catalog.models);
   const v = verdict(profile, candidateVerdictModels(catalog.models, det.have));
   return {
     ollamaReady: det.ready,
     hardware: hardwareView(profile),
     verdict: v,
-    notice: det.ready
+    // An embedded model runs WITHOUT Ollama, so don't nag about Ollama when one exists.
+    notice: det.ready || hasEmbedded()
       ? ""
       : "Ollama isn't running on this computer. It's the free helper that runs a private brain — start it, then choose \"Check my computer again\".",
   };
@@ -155,6 +230,7 @@ export async function localModels(): Promise<LocalModelsView> {
     detectAndList(engine),
   ]);
 
+  rememberEmbedded(catalog.models);
   const haveIds = new Set(det.have.map((m) => m.id));
   const catalogIds = new Set(catalog.models.map((m) => m.id));
   const ownHave = det.have.filter((m) => !catalogIds.has(m.id));
@@ -166,11 +242,16 @@ export async function localModels(): Promise<LocalModelsView> {
 
   const suggested: LocalModelView[] = catalog.models.map((c: CatalogModel) => {
     const fit = tierOf(c.id);
+    // An embedded model is "downloaded" when its verified file is on disk (not Ollama);
+    // it's actionable WITHOUT Ollama, so the view keeps its button live.
+    const embedded = c.gguf !== undefined;
+    const downloaded = embedded ? modelDownloaded(c.gguf!.filename) : haveIds.has(c.id);
     return {
       id: c.id,
       label: c.label,
       group: "suggested",
-      downloaded: haveIds.has(c.id),
+      downloaded,
+      embedded,
       tier: fit?.tier ?? "amber",
       usable: fit?.usable ?? true,
       note: fit?.note ?? "",
@@ -199,14 +280,17 @@ export async function localModels(): Promise<LocalModelsView> {
     };
   });
 
-  const notice = !det.ready
-    ? "Ollama isn't running — start it and choose \"Check my computer again\" to see your models."
-    : catalog.notice ?? "";
+  // Only nag about Ollama when there's no embedded model the user could run instead.
+  const notice =
+    !det.ready && !hasEmbedded()
+      ? "Ollama isn't running — start it and choose \"Check my computer again\" to see your models."
+      : catalog.notice ?? "";
 
   return { ollamaReady: det.ready, models: [...have, ...suggested], notice };
 }
 
-/** Start pulling a model, forwarding progress. Rejects (descriptively) on failure. */
+/** Start pulling a model, forwarding progress. Routes to the embedded downloader for a
+ *  gguf model, or Ollama's pull otherwise. Rejects (descriptively) on failure. */
 export function pullModel(modelId: string, onProgress: (p: PullProgress) => void): Promise<void> {
-  return makeEngine().pull(modelId, onProgress);
+  return engineForModel(modelId).pull(modelId, onProgress);
 }

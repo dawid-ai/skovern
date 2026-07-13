@@ -13,6 +13,7 @@ export type {
   GpuInfo,
   HardwareProfile,
   CatalogModel,
+  GgufSource,
   FitTier,
   ModelFit,
   Verdict,
