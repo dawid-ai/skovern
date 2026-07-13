@@ -24,7 +24,7 @@ import { brainStatus, loadBrain, saveBrain } from "./keys.js";
 import { fileFetchSink, fileReceiptSink, readReceipts, receiptedFetch } from "./receipts.js";
 import { runPlugin, sandboxCheck } from "./plugin-host.js";
 import { claudeCliProvider } from "./claude-cli.js";
-import { disposeLocal, engineForModel, localModels, localStatus, pullModel } from "./local.js";
+import { disposeLocal, engineForModel, isEmbeddedModel, localModels, localStatus, pullModel } from "./local.js";
 import { initialNewness, observeThread } from "./dm-newness.js";
 import { helloManifest } from "../plugins/hello/manifest.js";
 import { aiVisibilityManifest } from "../plugins/ai-visibility/manifest.js";
@@ -413,12 +413,18 @@ app
       } catch {
         // The subscription/local brains have no key — a failure means the CLI or
         // Ollama isn't there, so say that instead of "check the key".
-        const p = loadBrain()?.provider;
+        const brain = loadBrain();
+        const p = brain?.provider;
+        // An embedded (on-device) model has nothing to do with Ollama — say so honestly,
+        // rather than telling a no-Ollama florist to "start Ollama".
+        const localMsg = isEmbeddedModel(brain?.model ?? "")
+          ? "We couldn't start the private brain on this computer. It may not be supported here yet, or the download didn't finish — try getting it again."
+          : "We couldn't reach the local brain. Is Ollama running, and have you picked a model that's downloaded?";
         const msg =
           p === "claude-cli"
             ? "We couldn't reach Claude Code on this computer. Is it installed and signed in?"
             : p === "local"
-              ? "We couldn't reach the local brain. Is Ollama running, and have you picked a model that's downloaded?"
+              ? localMsg
               : "Your brain didn't answer. Check the key and try again.";
         return { ok: false, message: msg };
       }

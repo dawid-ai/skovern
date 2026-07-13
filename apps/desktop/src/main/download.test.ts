@@ -98,7 +98,8 @@ describe("downloadModel", () => {
     const { sink } = collectingSink();
 
     await expect(downloadModel(g, sink, undefined, via(base))).rejects.toThrow(/safety check|didn't match/i);
-    expect(existsSync(modelPath(g.filename))).toBe(false); // no partial/bad file left
+    expect(existsSync(modelPath(g.filename))).toBe(false); // real name never created
+    expect(existsSync(modelPath(g.filename) + ".part")).toBe(false); // and no .part orphan
     expect(modelDownloaded(g.filename)).toBe(false);
   });
 
@@ -139,6 +140,23 @@ describe("downloadModel", () => {
     const g: GgufSource = { url: "http://insecure.test/model.gguf", sha256: "0".repeat(64), sizeBytes: 1, filename: "x.gguf", contextSize: 4096 };
     const { sink } = collectingSink();
     await expect(downloadModel(g, sink)).rejects.toThrow(/secure https/i);
+  });
+
+  // D7 — redirect downgrade: a fetch that ends on a non-loopback http host (an https
+  // catalog link 302'd to plain http) is refused, leaving no file — the transport can't
+  // be silently downgraded.
+  it("D7: refuses a final url that downgraded to non-loopback http", async () => {
+    const g = gguf(Buffer.from("x"), "redir.gguf"); // g.url is https (passes the first check)
+    const { sink } = collectingSink();
+    const fakeRes = {
+      ok: true,
+      status: 200,
+      url: "http://evil.test/redir.gguf", // the FINAL url after a downgrade redirect
+      body: new ReadableStream<Uint8Array>({ start: (c) => c.close() }),
+    } as unknown as Response;
+    const fetchImpl = (() => Promise.resolve(fakeRes)) as unknown as typeof fetch;
+    await expect(downloadModel(g, sink, undefined, fetchImpl)).rejects.toThrow(/insecure address/i);
+    expect(existsSync(modelPath(g.filename))).toBe(false);
   });
 
   // D6 — no path traversal: a filename that escapes the models dir is refused before it

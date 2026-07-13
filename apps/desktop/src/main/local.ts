@@ -128,7 +128,13 @@ function makeLlamaEngine(): LocalEngine {
 /** Dispatch a chosen model to its backend: a model with a catalog `gguf` block runs on
  *  the EMBEDDED runtime (no Ollama needed); anything else runs on Ollama. */
 export function engineForModel(modelId: string): LocalEngine {
-  return latestEmbedded.some((m) => m.id === modelId) ? makeLlamaEngine() : makeEngine();
+  return isEmbeddedModel(modelId) ? makeLlamaEngine() : makeEngine();
+}
+
+/** Does this model run on the embedded runtime (vs Ollama)? Lets callers phrase an
+ *  honest failure — an embedded model's problem is never "Ollama isn't running". */
+export function isEmbeddedModel(modelId: string): boolean {
+  return latestEmbedded.some((m) => m.id === modelId);
 }
 
 /** Kill the embedded child (called on app quit). */

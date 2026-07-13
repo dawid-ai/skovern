@@ -1,6 +1,6 @@
 import { app } from "electron";
 import { createWriteStream, existsSync } from "node:fs";
-import { mkdir, unlink } from "node:fs/promises";
+import { mkdir, rename, unlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import type { FetchSink, GgufSource } from "@deskhand/core";
@@ -22,6 +22,18 @@ import type { FetchSink, GgufSource } from "@deskhand/core";
 // pinning the first host.
 
 const SAFE_GGUF_FILENAME = /^[A-Za-z0-9][A-Za-z0-9._-]*\.gguf$/;
+
+// Loopback is on-machine (a dev/test fixture); everything else must stay https so a
+// redirect can't DOWNGRADE the transport (a 302 from an https catalog url to http).
+const LOOPBACK = new Set(["127.0.0.1", "localhost", "::1"]);
+function isSafeFinalUrl(u: string): boolean {
+  try {
+    const url = new URL(u);
+    return url.protocol === "https:" || (url.protocol === "http:" && LOOPBACK.has(url.hostname));
+  } catch {
+    return false;
+  }
+}
 
 export function modelsDir(): string {
   return path.join(app.getPath("userData"), "models");
@@ -63,6 +75,10 @@ export async function downloadModel(
   fetchImpl: typeof fetch = fetch,
 ): Promise<string> {
   const dest = modelPath(gguf.filename); // throws on an unsafe name before anything else
+  // Download to a `.part` file and rename to the real name ONLY after the sha256 passes.
+  // So a corrupt/tampered download NEVER exists under `dest` — even if cleanup fails, the
+  // final name is created only for a verified file, and can never be loaded otherwise.
+  const part = dest + ".part";
 
   // https-only: an untrusted catalog url can't be http/file/etc.
   let host: string;
@@ -92,12 +108,17 @@ export async function downloadModel(
   }
 
   try {
-    const res = await fetchImpl(gguf.url); // follows the HF 302 → CDN (still https)
+    const res = await fetchImpl(gguf.url); // follows the HF 302 → CDN
     if (!res.ok || !res.body) {
       throw new Error(`The download couldn't start (error ${res.status}). Try again.`);
     }
+    // The FINAL url (after any redirect) must stay https (loopback allowed for the dev
+    // fixture) — a redirect can't downgrade an https catalog link to plain http.
+    if (res.url && !isSafeFinalUrl(res.url)) {
+      throw new Error("The download was sent to an insecure address and was stopped.");
+    }
     const total = gguf.sizeBytes;
-    const out = createWriteStream(dest);
+    const out = createWriteStream(part);
     const reader = (res.body as ReadableStream<Uint8Array>).getReader();
     try {
       for (;;) {
@@ -118,19 +139,22 @@ export async function downloadModel(
     }
     await new Promise<void>((resolve, reject) => out.end((err?: Error | null) => (err ? reject(err) : resolve())));
   } catch (err) {
-    await unlink(dest).catch(() => {}); // no partial file left behind
+    await unlink(part).catch(() => {}); // no partial file left behind
     await doneReceipt(false);
     throw err instanceof Error ? err : new Error("The download didn't finish. Try again.");
   }
 
-  // The sha256 gate — the load-bearing integrity check.
+  // The sha256 gate — the load-bearing integrity check. A mismatch deletes the `.part`
+  // and rejects; the real `dest` was never created, so a bad file can't be loaded.
   const digest = hash.digest("hex");
   if (digest !== gguf.sha256.toLowerCase()) {
-    await unlink(dest).catch(() => {});
+    await unlink(part).catch(() => {});
     await doneReceipt(false);
     throw new Error("The downloaded model didn't match its safety check and was removed. Try again.");
   }
 
+  // Verified → give it its real name. Only now does modelDownloaded() see it.
+  await rename(part, dest);
   await doneReceipt(true);
   return dest;
 }
