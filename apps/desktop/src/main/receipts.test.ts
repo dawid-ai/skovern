@@ -151,7 +151,7 @@ describe("rotation", () => {
   // T1 — rotation on size: once the current log crosses the cap, the next append
   // rotates it to `.1` (holding the pre-rotation content) and starts a fresh, small
   // current file that holds only the new line.
-  it("T1: rotates the current log to .1 when it crosses the cap", () => {
+  it("T1: rotates the current log to .1 when it crosses the cap", async () => {
     // One oversized line pushes the file past the cap. Distinct ts marks it so we
     // can find it in the rotated file afterwards.
     const before = { ...modelReceipt("before-rotation", MAX_BYTES), ts: "2026-01-01T00:00:00.000Z" };
@@ -159,7 +159,7 @@ describe("rotation", () => {
     expect(statSync(receiptsPath()).size).toBeGreaterThanOrEqual(MAX_BYTES);
 
     const after = { ...modelReceipt("after-rotation"), ts: "2026-02-02T00:00:00.000Z" };
-    fileReceiptSink().append(after);
+    await fileReceiptSink().append(after);
 
     // .1 now holds the pre-rotation content; current is fresh and small.
     expect(existsSync(rotatedPath())).toBe(true);
@@ -173,7 +173,7 @@ describe("rotation", () => {
   // T2 — bounded disk: writing well past 2×cap through the sink leaves exactly two
   // files (.jsonl + .jsonl.1), never a .2, and neither exceeds the cap by more than
   // one receipt-line.
-  it("T2: on-disk usage stays bounded to two files, no .2", () => {
+  it("T2: on-disk usage stays bounded to two files, no .2", async () => {
     const pad = 20 * 1024; // ~20 KB per line so a few hundred appends cross 2×cap
     const sink = fileReceiptSink();
     let maxLineBytes = 0;
@@ -184,7 +184,7 @@ describe("rotation", () => {
       const receipt = modelReceipt("bulk-" + i, pad);
       const bytes = Buffer.byteLength(JSON.stringify(receipt) + "\n");
       maxLineBytes = Math.max(maxLineBytes, bytes);
-      sink.append(receipt);
+      await sink.append(receipt);
       written += bytes;
       i++;
     }
@@ -200,13 +200,13 @@ describe("rotation", () => {
 
   // Windows gotcha: renameSync to an EXISTING target throws on Windows. Rotating
   // when a `.1` already exists must succeed (delete-then-rename), replacing it.
-  it("replaces a pre-existing .1 on rotation without throwing", () => {
+  it("replaces a pre-existing .1 on rotation without throwing", async () => {
     const stale = { ...modelReceipt("stale-rotated"), ts: "2020-01-01T00:00:00.000Z" };
     writeFileSync(rotatedPath(), JSON.stringify(stale) + "\n");
     const before = { ...modelReceipt("before", MAX_BYTES), ts: "2026-01-01T00:00:00.000Z" };
     writeFileSync(receiptsPath(), JSON.stringify(before) + "\n");
 
-    expect(() => fileReceiptSink().append({ ...modelReceipt("after"), ts: "2026-02-02T00:00:00.000Z" })).not.toThrow();
+    await expect(fileReceiptSink().append({ ...modelReceipt("after"), ts: "2026-02-02T00:00:00.000Z" })).resolves.toBeUndefined();
 
     // The old .1 is gone; the fresh .1 holds the just-rotated current log.
     const rotated = readFileSync(rotatedPath(), "utf8");
@@ -284,5 +284,103 @@ describe("readReceipts across rotation", () => {
     // window reaches back into the rotated file: 400 current + 100 from `.1`).
     expect(out[0]).toMatchObject({ task: "n399" });
     expect(out[499]).toMatchObject({ task: "o200" });
+  });
+});
+
+function fetchReceiptAt(task: string, i: number, phase: "sent" | "done" = "sent"): FetchReceipt {
+  return {
+    kind: "fetch",
+    ts: `2026-07-13T10:00:00.${String(i).padStart(3, "0")}Z`,
+    host: "api.deskhand.test",
+    task,
+    bytesSent: i,
+    bytesReceived: 0,
+    ok: true,
+    phase,
+  };
+}
+
+// Reads the current log's non-empty lines RAW — deliberately not through readReceipts,
+// which tolerates (skips) a corrupt line and would hide an interleave.
+function rawLines(): string[] {
+  return readFileSync(receiptsPath(), "utf8")
+    .split("\n")
+    .filter((l) => l.length > 0);
+}
+
+describe("append serialization", () => {
+  // A1 — no interleave under concurrency: fire many appends across BOTH sinks at once;
+  // every line on disk is a complete, parseable receipt and the count is exactly N —
+  // nothing dropped, split, or merged by two writers racing the same file.
+  it("A1: concurrent model + fetch appends never interleave a line", async () => {
+    const N = 200;
+    const model = fileReceiptSink();
+    const fetchS = fileFetchSink();
+    // Promise.resolve normalizes the sinks' `void | Promise<void>` return into a promise.
+    const jobs: Promise<unknown>[] = [];
+    for (let i = 0; i < N; i++) {
+      jobs.push(
+        Promise.resolve(
+          i % 2 === 0
+            ? model.append({ ...modelReceipt("m" + i), ts: `2026-07-13T10:00:00.${String(i).padStart(3, "0")}Z` })
+            : fetchS.append(fetchReceiptAt("f" + i, i)),
+        ),
+      );
+    }
+    await Promise.all(jobs);
+
+    const lines = rawLines();
+    expect(lines).toHaveLength(N);
+    // JSON.parse throws (failing the test) on any interleaved/half line; a well-formed
+    // receipt always carries a string `ts`, so this is a complete-line assertion.
+    for (const line of lines) {
+      const obj = JSON.parse(line) as Record<string, unknown>;
+      expect(obj["ts"]).toBeTypeOf("string");
+    }
+  });
+
+  // A2 — FIFO per writer: appends issued in order land in that order on disk (a
+  // writer's `sent` precedes its `done`), even when issued without awaiting between.
+  it("A2: preserves per-writer order (sent before done)", async () => {
+    const sink = fileFetchSink();
+    const p1 = sink.append(fetchReceiptAt("ordered", 0, "sent"));
+    const p2 = sink.append(fetchReceiptAt("ordered", 1, "done"));
+    await Promise.all([p1, p2]);
+
+    const phases = rawLines().map((l) => (JSON.parse(l) as FetchReceipt).phase);
+    expect(phases).toEqual(["sent", "done"]);
+  });
+
+  // A3 — fail-closed + chain survives: an append whose write fails rejects ITS OWN
+  // caller (so the router/receiptedFetch keep egress fail-closed), and a later append
+  // still lands — one failure doesn't wedge the single-writer queue.
+  it("A3: a failing append rejects its caller but doesn't wedge the queue", async () => {
+    const model = fileReceiptSink();
+    await model.append({ ...modelReceipt("ok-before"), ts: "2026-07-13T12:00:00.000Z" });
+
+    // Point userData at a non-existent dir so `open` throws (ENOENT) for the next
+    // append only; the queue is idle (we awaited ok-before), so only "doomed" runs here.
+    const goodDir = state.dir;
+    state.dir = path.join(goodDir, "nope-does-not-exist");
+    await expect(
+      model.append({ ...modelReceipt("doomed"), ts: "2026-07-13T12:00:01.000Z" }),
+    ).rejects.toThrow(/ENOENT/); // open() into a missing dir fails closed
+    state.dir = goodDir;
+
+    await expect(
+      model.append({ ...modelReceipt("ok-after"), ts: "2026-07-13T12:00:02.000Z" }),
+    ).resolves.toBeUndefined();
+
+    const tasks = (await readReceipts()).map((r) => r.task);
+    expect(tasks).toContain("ok-before");
+    expect(tasks).toContain("ok-after");
+    expect(tasks).not.toContain("doomed"); // its write never landed
+  });
+
+  // A4 — durable: after a model append resolves, the line is on disk (fsync'd via the
+  // shared write path — closes the model-vs-fetch durability asymmetry).
+  it("A4: a resolved model append is on disk", async () => {
+    await fileReceiptSink().append({ ...modelReceipt("durable"), ts: "2026-07-13T13:00:00.000Z" });
+    expect(readFileSync(receiptsPath(), "utf8")).toContain("durable");
   });
 });

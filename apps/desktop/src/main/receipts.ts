@@ -1,5 +1,5 @@
 import { app } from "electron";
-import { appendFileSync, createReadStream, existsSync, renameSync, statSync, unlinkSync } from "node:fs";
+import { createReadStream, existsSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import path from "node:path";
@@ -40,30 +40,52 @@ function rotateIfNeeded(): void {
   renameSync(file, rotated);
 }
 
+// Single-writer queue: model AND fetch receipts share ONE serialized append chain, so
+// two writers can never interleave a line in receipts.jsonl regardless of OS append
+// atomicity. Main is the only process that writes this file (023's single-instance lock
+// keeps a rival process from ever racing it), so an in-process queue is enough — no
+// cross-process file lock. A failed append rejects its OWN caller (fail-closed: the
+// router / receiptedFetch never lets a byte leave unrecorded), but is swallowed off the
+// chain so one failure can't wedge the queue for the next writer.
+// ponytail: in-process queue; add a file lock only if a multi-writer process ever appears.
+let writeTail: Promise<unknown> = Promise.resolve();
+
+function serialize<T>(work: () => Promise<T>): Promise<T> {
+  const run = writeTail.then(work, work); // run regardless of the prior append's outcome
+  writeTail = run.catch(() => {}); // the chain never rejects; the caller (below) still sees its own failure
+  return run;
+}
+
+// The one place a receipt line reaches disk. Rotate INSIDE the lock so a rename can't
+// race a write, append, then fsync so a pulled plug can't lose the proof a byte left
+// (both sinks are durable now — the model path no longer trails the fetch path).
+async function appendLine(line: string): Promise<void> {
+  rotateIfNeeded();
+  const fh = await open(receiptsFile(), "a");
+  try {
+    await fh.write(line);
+    await fh.sync();
+  } finally {
+    await fh.close();
+  }
+}
+
 export function fileReceiptSink(): ReceiptSink {
   return {
-    append(receipt: Receipt): void {
-      rotateIfNeeded();
-      appendFileSync(receiptsFile(), JSON.stringify(receipt) + "\n");
+    // Returns a Promise (ReceiptSink.append is `void | Promise<void>`); the router
+    // already awaits it, so the sent-before-egress ordering is unchanged.
+    append(receipt: Receipt): Promise<void> {
+      return serialize(() => appendLine(JSON.stringify(receipt) + "\n"));
     },
   };
 }
 
-// A plugin `fetch` is egress too → same log, but DURABLE before it resolves: the
-// broker records the "sent" line before any byte leaves, so the receipt must survive
-// a crash mid-fetch. appendFileSync buffers in the OS page cache; here we fsync so a
-// pulled plug can't lose the one proof that something left the machine.
+// A plugin `fetch` (and every first-party cloud call) is egress too → same log, same
+// durable single-writer path: the broker records the "sent" line before any byte leaves.
 export function fileFetchSink(): FetchSink {
   return {
-    async append(receipt: FetchReceipt): Promise<void> {
-      rotateIfNeeded();
-      const fh = await open(receiptsFile(), "a");
-      try {
-        await fh.write(JSON.stringify(receipt) + "\n");
-        await fh.sync();
-      } finally {
-        await fh.close();
-      }
+    append(receipt: FetchReceipt): Promise<void> {
+      return serialize(() => appendLine(JSON.stringify(receipt) + "\n"));
     },
   };
 }
