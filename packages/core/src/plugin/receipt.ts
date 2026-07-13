@@ -17,6 +17,12 @@ export interface FetchReceipt {
   ok: boolean;
   /** `"sent"` = recorded before egress (fail-closed); `"done"` = the outcome. */
   phase: "sent" | "done";
+  /** True for the app's own repeating background checks (news/messages/model list)
+   *  — set at the call site, so the panel classifies them authoritatively instead of
+   *  matching task strings. These still leave the machine and are still logged; the
+   *  panel just groups them into a quiet summary rather than a row per poll. Absent
+   *  (falsey) for meaningful egress — a brain call, a skill scrape, publishing. */
+  routine?: boolean;
 }
 
 export interface FetchSink {

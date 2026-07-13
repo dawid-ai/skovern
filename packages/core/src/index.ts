@@ -38,6 +38,7 @@ export { ollamaEngine, localProvider, verdict } from "./local/index.js";
 export type {
   OllamaOptions,
   LocalEngine,
+  LocalGenerateResult,
   LocalModelInfo,
   PullProgress,
   GpuInfo,

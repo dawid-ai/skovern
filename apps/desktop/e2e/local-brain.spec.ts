@@ -14,6 +14,12 @@ import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningSer
 // (no real Ollama/GitHub in CI) → pick an already-downloaded model → run a real
 // call on it → the Receipts page shows a "stayed on your computer" entry (no egress)
 // AND a github catalog receipt. Also: a descriptive error when Ollama is unreachable.
+//
+// Loop 022 adds, on the same flow (deterministic — the fixture emits fixed token
+// counts): the local run's receipt shows TOKENS not bytes; a no-token local call
+// falls back to the plain honest line; the routine catalog poll is GROUPED (write-time
+// `routine` flag) not a table row; and opening the local view fires ONE catalog fetch,
+// so exactly one "model list" receipt exists per open (was two).
 
 const LOCAL_REPLY = "Hello from your private local brain.";
 
@@ -55,8 +61,25 @@ function startOllama(): Promise<string> {
         return;
       }
       if (req.method === "POST" && url === "/api/generate") {
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ response: LOCAL_REPLY }));
+        let raw = "";
+        req.on("data", (c) => (raw += c));
+        req.on("end", () => {
+          let model = "";
+          try {
+            model = (JSON.parse(raw) as { model?: string }).model ?? "";
+          } catch {
+            /* keep model "" */
+          }
+          res.writeHead(200, { "content-type": "application/json" });
+          // mistral:7b reports token usage (prompt_eval_count/eval_count); a bare-reply
+          // model (qwen2.5:3b) does NOT — so the panel shows tokens for one and the plain
+          // "stayed on your computer" line for the other (the degraded no-token path).
+          res.end(
+            model === "mistral:7b"
+              ? JSON.stringify({ response: LOCAL_REPLY, prompt_eval_count: 7, eval_count: 42 })
+              : JSON.stringify({ response: LOCAL_REPLY }),
+          );
+        });
         return;
       }
       if (req.method === "POST" && url === "/api/pull") {
@@ -194,6 +217,18 @@ test("user sets up a private on-computer brain, always sees which brain is activ
     await expect(page.getByText("Already on your computer").first()).toBeVisible();
     await expect(page.getByText("Best for your computer").first()).toBeVisible();
 
+    // DOUBLE-FETCH FIXED (closes local-catalog-double-fetch): this is the FIRST — and so
+    // far ONLY — open of the local view, and both its IPC calls (local:status +
+    // local:models) fire together on mount and share the cached catalog. So exactly ONE
+    // "model list" sent receipt exists now — pre-fix it was two. Checked here, right after
+    // the open, so the count can't be perturbed by later interaction or the cache TTL. The
+    // deterministic collapse+refetch proof lives in the local-catalog unit test.
+    const afterOpen = readFileSync(path.join(userDataDir, "receipts.jsonl"), "utf8");
+    const modelListSent = afterOpen
+      .split("\n")
+      .filter((l) => l.includes('"task":"Deskhand: model list"') && l.includes('"phase":"sent"'));
+    expect(modelListSent).toHaveLength(1);
+
     // everything else folds under "Other options" (hidden by default)
     await expect(page.getByText("Qwen2.5 235B")).toBeHidden();
     await expect(page.getByRole("heading", { name: "Qwen2.5 3B" })).toBeHidden();
@@ -218,18 +253,25 @@ test("user sets up a private on-computer brain, always sees which brain is activ
     await page.getByRole("button", { name: "Test my brain" }).click();
     await expect(page.getByText(LOCAL_REPLY)).toBeVisible({ timeout: 30_000 });
 
-    // Receipts page: the local run "stayed on your computer" (no egress), and the
-    // catalog fetch left a github/model-list receipt.
+    // Receipts page (loop 022): the local mistral run shows the TOKENS it used ("all
+    // on your computer"), NOT bytes; and the routine catalog poll is GROUPED under
+    // "Routine background checks", never a row in the main table.
     await page.getByRole("button", { name: "Receipts" }).click();
-    await expect(page.getByText("stayed on your computer — nothing left").first()).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByText("model list").first()).toBeVisible();
+    await expect(page.getByText(/7 tokens in, 42 out/).first()).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText(/all on your computer/).first()).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Routine background checks" })).toBeVisible();
+    await expect(page.getByText("Checked the model list").first()).toBeVisible();
 
-    // on-disk proof: a local:true model receipt + a receipted catalog fetch, and the
-    // reply body never touched the log.
+    // on-disk proof: a local:true model receipt WITH token counts (never bytes for the
+    // local reply), the catalog poll tagged routine:true at the source, and the reply
+    // body never touched the log.
     const log = readFileSync(path.join(userDataDir, "receipts.jsonl"), "utf8");
     expect(log).toContain('"provider":"local"');
     expect(log).toContain('"local":true');
-    expect(log).toContain('"task":"Deskhand: model list"');
+    expect(log).toContain('"tokensIn":7');
+    expect(log).toContain('"tokensOut":42');
+    const modelListLine = log.split("\n").find((l) => l.includes('"task":"Deskhand: model list"'));
+    expect(modelListLine).toContain('"routine":true');
     expect(log).not.toContain(LOCAL_REPLY);
 
     // IN-USE MARKER ON LOAD: reopening the local setup shows the active model as in use
@@ -244,11 +286,22 @@ test("user sets up a private on-computer brain, always sees which brain is activ
     await page.getByRole("button", { name: "Get this one" }).first().click();
     await expect(page.getByText("Local: qwen2.5:3b")).toBeVisible({ timeout: 30_000 });
 
+    // DEGRADED — a local brain that reports NO token counts (qwen2.5:3b in the fixture)
+    // still renders the plain, honest "stayed on your computer" line — never bytes, never
+    // "NaN tokens". Run it, then check Receipts shows BOTH: the plain line (qwen) AND the
+    // token line (mistral) — the panel is honest per-call.
+    await page.getByRole("button", { name: "← Back to Settings" }).click();
+    await page.getByRole("button", { name: "Test my brain" }).click();
+    await expect(page.getByText(LOCAL_REPLY)).toBeVisible({ timeout: 30_000 });
+    await page.getByRole("button", { name: "Receipts" }).click();
+    await expect(page.getByText("stayed on your computer — nothing left").first()).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText(/7 tokens in, 42 out/).first()).toBeVisible();
+
     // descriptive error when Ollama becomes unreachable: stop the fake server, reopen
     // the setup view → plain-language "isn't running" + NO dangling hero pick.
     await new Promise<void>((resolve) => (ollama ? ollama.close(() => resolve()) : resolve()));
     ollama = null;
-    await page.getByRole("button", { name: "← Back to Settings" }).click();
+    await page.getByRole("button", { name: "Settings" }).click();
     await page.getByRole("button", { name: "Set up the local brain →" }).click();
     await expect(page.getByText(/Ollama isn't running/i).first()).toBeVisible({ timeout: 30_000 });
     // and NO hero pick is shown when Ollama is down — the verdict still scores the

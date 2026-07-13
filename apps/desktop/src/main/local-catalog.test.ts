@@ -6,7 +6,7 @@ import type { FetchReceipt, FetchSink } from "@deskhand/core";
 // receipts.ts imports electron for app.getPath — stub it so the import resolves.
 vi.mock("electron", () => ({ app: { getPath: () => "." } }));
 
-import { loadCatalog, snapshotCatalog, validateCatalog } from "./catalog.js";
+import { createCachedCatalogLoader, loadCatalog, snapshotCatalog, validateCatalog } from "./catalog.js";
 
 // C1 — the catalog: a valid live fetch parses; a failed/malformed fetch falls back
 // to the bundled snapshot AND yields a descriptive notice; the fetch goes through
@@ -70,6 +70,8 @@ describe("loadCatalog (C1)", () => {
     expect(receipts.every((r) => r.kind === "fetch")).toBe(true);
     expect(receipts.every((r) => r.task === "Deskhand: model list")).toBe(true);
     expect(receipts.some((r) => r.phase === "sent")).toBe(true);
+    // classified routine at the SOURCE (housekeeping poll) → the panel groups it.
+    expect(receipts.every((r) => r.routine === true)).toBe(true);
   });
 
   it("falls back to the bundled snapshot with a descriptive notice on a non-200", async () => {
@@ -101,6 +103,48 @@ describe("loadCatalog (C1)", () => {
     expect(result.notice).toMatch(/offline|couldn't reach/i);
     // still receipted the attempt (fail-closed "sent" line)
     expect(receipts.some((r) => r.phase === "sent")).toBe(true);
+  });
+});
+
+describe("createCachedCatalogLoader — collapses the local view's double fetch", () => {
+  // A fixture that counts how many times it's actually hit over the wire.
+  function startCounting(good: string): Promise<{ url: string; hits: () => number }> {
+    let count = 0;
+    return new Promise((resolve) => {
+      server = createServer((_req, res) => {
+        count += 1;
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(good);
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const { port } = server!.address() as AddressInfo;
+        resolve({ url: `http://127.0.0.1:${port}/catalog/models.json`, hits: () => count });
+      });
+    });
+  }
+
+  it("shares ONE fetch for two loads within the TTL (status+models), refetches past it", async () => {
+    const { url, hits } = await startCounting(GOOD_DOC);
+    const { sink, receipts } = collectingSink();
+    let clock = 1000;
+    const load = createCachedCatalogLoader(() => clock);
+
+    // the near-simultaneous status+models pair → ONE fetch, ONE "sent" receipt
+    const [a, b] = await Promise.all([load(sink, url), load(sink, url)]);
+    expect(a.source).toBe("live");
+    expect(b.source).toBe("live");
+    expect(hits()).toBe(1);
+    expect(receipts.filter((r) => r.phase === "sent").length).toBe(1);
+
+    // still inside the TTL window → cached, no new fetch
+    clock += 2000; // 2s later
+    await load(sink, url);
+    expect(hits()).toBe(1);
+
+    // past the TTL → an intentional rescan gets a fresh list (never permanently stale)
+    clock += 2000; // now 4s since the first load → > 3s TTL
+    await load(sink, url);
+    expect(hits()).toBe(2);
   });
 });
 

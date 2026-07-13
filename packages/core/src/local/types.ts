@@ -17,6 +17,16 @@ export interface LocalModelInfo {
   quant?: string;
 }
 
+/** The result of one local generate: the reply text plus, when the engine reports
+ *  them, the tokens it read/produced — so a private-brain receipt can show tokens
+ *  ("all on your computer") instead of bytes. Counts are `undefined` when the engine
+ *  doesn't report them (older Ollama, some models), never faked to 0. */
+export interface LocalGenerateResult {
+  text: string;
+  tokensIn?: number;
+  tokensOut?: number;
+}
+
 /** One progress tick while pulling a model. Ollama streams these as newline JSON. */
 export interface PullProgress {
   /** Engine status line ("pulling manifest", "downloading", "success"…). */
@@ -37,8 +47,9 @@ export interface LocalEngine {
   detect(): Promise<boolean>;
   /** Models this engine can run right now. */
   listModels(): Promise<LocalModelInfo[]>;
-  /** Run a prompt on one model, get text back. Rejects (never crashes) on failure. */
-  generate(modelId: string, prompt: string): Promise<string>;
+  /** Run a prompt on one model. Returns the reply text plus optional token counts.
+   *  Rejects (never crashes) on failure. */
+  generate(modelId: string, prompt: string): Promise<LocalGenerateResult>;
   /** Fetch a model the engine doesn't have yet, reporting progress. Rejects on failure. */
   pull(modelId: string, onProgress?: (p: PullProgress) => void): Promise<void>;
 }
