@@ -205,51 +205,77 @@ test("user sets up a private on-computer brain, always sees which brain is activ
     await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible();
     await expect(page.getByText(/private brain|cloud brain|subscription/i).first()).toBeVisible({ timeout: 30_000 });
 
-    // CONSISTENCY (regression for the 019 contradiction): the verdict headline names
-    // the SAME model as the "Our pick" hero. The user's own mistral:7b outranks the
-    // catalog picks, so it's the recommendation — before the fix, the headline (scored
-    // over the catalog ONLY) would name a catalog model while the hero named mistral.
-    // Asserted wording-independently (the headline copy differs on a green vs amber
-    // machine — CI is CPU-only — but the MODEL it names must match the hero either way).
-    await expect(page.getByRole("heading", { name: "Our pick for your computer" })).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByRole("heading", { name: "mistral:7b" })).toBeVisible();
+    // CONSISTENCY (regression for the 019 contradiction): the verdict headline names the
+    // SAME model as the "Our pick" callout. The user's own mistral:7b outranks the catalog
+    // picks, so it's the recommendation. Asserted wording-independently (headline copy
+    // differs green vs amber, but the MODEL it names must match the pick callout).
+    const pickCallout = page.locator(".callout-pick");
+    await expect(pickCallout.getByText("Our pick for your computer")).toBeVisible({ timeout: 30_000 });
+    await expect(pickCallout.getByRole("heading", { name: "mistral:7b" })).toBeVisible();
     await expect(page.locator(".local-headline")).toContainText("mistral:7b");
-    await expect(page.getByText("Already on your computer").first()).toBeVisible();
-    await expect(page.getByText("Best for your computer").first()).toBeVisible();
+    // no brain picked yet → no "This is your brain" callout dangling
+    await expect(page.locator(".callout-brain")).toHaveCount(0);
 
-    // DOUBLE-FETCH FIXED (closes local-catalog-double-fetch): this is the FIRST — and so
-    // far ONLY — open of the local view, and both its IPC calls (local:status +
-    // local:models) fire together on mount and share the cached catalog. So exactly ONE
-    // "model list" sent receipt exists now — pre-fix it was two. Checked here, right after
-    // the open, so the count can't be perturbed by later interaction or the cache TTL. The
-    // deterministic collapse+refetch proof lives in the local-catalog unit test.
+    // NEW LAYOUT — EVERY model is in ONE table, nothing behind a fold: the always-red
+    // Qwen2.5 235B (previously hidden under "Other options") is visible immediately, and
+    // there is no "Other options" disclosure at all.
+    await expect(page.getByText("Other options")).toHaveCount(0);
+    const table = page.locator("table.local-table");
+    await expect(table.locator("tr.receipt-row", { hasText: "mistral:7b" })).toBeVisible();
+    await expect(table.locator("tr.receipt-row", { hasText: "Qwen2.5 3B" })).toBeVisible();
+    await expect(table.locator("tr.receipt-row", { hasText: "Qwen2.5 235B" })).toBeVisible();
+    // the recommended row is marked "Our pick" in the table; transparency is present
+    await expect(table.locator("tr.receipt-row", { hasText: "mistral:7b" }).getByText("Our pick", { exact: true })).toBeVisible();
+    await expect(page.getByText(/by Alibaba/).first()).toBeVisible();
+
+    // DOUBLE-FETCH FIXED (closes local-catalog-double-fetch): first + only open so far;
+    // both IPC calls share the cached catalog → exactly ONE "model list" sent receipt.
     const afterOpen = readFileSync(path.join(userDataDir, "receipts.jsonl"), "utf8");
     const modelListSent = afterOpen
       .split("\n")
       .filter((l) => l.includes('"task":"Deskhand: model list"') && l.includes('"phase":"sent"'));
     expect(modelListSent).toHaveLength(1);
 
-    // everything else folds under "Other options" (hidden by default)
-    await expect(page.getByText("Qwen2.5 235B")).toBeHidden();
-    await expect(page.getByRole("heading", { name: "Qwen2.5 3B" })).toBeHidden();
-    await page.getByText("Other options", { exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Qwen2.5 3B" })).toBeVisible();
-    await expect(page.getByText(/Made by Alibaba .* not by Deskhand/).first()).toBeVisible();
+    // DOWNLOAD-AND-USE from the table: "Get this one" on Qwen2.5 3B (NOT the recommended
+    // model) pulls AND selects it → the active brain is now DIFFERENT from the recommended.
+    await table.locator("tr.receipt-row", { hasText: "Qwen2.5 3B" }).getByRole("button", { name: "Get this one" }).click();
+    await expect(page.getByText("Local: qwen2.5:3b")).toBeVisible({ timeout: 30_000 });
 
-    // pick the recommended hero (mistral:7b, already downloaded) — one click
-    await page.getByRole("button", { name: "Use this one" }).first().click();
-    await expect(page.getByRole("button", { name: "This is your brain ✓" })).toBeVisible();
+    // THE FIX (this loop): active ≠ recommended → BOTH callouts are obvious with NO clicking.
+    // "This is your brain" names the active qwen (shown by its catalog label "Qwen2.5 3B");
+    // "Our pick" still names mistral.
+    await expect(page.locator(".callout-brain")).toContainText("This is your brain");
+    await expect(page.locator(".callout-brain")).toContainText("Qwen2.5 3B");
+    await expect(page.locator(".callout-pick")).toContainText("Our pick for your computer");
+    await expect(page.locator(".callout-pick")).toContainText("mistral:7b");
+    // the table marks the active one "Your brain ✓" and the recommended one "Our pick"
+    // (exact: the status span, not the disabled "This is your brain ✓" action button).
+    await expect(table.locator("tr.receipt-row", { hasText: "Qwen2.5 3B" }).getByText("Your brain ✓", { exact: true })).toBeVisible();
+    await expect(table.locator("tr.receipt-row", { hasText: "mistral:7b" }).getByText("Our pick", { exact: true })).toBeVisible();
 
-    // ACTIVE-BRAIN WIDGET: the compact sidebar readout (above "Sign out") names the
-    // provider + model, and updated the instant we picked.
+    // run a call on the ACTIVE qwen brain — it reports NO token counts in the fixture, so
+    // the receipt falls back to the plain "stayed on your computer" line (022 degraded path).
+    await page.getByRole("button", { name: "← Back to Settings" }).click();
+    await page.getByRole("button", { name: "Test my brain" }).click();
+    await expect(page.getByText(LOCAL_REPLY)).toBeVisible({ timeout: 30_000 });
+    await page.getByRole("button", { name: "Receipts" }).click();
+    await expect(page.getByText("stayed on your computer — nothing left").first()).toBeVisible({ timeout: 30_000 });
+
+    // switch to the recommended mistral from the table → active == recommended → ONE
+    // combined callout (no confusing duplicate), and the sidebar flips.
+    await page.getByRole("button", { name: "Settings" }).click();
+    await page.getByRole("button", { name: "Set up the local brain →" }).click();
+    await table.locator("tr.receipt-row", { hasText: "mistral:7b" }).getByRole("button", { name: "Use this one" }).click();
     await expect(page.getByText("Local: mistral:7b")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("Your brain — our pick, too")).toBeVisible();
+    await expect(page.locator(".callout-pick")).toHaveCount(0); // no separate pick card when they're the same
 
     // back to Settings: the "right now you're using" line names the active provider+model
     await page.getByRole("button", { name: "← Back to Settings" }).click();
     await expect(page.locator(".active-brain")).toContainText("On this computer");
     await expect(page.locator(".active-brain")).toContainText("mistral:7b");
 
-    // run a real call on the local brain (Test my brain)
+    // run a real call on the mistral brain (reports tokens)
     await page.getByRole("button", { name: "Test my brain" }).click();
     await expect(page.getByText(LOCAL_REPLY)).toBeVisible({ timeout: 30_000 });
 
@@ -274,39 +300,24 @@ test("user sets up a private on-computer brain, always sees which brain is activ
     expect(modelListLine).toContain('"routine":true');
     expect(log).not.toContain(LOCAL_REPLY);
 
-    // IN-USE MARKER ON LOAD: reopening the local setup shows the active model as in use
-    // ("This is your brain ✓") without clicking anything.
+    // IN-USE MARKER ON LOAD: reopening the local setup shows the active mistral as in use
+    // (the combined "your brain — our pick" callout, since active == recommended) WITHOUT
+    // clicking anything.
     await page.getByRole("button", { name: "Settings" }).click();
     await page.getByRole("button", { name: "Set up the local brain →" }).click();
-    await expect(page.getByRole("button", { name: "This is your brain ✓" })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText("Your brain — our pick, too")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("button", { name: "This is your brain ✓" }).first()).toBeVisible();
 
-    // DOWNLOAD-AND-USE IN ONE CLICK: "Get this one" on a not-downloaded model (Qwen2.5
-    // 3B, under Other options) pulls AND selects it — the sidebar flips to the new model.
-    await page.getByText("Other options", { exact: true }).click();
-    await page.getByRole("button", { name: "Get this one" }).first().click();
-    await expect(page.getByText("Local: qwen2.5:3b")).toBeVisible({ timeout: 30_000 });
-
-    // DEGRADED — a local brain that reports NO token counts (qwen2.5:3b in the fixture)
-    // still renders the plain, honest "stayed on your computer" line — never bytes, never
-    // "NaN tokens". Run it, then check Receipts shows BOTH: the plain line (qwen) AND the
-    // token line (mistral) — the panel is honest per-call.
-    await page.getByRole("button", { name: "← Back to Settings" }).click();
-    await page.getByRole("button", { name: "Test my brain" }).click();
-    await expect(page.getByText(LOCAL_REPLY)).toBeVisible({ timeout: 30_000 });
-    await page.getByRole("button", { name: "Receipts" }).click();
-    await expect(page.getByText("stayed on your computer — nothing left").first()).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByText(/7 tokens in, 42 out/).first()).toBeVisible();
-
-    // descriptive error when Ollama becomes unreachable: stop the fake server, reopen
-    // the setup view → plain-language "isn't running" + NO dangling hero pick.
+    // DEGRADED — Ollama unreachable: stop the fake server, reopen → plain-language "isn't
+    // running", and NO callouts/table (nothing actionable dangles — the 020 no-dead-pick rule).
     await new Promise<void>((resolve) => (ollama ? ollama.close(() => resolve()) : resolve()));
     ollama = null;
-    await page.getByRole("button", { name: "Settings" }).click();
+    await page.getByRole("button", { name: "← Back to Settings" }).click();
     await page.getByRole("button", { name: "Set up the local brain →" }).click();
     await expect(page.getByText(/Ollama isn't running/i).first()).toBeVisible({ timeout: 30_000 });
-    // and NO hero pick is shown when Ollama is down — the verdict still scores the
-    // catalog, but there's nothing to click, so we don't dangle a dead button.
-    await expect(page.getByRole("heading", { name: "Our pick for your computer" })).toBeHidden();
+    await expect(page.locator(".callout-pick")).toHaveCount(0);
+    await expect(page.locator(".callout-brain")).toHaveCount(0);
+    await expect(page.locator("table.local-table")).toHaveCount(0);
   } finally {
     await app.close();
     rmSync(userDataDir, { recursive: true, force: true });

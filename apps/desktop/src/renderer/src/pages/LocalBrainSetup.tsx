@@ -2,9 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { LocalModelView, LocalStatusView, PullProgressView } from "../../../shared/local.js";
 
 // "On this computer — free & private": the local-brain setup view, reached from
-// Settings (its own place, per the IA rule). It shows an honest hardware verdict,
-// the models you already have and our suggestions (with trade-offs + fit), lets
-// you download a suggestion via Ollama with a progress bar, and pick one to run.
+// Settings (its own place, per the IA rule). Full-width: two callout cards up top —
+// "This is your brain" (the model you're using) and "Our pick" (what we recommend),
+// so it's obvious what's active vs suggested even when they differ — then one clean
+// table of EVERY model (fit, size, status, action), nothing hidden behind a fold.
 // The renderer makes NO network calls — every scan/fetch/pull happens in main.
 
 const TIER_WORD: Record<string, string> = {
@@ -39,8 +40,8 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
     setStatus(s);
     setModels(m.models);
     setNotice(m.notice || s.notice || "");
-    // Mark the model you're actually using as in use ("This is your brain ✓"),
-    // even before you click anything this session.
+    // Mark the model you're actually using ("This is your brain"), even before you
+    // click anything this session.
     setSavedId(b.provider === "local" ? b.model : null);
     setBusy(false);
   }, []);
@@ -75,8 +76,7 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
         delete next[id];
         return next;
       });
-      // Download AND use in one click: you asked for this model, so make it your
-      // brain. `refresh` then flips the row to "This is your brain ✓".
+      // Download AND use in one click: you asked for this model, so make it your brain.
       await useModel(id);
       await refresh();
     } else {
@@ -84,79 +84,105 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
     }
   }
 
-  // One obvious pick up front (the verdict's single recommendation, spanning both
-  // groups); EVERYTHING else — your other models + the other suggestions — folds
-  // under "Other options" so a zero-knowledge user just clicks the one thing.
   const all = models ?? [];
+  const active = savedId ? all.find((m) => m.id === savedId) ?? null : null;
   const recommended = all.find((m) => m.recommended) ?? null;
-  const others = all.filter((m) => !m.recommended);
-  const otherHave = others.filter((m) => m.group === "have");
-  const otherSuggested = others.filter((m) => m.group === "suggested");
+  // One card when the model you're using IS the recommendation — no confusing dupes.
+  const sameActiveAndPick = active !== null && recommended !== null && active.id === recommended.id;
 
-  function modelCard(m: LocalModelView) {
+  // The action for a model, shared by the callout cards and the table rows: a live
+  // download bar, "This is your brain ✓" (disabled) for the active one, "Use this one"
+  // for a downloaded model, or "Get this one" (needs Ollama) for one to fetch.
+  function action(m: LocalModelView) {
     const prog = pulling[m.id];
+    if (prog && !prog.done) {
+      return (
+        <div className="pull-progress">
+          <div className="pull-bar">
+            <div className="pull-fill" style={{ width: `${Math.max(3, prog.percent)}%` }} />
+          </div>
+          <p className="hint">Downloading… {prog.percent}%</p>
+        </div>
+      );
+    }
+    // The model you're already using: never offer to re-download or re-pick it.
+    if (savedId === m.id) {
+      return (
+        <button className="primary" disabled>
+          This is your brain ✓
+        </button>
+      );
+    }
+    if (m.downloaded) {
+      return (
+        <button className="primary" onClick={() => void useModel(m.id)}>
+          Use this one
+        </button>
+      );
+    }
+    return (
+      <button className="primary" onClick={() => void getModel(m.id)} disabled={!status?.ollamaReady}>
+        Get this one
+      </button>
+    );
+  }
+
+  // The honest provenance line — every model is someone else's free file you run privately.
+  function transparency(m: LocalModelView, compact: boolean) {
+    if (!m.creator) return null;
     const href = safeHref(m.homepage);
     const licenseHref = safeHref(m.licenseUrl);
     return (
-      <li key={m.id} className={m.recommended ? "card local-model best" : "card local-model"}>
-        <div className="local-model-head">
+      <p className="hint local-transparency">
+        {compact ? `by ${m.creator}` : `Made by ${m.creator}, not by Deskhand — a free file you run privately.`}
+        {m.license ? ` ${m.license}` : ""}{" "}
+        {href && (
+          <a href={href} target="_blank" rel="noreferrer">
+            source →
+          </a>
+        )}
+        {licenseHref && (
+          <>
+            {" · "}
+            <a href={licenseHref} target="_blank" rel="noreferrer">
+              license
+            </a>
+          </>
+        )}
+      </p>
+    );
+  }
+
+  function callout(m: LocalModelView, kind: "brain" | "pick" | "both") {
+    const label = kind === "brain" ? "This is your brain" : kind === "pick" ? "Our pick for your computer" : "Your brain — our pick, too";
+    return (
+      <div className={`callout callout-${kind === "both" ? "brain" : kind}`}>
+        <span className="callout-label">{label}</span>
+        <div className="callout-model">
           <span className={`fit-dot fit-${m.tier}`} aria-hidden="true" />
           <h3>{m.label}</h3>
-          {m.recommended && <span className="best-badge">Best for your computer</span>}
-          {m.downloaded && <span className="have-badge">Already on your computer</span>}
         </div>
         <p className="hint">
           {TIER_WORD[m.tier] ?? ""}
           {m.size ? ` · ${m.size}` : ""}
-          {m.note ? ` — ${m.note}` : ""}
+          {m.note ? ` — ${m.note}` : m.tradeoff ? ` — ${m.tradeoff}` : ""}
         </p>
-        {m.tradeoff && <p className="hint">{m.tradeoff}</p>}
-        {m.creator && (
-          <p className="hint local-transparency">
-            Made by {m.creator}, not by Deskhand — a free file you run privately.
-            {m.license ? ` ${m.license}` : ""}{" "}
-            {href && (
-              <a href={href} target="_blank" rel="noreferrer">
-                Where it comes from →
-              </a>
-            )}
-            {licenseHref && (
-              <>
-                {" · "}
-                <a href={licenseHref} target="_blank" rel="noreferrer">
-                  license
-                </a>
-              </>
-            )}
-          </p>
-        )}
-
-        {prog && !prog.done ? (
-          <div className="pull-progress">
-            <div className="pull-bar">
-              <div className="pull-fill" style={{ width: `${Math.max(3, prog.percent)}%` }} />
-            </div>
-            <p className="hint">Downloading… {prog.percent}%</p>
-          </div>
-        ) : (
-          <div className="row">
-            {m.downloaded ? (
-              <button className="primary" onClick={() => void useModel(m.id)} disabled={savedId === m.id}>
-                {savedId === m.id ? "This is your brain ✓" : "Use this one"}
-              </button>
-            ) : (
-              <button className="primary" onClick={() => void getModel(m.id)} disabled={!status?.ollamaReady}>
-                Get this one
-              </button>
-            )}
-          </div>
-        )}
-      </li>
+        {transparency(m, false)}
+        <div className="callout-action">{action(m)}</div>
+      </div>
     );
   }
 
+  // The status word for a model in the table.
+  function statusOf(m: LocalModelView): { text: string; cls: string } {
+    if (savedId === m.id) return { text: "Your brain ✓", cls: "status-active" };
+    if (m.recommended) return { text: "Our pick", cls: "status-pick" };
+    if (m.downloaded) return { text: "On your computer", cls: "status-have" };
+    return { text: "Not downloaded", cls: "status-none" };
+  }
+
   return (
-    <section className="page page-narrow">
+    <section className="page">
       <header className="page-head">
         <button className="link" onClick={onBack}>
           ← Back to Settings
@@ -193,40 +219,74 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
 
           {!status.ollamaReady ? (
             // Ollama not running → no actionable pick exists; lead with the honest
-            // guidance (the verdict still scores the catalog, but there's nothing to
-            // click yet), and fold any models under "Other options".
+            // guidance (the verdict still scores the catalog, but there's nothing to click).
             <p className="hint">
               Start Ollama (the free helper that runs a private brain), then choose “Check my computer again.”
             </p>
-          ) : recommended ? (
-            <>
-              <h2>Our pick for your computer</h2>
-              <p className="hint">One click and you’re set — nothing to figure out.</p>
-              <ul className="news-list">{modelCard(recommended)}</ul>
-            </>
           ) : (
-            <p className="hint">
-              No private brain runs well on this computer — your free cloud brain or your subscription will
-              serve you better.
-            </p>
-          )}
+            <>
+              {/* Callouts: what you're using + what we recommend, obvious even when different. */}
+              {(active || recommended) && (
+                <div className="local-callouts">
+                  {sameActiveAndPick && active
+                    ? callout(active, "both")
+                    : (
+                      <>
+                        {active && callout(active, "brain")}
+                        {recommended && callout(recommended, "pick")}
+                      </>
+                    )}
+                </div>
+              )}
 
-          {others.length > 0 && (
-            <details className="other-options">
-              <summary>Other options</summary>
-              {otherHave.length > 0 && (
-                <>
-                  <h3>Models you already have</h3>
-                  <ul className="news-list">{otherHave.map(modelCard)}</ul>
-                </>
+              {!recommended && !active && (
+                <p className="hint">
+                  No private brain runs well on this computer — your free cloud brain or your subscription will
+                  serve you better. You can still pick any model below.
+                </p>
               )}
-              {otherSuggested.length > 0 && (
-                <>
-                  <h3>Other suggestions</h3>
-                  <ul className="news-list">{otherSuggested.map(modelCard)}</ul>
-                </>
+
+              {/* Every model in one table — nothing hidden. */}
+              {all.length > 0 && (
+                <div className="receipt-scroll">
+                  <table className="receipt-table local-table">
+                    <thead>
+                      <tr>
+                        <th>Model</th>
+                        <th>Fits your computer</th>
+                        <th>Size</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {all.map((m) => {
+                        const st = statusOf(m);
+                        return (
+                          <tr key={m.id} className="receipt-row">
+                            <td className="receipt-what">
+                              <span className="receipt-who">{m.label}</span>
+                              {transparency(m, true)}
+                            </td>
+                            <td>
+                              <span className="local-fit">
+                                <span className={`fit-dot fit-${m.tier}`} aria-hidden="true" />
+                                {TIER_WORD[m.tier] ?? ""}
+                              </span>
+                            </td>
+                            <td>{m.size ?? "—"}</td>
+                            <td>
+                              <span className={`local-status ${st.cls}`}>{st.text}</span>
+                            </td>
+                            <td className="local-action-cell">{action(m)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               )}
-            </details>
+            </>
           )}
         </>
       )}

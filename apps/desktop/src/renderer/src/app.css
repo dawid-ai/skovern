@@ -902,21 +902,6 @@ footer {
   margin: 4px 0;
 }
 
-.local-model {
-  gap: 6px;
-}
-
-.local-model.best {
-  border: 1.5px solid var(--accent);
-}
-
-.local-model-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
 .fit-dot {
   width: 10px;
   height: 10px;
@@ -934,24 +919,6 @@ footer {
 
 .fit-red {
   background: #b3502e;
-}
-
-.best-badge {
-  font-size: 11px;
-  font-weight: 600;
-  color: #fff;
-  background: var(--accent);
-  border-radius: 999px;
-  padding: 2px 8px;
-}
-
-.have-badge {
-  font-size: 11px;
-  font-weight: 600;
-  color: #3f8a4f;
-  background: #e6f1e8;
-  border-radius: 999px;
-  padding: 2px 8px;
 }
 
 .local-transparency {
@@ -976,25 +943,118 @@ footer {
   transition: width 0.2s ease;
 }
 
-/* "Other options" — everything that isn't the one recommended pick, folded away
-   so a zero-knowledge user never has to choose. */
-.other-options {
-  margin-top: 8px;
+/* Callouts: two cards up top — the brain you're using (green) + our pick (orange),
+   side by side on a wide screen, stacked when narrow, one card when they're the same. */
+.local-callouts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 18px;
+  align-items: stretch;
 }
 
-.other-options > summary {
-  cursor: pointer;
+.callout {
+  background: #fff;
+  border: 1px solid #ece3d7;
+  border-top: 3px solid var(--accent);
+  border-radius: 16px;
+  padding: 20px 22px;
+  box-shadow: 0 1px 3px rgba(43, 38, 32, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* The brain you're actively using reads green (it's live), the recommendation orange. */
+.callout-brain {
+  border-top-color: #3f8a4f;
+}
+
+.callout-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
   color: var(--accent);
-  font-weight: 600;
+}
+
+.callout-brain .callout-label {
+  color: #3f8a4f;
+}
+
+.callout-model {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.callout-model h3 {
+  font-size: 20px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.callout-action {
+  margin-top: auto;
+  padding-top: 6px;
+}
+
+.callout-action .primary {
+  width: 100%;
+}
+
+/* The full-width model table — every model in one place, no fold. Reuses the
+   receipt-table shell; these tune the local-brain columns. */
+.local-table .receipt-who {
   font-size: 14px;
-  padding: 6px 0;
-  list-style: none;
 }
 
-.other-options > summary::-webkit-details-marker {
-  display: none;
+.local-fit {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ink);
+  font-size: 13px;
+  white-space: nowrap;
 }
 
-.other-options[open] > summary {
-  margin-bottom: 8px;
+.local-status {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.status-active {
+  color: #2f6f3e;
+  background: #e6f1e8;
+  border: 1px solid #cfe5d4;
+}
+
+.status-pick {
+  color: #b3591f;
+  background: #fdeede;
+  border: 1px solid #f3d4ae;
+}
+
+.status-have {
+  color: var(--muted);
+  background: #f3ece2;
+}
+
+.status-none {
+  color: var(--muted);
+}
+
+/* Compact action in a table cell — not the full-width card button. */
+.local-action-cell .primary {
+  padding: 8px 14px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.local-action-cell .pull-progress {
+  min-width: 150px;
+  margin-top: 0;
 }
