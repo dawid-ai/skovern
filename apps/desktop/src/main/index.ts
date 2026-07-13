@@ -25,6 +25,7 @@ import { fileFetchSink, fileReceiptSink, readReceipts, receiptedFetch } from "./
 import { runPlugin, sandboxCheck } from "./plugin-host.js";
 import { claudeCliProvider } from "./claude-cli.js";
 import { localModels, localStatus, makeEngine, pullModel } from "./local.js";
+import { initialNewness, observeThread } from "./dm-newness.js";
 import { helloManifest } from "../plugins/hello/manifest.js";
 import { aiVisibilityManifest } from "../plugins/ai-visibility/manifest.js";
 import type { CurrentAccount, RequestResult, VerifyResult } from "../shared/account.js";
@@ -197,6 +198,22 @@ app.on("window-all-closed", () => {
   if (tray === null) app.quit();
 });
 
+// Only one instance may run per user-data dir. A second launch would fight the first
+// over its Chromium cache — the `disk_cache "Access is denied" / Unable to create cache`
+// errors. Instead, the second instance quits and hands focus to the first. Keyed on the
+// userData path, so Playwright e2e runs (each with its own --user-data-dir) are unaffected.
+if (!app.requestSingleInstanceLock()) {
+  quitting = true;
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
+
 app
   .whenReady()
   .then(() => {
@@ -208,7 +225,7 @@ app
     // Metadata only (host + label + bytes), never a key, token, or body.
     const fetchSink = fileFetchSink();
 
-    const account = createAccountClient(API_BASE, receiptedFetch(fetchSink, "Deskhand: sign-in"));
+    const account = createAccountClient(API_BASE, receiptedFetch(fetchSink, "Deskhand: sign-in", { direction: "out" }));
 
     registerTrusted(TRUST, "account:request", async (rawEmail: unknown): Promise<RequestResult> => {
       const email = typeof rawEmail === "string" ? rawEmail : "";
@@ -247,7 +264,8 @@ app
     });
 
     // News is read-only polling (no business data leaves) → routine: grouped in the panel.
-    const news = createNewsClient(API_BASE, receiptedFetch(fetchSink, "Deskhand: news", { routine: true }));
+    // You're pulling news in → direction "in".
+    const news = createNewsClient(API_BASE, receiptedFetch(fetchSink, "Deskhand: news", { routine: true, direction: "in" }));
     registerTrusted(TRUST, "news:list", async (): Promise<NewsPostView[]> => {
       try {
         return await news.list();
@@ -259,8 +277,8 @@ app
     // The unread-badge poll (thread/read) fires every 5s and carries no business
     // data → routine (grouped). A user's actual message (send) is real business data
     // leaving → its OWN non-routine client, so it can never hide in the quiet group.
-    const dm = createDmClient(API_BASE, receiptedFetch(fetchSink, "Deskhand: messages", { routine: true }));
-    const dmSend = createDmClient(API_BASE, receiptedFetch(fetchSink, "Deskhand: your message to Dawid"));
+    const dm = createDmClient(API_BASE, receiptedFetch(fetchSink, "Deskhand: messages", { routine: true, direction: "in" }));
+    const dmSend = createDmClient(API_BASE, receiptedFetch(fetchSink, "Deskhand: your message to Dawid", { direction: "out" }));
     registerTrusted(TRUST, "dm:send", async (rawMessage: unknown): Promise<DmSendResult> => {
       const message = typeof rawMessage === "string" ? rawMessage : "";
       // The bearer token stays in main (keychain) — the renderer never holds it.
@@ -276,7 +294,7 @@ app
     // Publish an AI Visibility result to a public link. The renderer passes only
     // the result; the session token stays in main (keychain). Outbound + opt-in:
     // only fires on the user's explicit Publish click.
-    const publish = createPublishClient(API_BASE, receiptedFetch(fetchSink, "Deskhand: publish"));
+    const publish = createPublishClient(API_BASE, receiptedFetch(fetchSink, "Deskhand: publish", { direction: "out" }));
     registerTrusted(TRUST, "visibility:publish", async (raw: unknown): Promise<PublishResultView> => {
       const o = (raw ?? {}) as { business?: unknown; score?: unknown; competitors?: unknown };
       const business = typeof o.business === "string" ? o.business : "";
@@ -294,14 +312,44 @@ app
       }
     });
 
+    // Track founder replies across polls so a genuinely NEW one becomes a distinct "In"
+    // Receipts entry, while the same old/read thread coming back every 5s does not. The
+    // baseline is in-memory (see the contract's ponytail note): a reply that lands while
+    // the app is CLOSED is seen in the thread on next open but isn't logged as a new entry.
+    let dmNewness = initialNewness;
+    const API_HOST = new URL(API_BASE).host; // API_BASE is a trusted constant, always valid
     registerTrusted(TRUST, "dm:thread", async (): Promise<DmThreadView> => {
       const session = loadSession();
       if (!session) return { messages: [], unread: 0 };
+      let thread: DmThreadView;
       try {
-        return await dm.thread(session.token);
+        thread = await dm.thread(session.token);
       } catch {
         return { messages: [], unread: 0 };
       }
+      // A genuinely-new founder reply → one distinct, non-routine "In" entry. NOT egress
+      // (nothing left — this is inbound), so it's a single "done" record, not a fail-closed
+      // "sent"+"done" pair. Metadata only: never the message body.
+      const { state, newReplies } = observeThread(dmNewness, thread);
+      dmNewness = state;
+      if (newReplies > 0) {
+        try {
+          await fetchSink.append({
+            kind: "fetch",
+            host: API_HOST,
+            task: newReplies === 1 ? "Deskhand: new reply from Dawid" : `Deskhand: ${newReplies} new replies from Dawid`,
+            bytesSent: 0,
+            bytesReceived: 0,
+            direction: "in",
+            ts: new Date().toISOString(),
+            ok: true,
+            phase: "done",
+          });
+        } catch {
+          // best-effort UX entry; a failed append never denies the user their messages
+        }
+      }
+      return thread;
     });
 
     registerTrusted(TRUST, "dm:read", async (): Promise<void> => {

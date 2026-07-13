@@ -654,6 +654,28 @@ button.link {
   background: var(--accent);
 }
 
+/* Data you sent out (a message, a prompt, a publish) — orange, like "Online". */
+.tag-out {
+  color: #b3591f;
+  background: #fdeede;
+  border: 1px solid #f3d4ae;
+}
+
+.tag-out::before {
+  background: var(--accent);
+}
+
+/* Content that came to you (news, a reply, a website a skill read) — cool blue. */
+.tag-in {
+  color: #1f5fa8;
+  background: #e7f0fb;
+  border: 1px solid #c5dbf3;
+}
+
+.tag-in::before {
+  background: #2f7fd6;
+}
+
 /* The quiet, grouped routine-poll summary. */
 .receipt-routine {
   border: 1px dashed #e0d6c8;

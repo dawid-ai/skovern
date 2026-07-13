@@ -160,8 +160,14 @@ function bodyBytes(init: Parameters<typeof fetch>[1]): number {
 // `routine:true` marks the app's own timer polls (news/messages/model list) so the
 // panel groups them at the source, not by sniffing the label. Default false — a
 // caller must opt a client in explicitly, so no meaningful egress is ever grouped.
-export function receiptedFetch(sink: FetchSink, label: string, opts?: { routine?: boolean }): typeof fetch {
+// `direction` (in/out) is likewise stamped here at the call site, never inferred.
+export function receiptedFetch(
+  sink: FetchSink,
+  label: string,
+  opts?: { routine?: boolean; direction?: "in" | "out" },
+): typeof fetch {
   const routine = opts?.routine === true;
+  const direction = opts?.direction;
   const wrapped = async (
     input: Parameters<typeof fetch>[0],
     init?: Parameters<typeof fetch>[1],
@@ -172,6 +178,7 @@ export function receiptedFetch(sink: FetchSink, label: string, opts?: { routine?
       task: label,
       bytesSent: bodyBytes(init),
       ...(routine ? { routine: true } : {}),
+      ...(direction ? { direction } : {}),
     };
     // Fail-closed: the "sent" receipt must be durable before egress. Awaited and
     // NOT swallowed — if it throws, we never fetch, so no byte leaves unrecorded.

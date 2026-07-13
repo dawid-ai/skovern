@@ -23,6 +23,12 @@ export interface FetchReceipt {
    *  panel just groups them into a quiet summary rather than a row per poll. Absent
    *  (falsey) for meaningful egress — a brain call, a skill scrape, publishing. */
   routine?: boolean;
+  /** Which way the data flowed, from the user's point of view — set at the call site
+   *  (authoritative, never sniffed from the task). `"out"` = you sent something out
+   *  (a message, a publish); `"in"` = you pulled content in (news, a reply, a website a
+   *  skill read). Lets the panel show a plain Out ↑ / In ↓ tag. Absent when it doesn't
+   *  apply. */
+  direction?: "in" | "out";
 }
 
 export interface FetchSink {

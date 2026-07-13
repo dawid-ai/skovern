@@ -26,3 +26,12 @@ labels: loop
 ## Out of scope
 
 <!-- What this loop explicitly does NOT do, so the builder doesn't wander. -->
+
+## Ledger triage
+
+<!-- Every OPEN `.claude/loop/LEDGER.md` item whose AREA this loop touches. A met
+     trigger may NOT be silently skipped — if you defer one, name why. -->
+
+| ledger item | trigger met? | pulled in / reason deferred |
+|-------------|--------------|-----------------------------|
+| | | |

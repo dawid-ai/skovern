@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FetchReceipt, Receipt } from "../../../shared/receipts.js";
-import { isLocal, isRoutine, routineGroup } from "./receipt-classify.js";
+import { direction, isLocal, isRoutine, routineGroup } from "./receipt-classify.js";
 
 // Loop 022: routine-vs-meaningful is decided by the write-time `routine` flag, NOT by
 // sniffing the task string. These pin that so a real user message can't be hidden as
@@ -47,6 +47,19 @@ describe("routineGroup — florist labels, task as key", () => {
 
   it("falls back to a plain label for an unknown routine kind", () => {
     expect(routineGroup(fetchReceipt({ task: "Deskhand: weather" }))).toEqual({ key: "weather", label: "Checked: weather" });
+  });
+});
+
+describe("direction — In/Out from the authoritative field", () => {
+  it("reads a fetch receipt's stamped direction", () => {
+    expect(direction(fetchReceipt({ direction: "out" }))).toBe("out");
+    expect(direction(fetchReceipt({ direction: "in" }))).toBe("in");
+    expect(direction(fetchReceipt({}))).toBeNull(); // unstamped → no arrow
+  });
+
+  it("a cloud brain call is Out (your prompt leaves); a local one has no direction", () => {
+    expect(direction(modelReceipt({ provider: "openrouter" }))).toBe("out");
+    expect(direction(modelReceipt({ provider: "local", local: true }))).toBeNull();
   });
 });
 

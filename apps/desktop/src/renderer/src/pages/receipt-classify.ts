@@ -24,6 +24,15 @@ export function isRoutine(r: ReceiptView): boolean {
   return isFetch(r) && r.routine === true;
 }
 
+// Which way the data flowed, for the In ↓ / Out ↑ tag. Authoritative: a fetch receipt
+// carries `direction` from its call site; a cloud brain call is always Out (your prompt
+// leaves); a local brain call stayed on the machine → no direction (shown as "Local").
+export function direction(r: ReceiptView): "in" | "out" | null {
+  if (isFetch(r)) return r.direction ?? null;
+  if (isLocal(r)) return null;
+  return "out";
+}
+
 // Nice florist labels for the known routine polls; anything else falls back to its
 // own task text so a new routine kind still groups (just with a plainer label).
 const ROUTINE_LABELS: Record<string, string> = {

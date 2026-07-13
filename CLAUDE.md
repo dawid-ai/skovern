@@ -96,3 +96,8 @@ never all-at-once into context.
 
 Feature branches named `loop/<contract-slug>`. Small commits, imperative
 messages. CI must be green before checker dispatch, not after.
+
+Any change reaching main outside the loop (hotfix, design pass, direct push) is
+logged as its own `.claude/loop/METRICS.md` row (`iterations = n/a (bypassed loop)`)
+and flagged for the next retro to judge whether it should have been a loop. A bypass
+with no row is an unattributable escape.
