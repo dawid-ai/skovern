@@ -183,6 +183,33 @@ button.link {
   text-decoration: underline;
 }
 
+/* Processing indicator — shown whenever a brain/skill is thinking. */
+.spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  vertical-align: -1px;
+  margin-right: 2px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.brain-reply-busy .processing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
 .hint {
   font-size: 12px;
   color: var(--muted);
@@ -305,7 +332,8 @@ button.link {
   padding: 4px 10px;
 }
 
-/* The always-visible active-brain readout (green) above "Sign out". */
+/* The always-visible active-brain readout above "Sign out" — GREEN when it's a
+   private local brain (nothing leaves), ORANGE when it's an online brain. */
 .brain-chip {
   display: flex;
   align-items: center;
@@ -313,19 +341,42 @@ button.link {
   max-width: 100%;
   font-size: 12px;
   font-weight: 600;
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+
+.brain-chip-local {
   color: #2f6f3e;
   background: #e6f1e8;
   border: 1px solid #cfe5d4;
-  border-radius: 999px;
-  padding: 4px 10px;
+}
+
+.brain-chip-online {
+  color: #b3591f;
+  background: #fdeede;
+  border: 1px solid #f3d4ae;
+}
+
+.brain-chip-none {
+  color: var(--muted);
+  background: #efe8dd;
+  border: 1px solid #e3d9cb;
 }
 
 .brain-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #3f8a4f;
+  background: currentColor;
   flex: none;
+}
+
+.brain-chip-local .brain-dot {
+  background: #3f8a4f;
+}
+
+.brain-chip-online .brain-dot {
+  background: var(--accent);
 }
 
 .brain-chip-text {
@@ -349,26 +400,50 @@ button.link {
   margin-bottom: 16px;
 }
 
+.active-brain-local .brain-dot {
+  background: #3f8a4f;
+}
+
+.active-brain-online .brain-dot {
+  background: var(--accent);
+}
+
 .content {
-  padding: 44px 48px;
+  padding: 48px 56px 64px;
   overflow-y: auto;
   max-height: 100vh;
 }
 
+/* Pages center in the content area and use the available width — data pages fill
+   it with tables/grids, reading & form pages keep a comfortable centered measure
+   (via .page-narrow) instead of a hard-left column with an empty void beside it. */
 .page {
-  max-width: 560px;
+  width: 100%;
+  max-width: 1160px;
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 28px;
+}
+
+.page-narrow {
+  max-width: 680px;
+}
+
+.page-head {
+  border-bottom: 1px solid #ece3d7;
+  padding-bottom: 20px;
 }
 
 .page-head h1 {
-  font-size: 24px;
-  margin-bottom: 4px;
+  font-size: 30px;
+  letter-spacing: -0.02em;
+  margin-bottom: 6px;
 }
 
 .page-head p {
-  font-size: 14px;
+  font-size: 15px;
+  max-width: 60ch;
 }
 
 .page .form {
@@ -393,24 +468,115 @@ button.link {
   white-space: pre-line;
 }
 
-.receipt-list {
+/* Responsive card grid — fills the width on a big screen instead of a lone column. */
+.card-grid {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+
+.content-card {
+  background: #fff;
+  border: 1px solid #ece3d7;
+  border-radius: 16px;
+  padding: 22px 24px;
+  box-shadow: 0 1px 3px rgba(43, 38, 32, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.content-card h3 {
+  font-size: 17px;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+
+.content-card > p {
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-line;
+}
+
+.skill-card {
+  gap: 12px;
+}
+
+.skill-perms {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px dashed #ece3d7;
+  font-size: 12px;
+  color: var(--muted);
 }
 
-.receipt-row {
-  background: #f4efe8;
-  border: 1px solid #e5ddd3;
-  border-radius: 12px;
-  padding: 10px 14px;
+.skill-perms li {
+  padding-left: 16px;
+  position: relative;
 }
 
-.receipt-main {
+.skill-perms li::before {
+  content: "🔒";
+  position: absolute;
+  left: 0;
+  font-size: 10px;
+  top: 1px;
+}
+
+/* The egress log as a fill-width table. */
+.receipt-scroll {
+  overflow-x: auto;
+}
+
+.receipt-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border: 1px solid #ece3d7;
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.receipt-table thead th {
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  font-weight: 700;
+  padding: 12px 18px;
+  background: #f7f1e9;
+  border-bottom: 1px solid #ece3d7;
+  white-space: nowrap;
+}
+
+.receipt-table td {
+  padding: 14px 18px;
+  border-bottom: 1px solid #f3ece2;
+  vertical-align: middle;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.receipt-table tr:last-child td {
+  border-bottom: none;
+}
+
+.receipt-row:hover td {
+  background: #fdfbf8;
+}
+
+.receipt-what {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 180px;
 }
 
 .receipt-who {
@@ -421,24 +587,111 @@ button.link {
 
 .receipt-why {
   font-size: 13px;
-  color: var(--ink);
+  color: var(--muted);
 }
 
-.receipt-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-  margin-top: 3px;
-  font-size: 12px;
+.receipt-where {
+  font-size: 13px;
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.receipt-detail {
+  white-space: nowrap;
+}
+
+.receipt-time {
+  white-space: nowrap;
   color: var(--muted);
 }
 
 .receipt-ok {
   color: #3f8a4f;
+  font-weight: 600;
 }
 
 .receipt-fail {
   color: #b3502e;
+  font-weight: 600;
+}
+
+/* Honest local/online tags. */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.tag::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.tag-local {
+  color: #2f6f3e;
+  background: #e6f1e8;
+  border: 1px solid #cfe5d4;
+}
+
+.tag-local::before {
+  background: #3f8a4f;
+}
+
+.tag-online {
+  color: #b3591f;
+  background: #fdeede;
+  border: 1px solid #f3d4ae;
+}
+
+.tag-online::before {
+  background: var(--accent);
+}
+
+/* The quiet, grouped routine-poll summary. */
+.receipt-routine {
+  border: 1px dashed #e0d6c8;
+  border-radius: 16px;
+  padding: 18px 22px;
+  background: #f7f2ea;
+}
+
+.receipt-routine h2 {
+  font-size: 15px;
+  color: var(--ink);
+  margin-bottom: 2px;
+}
+
+.receipt-routine ul {
+  list-style: none;
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.receipt-routine li {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.receipt-routine-label {
+  min-width: 180px;
+  font-weight: 600;
+}
+
+.receipt-count {
+  color: var(--accent);
+  font-weight: 700;
 }
 
 .thread {

@@ -22,9 +22,9 @@ export function NewsPage() {
       ) : news.length === 0 ? (
         <p className="hint">Nothing here yet — check back soon.</p>
       ) : (
-        <ul className="news-list">
+        <ul className="card-grid">
           {news.map((post) => (
-            <li key={post.slug}>
+            <li key={post.slug} className="content-card">
               <h3>{post.title}</h3>
               <p>{post.body}</p>
             </li>

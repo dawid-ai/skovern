@@ -34,7 +34,7 @@ export function MessagesPage({
   }
 
   return (
-    <section className="page">
+    <section className="page page-narrow">
       <header className="page-head">
         <h1>Messages</h1>
         <p>A question, an idea, a bug — this goes straight to Dawid, the person building this.</p>
