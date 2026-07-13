@@ -23,17 +23,25 @@ import type { FetchSink, GgufSource } from "@deskhand/core";
 
 const SAFE_GGUF_FILENAME = /^[A-Za-z0-9][A-Za-z0-9._-]*\.gguf$/;
 
-// Loopback is on-machine (a dev/test fixture); everything else must stay https so a
-// redirect can't DOWNGRADE the transport (a 302 from an https catalog url to http).
+// The final URL (after redirects) must stay https so a 302 can't DOWNGRADE an https
+// catalog link to plain http. Loopback http is allowed ONLY unpackaged (the dev/test
+// fixture); a packaged app is https-only, like every other seam.
 const LOOPBACK = new Set(["127.0.0.1", "localhost", "::1"]);
-function isSafeFinalUrl(u: string): boolean {
+export function isSafeFinalUrl(u: string, allowLoopback: boolean): boolean {
   try {
     const url = new URL(u);
-    return url.protocol === "https:" || (url.protocol === "http:" && LOOPBACK.has(url.hostname));
+    if (url.protocol === "https:") return true;
+    return allowLoopback && url.protocol === "http:" && LOOPBACK.has(url.hostname);
   } catch {
     return false;
   }
 }
+
+// A per-download unique temp name so two concurrent pulls of the same model never share
+// one `.part` file (which would interleave their bytes and let one rename an on-disk-
+// corrupt file past its own in-memory hash). Same-process counter — enough: main is the
+// only writer here.
+let partSeq = 0;
 
 export function modelsDir(): string {
   return path.join(app.getPath("userData"), "models");
@@ -75,10 +83,11 @@ export async function downloadModel(
   fetchImpl: typeof fetch = fetch,
 ): Promise<string> {
   const dest = modelPath(gguf.filename); // throws on an unsafe name before anything else
-  // Download to a `.part` file and rename to the real name ONLY after the sha256 passes.
-  // So a corrupt/tampered download NEVER exists under `dest` — even if cleanup fails, the
-  // final name is created only for a verified file, and can never be loaded otherwise.
-  const part = dest + ".part";
+  // Download to a unique `.part.<n>` file and rename to the real name ONLY after the
+  // sha256 passes. So a corrupt/tampered download NEVER exists under `dest` — even if
+  // cleanup fails, the final name is created only for a verified file; and two concurrent
+  // pulls can't interleave into one temp file.
+  const part = `${dest}.part.${partSeq++}`;
 
   // https-only: an untrusted catalog url can't be http/file/etc.
   let host: string;
@@ -112,9 +121,9 @@ export async function downloadModel(
     if (!res.ok || !res.body) {
       throw new Error(`The download couldn't start (error ${res.status}). Try again.`);
     }
-    // The FINAL url (after any redirect) must stay https (loopback allowed for the dev
-    // fixture) — a redirect can't downgrade an https catalog link to plain http.
-    if (res.url && !isSafeFinalUrl(res.url)) {
+    // The FINAL url (after any redirect) must stay https — a redirect can't downgrade an
+    // https catalog link to plain http. Loopback http is allowed only unpackaged (fixture).
+    if (res.url && !isSafeFinalUrl(res.url, !app.isPackaged)) {
       throw new Error("The download was sent to an insecure address and was stopped.");
     }
     const total = gguf.sizeBytes;

@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,7 +11,7 @@ import type { FetchReceipt, FetchSink, GgufSource } from "@deskhand/core";
 const state = { dir: "" };
 vi.mock("electron", () => ({ app: { getPath: () => state.dir } }));
 
-import { downloadModel, modelDownloaded, modelPath, modelsDir } from "./download.js";
+import { downloadModel, isSafeFinalUrl, modelDownloaded, modelPath, modelsDir } from "./download.js";
 
 let server: Server | null = null;
 
@@ -99,7 +99,7 @@ describe("downloadModel", () => {
 
     await expect(downloadModel(g, sink, undefined, via(base))).rejects.toThrow(/safety check|didn't match/i);
     expect(existsSync(modelPath(g.filename))).toBe(false); // real name never created
-    expect(existsSync(modelPath(g.filename) + ".part")).toBe(false); // and no .part orphan
+    expect(readdirSync(modelsDir())).toHaveLength(0); // no .part.N orphan either
     expect(modelDownloaded(g.filename)).toBe(false);
   });
 
@@ -157,6 +157,15 @@ describe("downloadModel", () => {
     const fetchImpl = (() => Promise.resolve(fakeRes)) as unknown as typeof fetch;
     await expect(downloadModel(g, sink, undefined, fetchImpl)).rejects.toThrow(/insecure address/i);
     expect(existsSync(modelPath(g.filename))).toBe(false);
+  });
+
+  // D8 — final-url safety gates http to loopback, and ONLY unpackaged: a packaged app
+  // (allowLoopback=false) is https-only even for the redirect target.
+  it("D8: isSafeFinalUrl allows loopback http only when unpackaged", () => {
+    expect(isSafeFinalUrl("https://huggingface.co/x.gguf", false)).toBe(true);
+    expect(isSafeFinalUrl("http://127.0.0.1:8080/x.gguf", true)).toBe(true); // dev fixture
+    expect(isSafeFinalUrl("http://127.0.0.1:8080/x.gguf", false)).toBe(false); // packaged → https-only
+    expect(isSafeFinalUrl("http://evil.test/x.gguf", true)).toBe(false); // non-loopback http never
   });
 
   // D6 — no path traversal: a filename that escapes the models dir is refused before it
