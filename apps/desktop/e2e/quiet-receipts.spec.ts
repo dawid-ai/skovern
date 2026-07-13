@@ -182,6 +182,8 @@ test("Receipts reads as a two-way ledger: In/Out tags, one entry per new reply, 
     // the invariant holds: routine polls are STILL fully receipted on disk (just grouped in UI)
     const msgPolls = log.split("\n").filter((l) => l.includes('"task":"Deskhand: messages"') && l.includes('"routine":true'));
     expect(msgPolls.length).toBeGreaterThan(0);
+    // news carries its In direction at the data layer too (grouped in the UI, authoritative on disk)
+    expect(log).toMatch(/"task":"Deskhand: news"[^}]*"direction":"in"/);
     // metadata only — neither the message nor the reply body ever hit the log
     expect(log).not.toContain(MY_MESSAGE);
     expect(log).not.toContain(FOUNDER_REPLY);
