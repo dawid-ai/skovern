@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import type { ReceiptView } from "../../../shared/receipts.js";
-import { isFetch, isLocal, isRoutine, routineGroup } from "./receipt-classify.js";
+import { direction, isFetch, isLocal, isRoutine, routineGroup } from "./receipt-classify.js";
 
-// "What leaves your machine" — the egress log on its own page. Every call is here:
-// meaningful egress (your brain, a skill reading a website, publishing) shows in a
-// table with an honest tag — GREEN "Local" for a private brain that stayed on your
-// computer, ORANGE "Online" for anything that actually left. The app's own routine
-// background checks (news, messages, the model list) are grouped into one quiet
-// line each instead of spamming a row every few seconds. Read-only; sends nothing.
+// "What leaves your machine" — the activity log on its own page. Every call is here as a
+// two-way ledger: meaningful rows carry an honest flow tag — GREEN "Local" for a private
+// brain that stayed on your computer, ORANGE "Out ↑" for data you sent, BLUE "In ↓" for
+// content that came to you (news, a reply, a website a skill read). The app's own routine
+// background checks (news, messages, the model list) are grouped into one quiet line each
+// instead of spamming a row every few seconds. Read-only; sends nothing.
 
 function fmtBytes(n: number): string {
   return n < 1024 ? `${n} bytes` : `${(n / 1024).toFixed(1)} KB`;
@@ -55,6 +55,33 @@ function localDetail(r: ReceiptView): string {
     return `${inPart}${r.tokensOut.toLocaleString()} out — all on your computer`;
   }
   return "stayed on your computer — nothing left";
+}
+
+// The honest flow tag: GREEN "Local" (stayed here), ORANGE "Out ↑" (you sent), BLUE
+// "In ↓" (came to you). Falls back to a neutral "Online" if a call has no direction.
+function FlowTag({ r }: { r: ReceiptView }) {
+  if (isLocal(r)) return <span className="tag tag-local">Local</span>;
+  const dir = direction(r);
+  if (dir === "out") return <span className="tag tag-out">Out ↑</span>;
+  if (dir === "in") return <span className="tag tag-in">In ↓</span>;
+  return <span className="tag tag-online">Online</span>;
+}
+
+// The plain-English detail for a row: local shows its tokens/stayed line; an inbound
+// event with no bytes (a new reply) just says it arrived; everything else shows the
+// metadata byte summary + outcome.
+function Detail({ r }: { r: ReceiptView }) {
+  if (isLocal(r)) return <span className="receipt-ok">{localDetail(r)}</span>;
+  if (isFetch(r) && direction(r) === "in" && r.bytesSent === 0 && r.bytesReceived === 0) {
+    return <span className="receipt-ok">arrived</span>;
+  }
+  const okText = isFetch(r) ? (r.ok ? "went through" : "didn't get through") : r.ok ? "answered" : "no answer";
+  return (
+    <>
+      {fmtBytes(r.bytesSent)} out · {fmtBytes(r.bytesReceived)} back ·{" "}
+      <span className={r.ok ? "receipt-ok" : "receipt-fail"}>{okText}</span>
+    </>
+  );
 }
 
 interface RoutineGroup {
@@ -113,51 +140,30 @@ export function ReceiptsPage() {
                   <tr>
                     <th>What happened</th>
                     <th>Where</th>
-                    <th>Left?</th>
+                    <th>Flow</th>
                     <th>Detail</th>
                     <th>When</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {meaningful.map((r, i) => {
-                    const local = isLocal(r);
-                    return (
-                      <tr key={i} className="receipt-row">
-                        <td className="receipt-what">
-                          <span className="receipt-who">{who(r)}</span>
-                          <span className="receipt-why">{why(r)}</span>
-                        </td>
-                        <td>
-                          <span className="receipt-where">{where(r)}</span>
-                        </td>
-                        <td>
-                          <span className={local ? "tag tag-local" : "tag tag-online"}>
-                            {local ? "Local" : "Online"}
-                          </span>
-                        </td>
-                        <td className="receipt-detail">
-                          {local ? (
-                            <span className="receipt-ok">{localDetail(r)}</span>
-                          ) : isFetch(r) ? (
-                            <>
-                              {fmtBytes(r.bytesSent)} out · {fmtBytes(r.bytesReceived)} back ·{" "}
-                              <span className={r.ok ? "receipt-ok" : "receipt-fail"}>
-                                {r.ok ? "went through" : "didn't get through"}
-                              </span>
-                            </>
-                          ) : (
-                            <>
-                              {fmtBytes(r.bytesSent)} out · {fmtBytes(r.bytesReceived)} back ·{" "}
-                              <span className={r.ok ? "receipt-ok" : "receipt-fail"}>
-                                {r.ok ? "answered" : "no answer"}
-                              </span>
-                            </>
-                          )}
-                        </td>
-                        <td className="receipt-time">{fmtTime(r.ts)}</td>
-                      </tr>
-                    );
-                  })}
+                  {meaningful.map((r, i) => (
+                    <tr key={i} className="receipt-row">
+                      <td className="receipt-what">
+                        <span className="receipt-who">{who(r)}</span>
+                        <span className="receipt-why">{why(r)}</span>
+                      </td>
+                      <td>
+                        <span className="receipt-where">{where(r)}</span>
+                      </td>
+                      <td>
+                        <FlowTag r={r} />
+                      </td>
+                      <td className="receipt-detail">
+                        <Detail r={r} />
+                      </td>
+                      <td className="receipt-time">{fmtTime(r.ts)}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>

@@ -80,8 +80,8 @@ const SNAPSHOT: CatalogModel[] = validateCatalog(snapshotJson) ?? [];
  *  makes the fetch appear in the receipts log; `url` override is a loopback test seam. */
 export async function loadCatalog(fetchSink: FetchSink, url: string = LIVE_URL): Promise<CatalogResult> {
   // The catalog list is the app's own housekeeping fetch (no business data) → routine,
-  // so the panel groups it instead of a row per view-open.
-  const doFetch = receiptedFetch(fetchSink, "Deskhand: model list", { routine: true });
+  // so the panel groups it instead of a row per view-open. You pull the list in → "in".
+  const doFetch = receiptedFetch(fetchSink, "Deskhand: model list", { routine: true, direction: "in" });
   try {
     const res = await doFetch(url);
     if (!res.ok) {

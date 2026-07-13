@@ -76,7 +76,8 @@ export function createBroker(deps: BrokerDeps): Broker {
       return deny(req.id, "That skill tried to read an invalid web address.");
     }
 
-    const base = { kind: "fetch" as const, host, task: `skill:${manifest.id} fetch`, bytesSent: bytes(req.arg) };
+    // A skill reading a website pulls content IN → direction "in".
+    const base = { kind: "fetch" as const, host, task: `skill:${manifest.id} fetch`, bytesSent: bytes(req.arg), direction: "in" as const };
     // Record the egress BEFORE it happens. Awaited and NOT swallowed: if it
     // throws, we never fetch — no byte leaves without a durable receipt.
     await fetchSink.append({ ...base, ts: clock().toISOString(), bytesReceived: 0, ok: false, phase: "sent" });
