@@ -902,21 +902,6 @@ footer {
   margin: 4px 0;
 }
 
-.local-model {
-  gap: 6px;
-}
-
-.local-model.best {
-  border: 1.5px solid var(--accent);
-}
-
-.local-model-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
 .fit-dot {
   width: 10px;
   height: 10px;
@@ -934,24 +919,6 @@ footer {
 
 .fit-red {
   background: #b3502e;
-}
-
-.best-badge {
-  font-size: 11px;
-  font-weight: 600;
-  color: #fff;
-  background: var(--accent);
-  border-radius: 999px;
-  padding: 2px 8px;
-}
-
-.have-badge {
-  font-size: 11px;
-  font-weight: 600;
-  color: #3f8a4f;
-  background: #e6f1e8;
-  border-radius: 999px;
-  padding: 2px 8px;
 }
 
 .local-transparency {
@@ -1090,12 +1057,4 @@ footer {
 .local-action-cell .pull-progress {
   min-width: 150px;
   margin-top: 0;
-}
-
-.other-options > summary::-webkit-details-marker {
-  display: none;
-}
-
-.other-options[open] > summary {
-  margin-bottom: 8px;
 }
