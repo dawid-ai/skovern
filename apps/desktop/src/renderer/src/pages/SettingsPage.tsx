@@ -24,6 +24,10 @@ function fmtBytes(n: number): string {
 
 function receiptLine(r: Receipt): string {
   const time = new Date(r.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  // A local brain never "sends" — it runs on the machine. Be honest about it.
+  if (r.local || r.provider === "local") {
+    return `Ran on your computer at ${time} — nothing left your machine, and it answered.`;
+  }
   return `Sent ${fmtBytes(r.bytesSent)} to ${brainLabel(r.provider)} at ${time} — and it answered.`;
 }
 
@@ -38,6 +42,7 @@ export function SettingsPage({ onBrainChanged }: { onBrainChanged?: () => void }
   });
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
   const [reply, setReply] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [localOpen, setLocalOpen] = useState(false);
@@ -83,11 +88,13 @@ export function SettingsPage({ onBrainChanged }: { onBrainChanged?: () => void }
 
   async function test() {
     setBusy(true);
+    setTesting(true);
     setNotice("");
     setReply(null);
     setReceipt(null);
     const res = await window.deskhand.brain.test();
     setBusy(false);
+    setTesting(false);
     setNotice(res.message);
     if (res.ok) {
       setReply(res.reply ?? "");
@@ -96,23 +103,20 @@ export function SettingsPage({ onBrainChanged }: { onBrainChanged?: () => void }
   }
 
   return (
-    <section className="page">
+    <section className="page page-narrow">
       <header className="page-head">
         <h1>Settings</h1>
         <p>Pick the brain that powers your desk hand. Your key stays safe on this computer.</p>
       </header>
 
-      <p className="active-brain">
+      <p className={`active-brain${status.provider === "local" ? " active-brain-local" : status.configured ? " active-brain-online" : ""}`}>
         {status.configured && status.provider ? (
           <>
             <span className="brain-dot" aria-hidden="true" /> Right now you’re using{" "}
-            <strong>{providerName(status.provider)}</strong>
-            {status.model ? (
-              <>
-                {" "}
-                — <strong>{status.model}</strong>
-              </>
-            ) : null}
+            <strong>
+              {providerName(status.provider)}
+              {status.model ? ` — ${status.model}` : ""}
+            </strong>
             .
           </>
         ) : (
@@ -191,11 +195,26 @@ export function SettingsPage({ onBrainChanged }: { onBrainChanged?: () => void }
             </button>
           )}
           <button className="link" onClick={() => void test()} disabled={busy || !status.configured}>
-            Test my brain
+            {testing ? (
+              <>
+                <span className="spinner" aria-hidden="true" /> Thinking…
+              </>
+            ) : (
+              "Test my brain"
+            )}
           </button>
         </div>
 
         {notice.length > 0 && <p className="notice">{notice}</p>}
+
+        {testing && (
+          <div className="brain-reply brain-reply-busy">
+            <p className="who">Your brain</p>
+            <p className="processing">
+              <span className="spinner" aria-hidden="true" /> Thinking it over…
+            </p>
+          </div>
+        )}
 
         {reply !== null && (
           <div className="brain-reply">

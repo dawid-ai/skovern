@@ -86,7 +86,16 @@ export function Shell({ ogNumber, onSignOut }: { ogNumber: number | null; onSign
         <div className="sidebar-foot">
           {ogNumber !== null && <p className="og-badge">Founding user #{ogNumber}</p>}
           {brain !== null && (
-            <div className="brain-chip" title="Your active brain">
+            <div
+              className={`brain-chip ${
+                brain.provider === "local"
+                  ? "brain-chip-local"
+                  : brain.configured
+                    ? "brain-chip-online"
+                    : "brain-chip-none"
+              }`}
+              title={brain.provider === "local" ? "Your private brain — nothing leaves" : "Your active brain"}
+            >
               <span className="brain-dot" aria-hidden="true" />
               {brain.configured && brain.provider ? (
                 <span className="brain-chip-text">

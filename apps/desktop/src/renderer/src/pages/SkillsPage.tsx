@@ -37,14 +37,14 @@ export function SkillsPage() {
       ) : skills.length === 0 ? (
         <p className="hint">No skills yet — they&apos;re on the way.</p>
       ) : (
-        <ul className="news-list">
+        <ul className="card-grid">
           {skills.map((skill) => {
             const result = results[skill.id];
             return (
-              <li key={skill.id} className="card">
+              <li key={skill.id} className="content-card skill-card">
                 <h3>{skill.name}</h3>
                 <p>{skill.description}</p>
-                <ul className="hint">
+                <ul className="skill-perms">
                   {skill.permissions.map((p, i) => (
                     <li key={i}>{p}</li>
                   ))}
@@ -56,7 +56,13 @@ export function SkillsPage() {
                     </button>
                   ) : (
                     <button className="primary" onClick={() => void run(skill.id)} disabled={busy !== null}>
-                      {busy === skill.id ? "Running…" : "Run"}
+                      {busy === skill.id ? (
+                        <>
+                          <span className="spinner" aria-hidden="true" /> Running…
+                        </>
+                      ) : (
+                        "Run"
+                      )}
                     </button>
                   )}
                 </div>
