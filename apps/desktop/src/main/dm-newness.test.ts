@@ -41,6 +41,13 @@ describe("observeThread", () => {
     expect(grew.newReplies).toBe(0);
   });
 
+  it("an empty thread (e.g. a failed/offline poll) never fabricates a new reply", () => {
+    const base = observeThread(initialNewness, thread("founder")); // baseline 1
+    const empty = observeThread(base.state, thread()); // no messages came back
+    expect(empty.newReplies).toBe(0);
+    expect(empty.state.seenFounder).toBe(1); // baseline preserved, not reset
+  });
+
   it("a transient count drop (deleted message) doesn't later re-fire the same replies", () => {
     const base = observeThread(initialNewness, thread("founder", "founder")); // baseline 2
     const dropped = observeThread(base.state, thread("founder")); // 1 now
