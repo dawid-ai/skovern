@@ -1,4 +1,4 @@
-import type { LocalEngine, LocalModelInfo, PullProgress } from "./types.js";
+import type { LocalEngine, LocalGenerateResult, LocalModelInfo, PullProgress } from "./types.js";
 
 // The Ollama backend for the Local Brain. It talks to Ollama's HTTP API on
 // loopback ONLY — the privacy guarantee: "local" can never be pointed at a remote
@@ -137,7 +137,7 @@ export function ollamaEngine(opts: OllamaOptions): LocalEngine {
       }).filter((m) => m.id.length > 0);
     },
 
-    async generate(modelId: string, prompt: string): Promise<string> {
+    async generate(modelId: string, prompt: string): Promise<LocalGenerateResult> {
       const body = await getJson(
         "/api/generate",
         {
@@ -148,11 +148,14 @@ export function ollamaEngine(opts: OllamaOptions): LocalEngine {
         },
         "thinking",
       );
-      const text = (body as { response?: unknown }).response;
+      const obj = (body ?? {}) as Record<string, unknown>;
+      const text = obj["response"];
       if (typeof text !== "string" || text.length === 0) {
         throw new Error("The local brain answered with nothing — try a different model.");
       }
-      return text;
+      // Ollama reports token usage as prompt_eval_count (in) / eval_count (out).
+      // Absent on older Ollama / some models → undefined, never faked to 0.
+      return { text, tokensIn: countOf(obj["prompt_eval_count"]), tokensOut: countOf(obj["eval_count"]) };
     },
 
     async pull(modelId: string, onProgress?: (p: PullProgress) => void): Promise<void> {
@@ -204,6 +207,12 @@ export function ollamaEngine(opts: OllamaOptions): LocalEngine {
       }
     },
   };
+}
+
+// A token count from Ollama, if it's a finite non-negative number; undefined
+// otherwise (missing field, or a garbage value we won't show as a real count).
+function countOf(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined;
 }
 
 // "3.2B", "1.5B", "500M" → billions of params. Best-effort; undefined if unparseable.

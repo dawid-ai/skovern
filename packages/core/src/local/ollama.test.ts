@@ -82,12 +82,27 @@ describe("ollamaEngine — happy paths (fixture server)", () => {
     expect(models[0]).toMatchObject({ sizeBytes: 1_900_000_000, quant: "Q4_K_M", params: 3.1 });
   });
 
-  it("generates text from POST /api/generate", async () => {
+  it("generates text from POST /api/generate, with token counts", async () => {
     const base = await startFixture((_m, url) =>
-      url === "/api/generate" ? { status: 200, body: JSON.stringify({ response: "Hello from a local model." }) } : { status: 404, body: "{}" },
+      url === "/api/generate"
+        ? { status: 200, body: JSON.stringify({ response: "Hello from a local model.", prompt_eval_count: 11, eval_count: 22 }) }
+        : { status: 404, body: "{}" },
     );
     const engine = ollamaEngine({ baseUrl: base });
-    expect(await engine.generate("qwen2.5:3b", "hi")).toBe("Hello from a local model.");
+    const out = await engine.generate("qwen2.5:3b", "hi");
+    expect(out.text).toBe("Hello from a local model.");
+    expect(out.tokensIn).toBe(11);
+    expect(out.tokensOut).toBe(22);
+  });
+
+  it("omits token counts when Ollama doesn't report them (undefined, not 0)", async () => {
+    const base = await startFixture((_m, url) =>
+      url === "/api/generate" ? { status: 200, body: JSON.stringify({ response: "No counts here." }) } : { status: 404, body: "{}" },
+    );
+    const out = await ollamaEngine({ baseUrl: base }).generate("m", "hi");
+    expect(out.text).toBe("No counts here.");
+    expect(out.tokensIn).toBeUndefined();
+    expect(out.tokensOut).toBeUndefined();
   });
 
   it("streams pull progress and completes", async () => {

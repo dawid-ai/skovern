@@ -11,7 +11,7 @@ import {
 } from "@deskhand/core";
 import { fileFetchSink } from "./receipts.js";
 import { scanHardware } from "./hardware.js";
-import { loadCatalog } from "./catalog.js";
+import { createCachedCatalogLoader } from "./catalog.js";
 import type {
   HardwareView,
   LocalModelsView,
@@ -25,6 +25,11 @@ import type {
 // on-machine or over-the-wire happens here, and the catalog fetch is receipted.
 
 const GB = 1024 * 1024 * 1024;
+
+// One shared catalog loader for both `localStatus` and `localModels`, so a single
+// view-open (which calls both) makes ONE github fetch and writes ONE "model list"
+// receipt instead of two. (Closes the `local-catalog-double-fetch` ledger item.)
+const loadCatalog = createCachedCatalogLoader();
 
 // Default to loopback Ollama. An override is a dev/test seam (point at a fixture),
 // honored ONLY unpackaged — mirror of DEV_SERVER_URL. The engine ALSO enforces

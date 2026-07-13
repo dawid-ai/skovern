@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ReceiptView } from "../../../shared/receipts.js";
+import { isFetch, isLocal, isRoutine, routineGroup } from "./receipt-classify.js";
 
 // "What leaves your machine" — the egress log on its own page. Every call is here:
 // meaningful egress (your brain, a skill reading a website, publishing) shows in a
@@ -7,10 +8,6 @@ import type { ReceiptView } from "../../../shared/receipts.js";
 // computer, ORANGE "Online" for anything that actually left. The app's own routine
 // background checks (news, messages, the model list) are grouped into one quiet
 // line each instead of spamming a row every few seconds. Read-only; sends nothing.
-
-function isFetch(r: ReceiptView): r is Extract<ReceiptView, { kind: "fetch" }> {
-  return "kind" in r && r.kind === "fetch";
-}
 
 function fmtBytes(n: number): string {
   return n < 1024 ? `${n} bytes` : `${(n / 1024).toFixed(1)} KB`;
@@ -27,26 +24,6 @@ const BRAIN_LABEL: Record<string, string> = {
   "claude-cli": "Claude Code",
   local: "your computer",
 };
-
-// A local (on-machine) model call — nothing left the machine.
-function isLocal(r: ReceiptView): boolean {
-  return !isFetch(r) && r.local === true;
-}
-
-// The app's own repeating background checks. These leave the machine (they're online),
-// but they carry no business data and fire on a timer — so we group them into one
-// quiet summary line each rather than a row per poll.
-const ROUTINE: Record<string, string> = {
-  news: "Checked the news",
-  messages: "Checked your messages",
-  "model list": "Checked the model list",
-};
-
-function routineKey(r: ReceiptView): string | null {
-  if (!isFetch(r) || !r.task.startsWith("Deskhand:")) return null;
-  const suffix = r.task.slice("Deskhand:".length).trim();
-  return suffix in ROUTINE ? suffix : null;
-}
 
 // Who made the call, in florist words.
 function who(r: ReceiptView): string {
@@ -69,6 +46,17 @@ function where(r: ReceiptView): string {
   return isFetch(r) ? r.host : `${BRAIN_LABEL[r.provider] ?? r.provider}`;
 }
 
+// A private (on-machine) brain call: when the engine reported token usage, show the
+// tokens it read/produced ("all on your computer") instead of bytes — nothing left.
+// If no counts came back (older engine / some models), the plain honest line.
+function localDetail(r: ReceiptView): string {
+  if (!isFetch(r) && r.tokensOut !== undefined) {
+    const inPart = r.tokensIn !== undefined ? `${r.tokensIn.toLocaleString()} tokens in, ` : "";
+    return `${inPart}${r.tokensOut.toLocaleString()} out — all on your computer`;
+  }
+  return "stayed on your computer — nothing left";
+}
+
 interface RoutineGroup {
   key: string;
   label: string;
@@ -86,14 +74,16 @@ export function ReceiptsPage() {
   // One entry per completed call (the log also holds a "sent" line written before
   // each call leaves — the fail-closed proof; we show the "done" outcome).
   const done = (receipts ?? []).filter((r) => r.phase === "done");
-  const meaningful = done.filter((r) => routineKey(r) === null);
+  // Routine-vs-meaningful is now decided by the write-time `routine` flag, not by
+  // matching task strings — so a real message the user sent is never hidden here.
+  const meaningful = done.filter((r) => !isRoutine(r));
 
   // Group the routine polls by kind → one quiet line each, newest activity first.
   const groups = new Map<string, RoutineGroup>();
   for (const r of done) {
-    const key = routineKey(r);
-    if (key === null) continue;
-    const g = groups.get(key) ?? { key, label: ROUTINE[key]!, count: 0, lastTs: r.ts };
+    if (!isFetch(r) || !isRoutine(r)) continue;
+    const { key, label } = routineGroup(r);
+    const g = groups.get(key) ?? { key, label, count: 0, lastTs: r.ts };
     g.count += 1;
     if (r.ts > g.lastTs) g.lastTs = r.ts;
     groups.set(key, g);
@@ -147,7 +137,7 @@ export function ReceiptsPage() {
                         </td>
                         <td className="receipt-detail">
                           {local ? (
-                            <span className="receipt-ok">stayed on your computer — nothing left</span>
+                            <span className="receipt-ok">{localDetail(r)}</span>
                           ) : isFetch(r) ? (
                             <>
                               {fmtBytes(r.bytesSent)} out · {fmtBytes(r.bytesReceived)} back ·{" "}

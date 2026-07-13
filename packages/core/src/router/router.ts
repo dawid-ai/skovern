@@ -54,9 +54,22 @@ export function createRouter(config: RouterConfig): Router {
       await sink.append({ ...base, ts: clock().toISOString(), bytesReceived: 0, ok: false, phase: "sent" });
 
       let text: string | null = null;
+      let tokensIn: number | undefined;
+      let tokensOut: number | undefined;
       let failed = false;
       try {
-        text = await provider.generate(input.prompt);
+        const out = await provider.generate(input.prompt);
+        if (typeof out === "string") {
+          text = out;
+        } else {
+          text = out.text;
+          // Only an on-machine brain's token counts belong on the receipt — a cloud
+          // provider returning this shape would still be egress, told in bytes.
+          if (onMachine) {
+            tokensIn = out.tokensIn;
+            tokensOut = out.tokensOut;
+          }
+        }
       } catch {
         // The provider/network error detail stays here — never surfaced to the
         // UI (could carry a key or prompt). Callers get a generic failure.
@@ -65,13 +78,16 @@ export function createRouter(config: RouterConfig): Router {
 
       // Finalize with the outcome. Best-effort: the "sent" receipt already made
       // the egress non-repudiable, so a failed finalize write must not deny the
-      // user their answer.
+      // user their answer. Token fields are added only when present, so cloud
+      // receipts keep their exact prior shape.
       const receipt: Receipt = {
         ...base,
         ts: clock().toISOString(),
         bytesReceived: bytes(text ?? ""),
         ok: !failed,
         phase: "done",
+        ...(tokensIn !== undefined ? { tokensIn } : {}),
+        ...(tokensOut !== undefined ? { tokensOut } : {}),
       };
       try {
         await sink.append(receipt);

@@ -13,7 +13,9 @@ export function localProvider(engine: LocalEngine, modelId: string): Provider {
     model: modelId,
     // The whole point: this call never leaves the machine.
     onMachine: true,
-    generate(prompt: string): Promise<string> {
+    // Hand back the engine's LocalGenerateResult verbatim ({text, tokensIn?,
+    // tokensOut?}) — the router copies the token counts onto the local receipt.
+    generate(prompt: string): Promise<{ text: string; tokensIn?: number; tokensOut?: number }> {
       return engine.generate(modelId, prompt);
     },
   };

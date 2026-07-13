@@ -246,7 +246,8 @@ app
       clearSession();
     });
 
-    const news = createNewsClient(API_BASE, receiptedFetch(fetchSink, "Deskhand: news"));
+    // News is read-only polling (no business data leaves) → routine: grouped in the panel.
+    const news = createNewsClient(API_BASE, receiptedFetch(fetchSink, "Deskhand: news", { routine: true }));
     registerTrusted(TRUST, "news:list", async (): Promise<NewsPostView[]> => {
       try {
         return await news.list();
@@ -255,14 +256,18 @@ app
       }
     });
 
-    const dm = createDmClient(API_BASE, receiptedFetch(fetchSink, "Deskhand: messages"));
+    // The unread-badge poll (thread/read) fires every 5s and carries no business
+    // data → routine (grouped). A user's actual message (send) is real business data
+    // leaving → its OWN non-routine client, so it can never hide in the quiet group.
+    const dm = createDmClient(API_BASE, receiptedFetch(fetchSink, "Deskhand: messages", { routine: true }));
+    const dmSend = createDmClient(API_BASE, receiptedFetch(fetchSink, "Deskhand: your message to Dawid"));
     registerTrusted(TRUST, "dm:send", async (rawMessage: unknown): Promise<DmSendResult> => {
       const message = typeof rawMessage === "string" ? rawMessage : "";
       // The bearer token stays in main (keychain) — the renderer never holds it.
       const session = loadSession();
       if (!session) return { ok: false, message: "Please sign in first." };
       try {
-        return await dm.send(session.token, message);
+        return await dmSend.send(session.token, message);
       } catch {
         return { ok: false, message: CANT_REACH };
       }

@@ -157,12 +157,22 @@ function bodyBytes(init: Parameters<typeof fetch>[1]): number {
   return typeof body === "string" ? encodedBytes(body) : 0;
 }
 
-export function receiptedFetch(sink: FetchSink, label: string): typeof fetch {
+// `routine:true` marks the app's own timer polls (news/messages/model list) so the
+// panel groups them at the source, not by sniffing the label. Default false — a
+// caller must opt a client in explicitly, so no meaningful egress is ever grouped.
+export function receiptedFetch(sink: FetchSink, label: string, opts?: { routine?: boolean }): typeof fetch {
+  const routine = opts?.routine === true;
   const wrapped = async (
     input: Parameters<typeof fetch>[0],
     init?: Parameters<typeof fetch>[1],
   ): Promise<Response> => {
-    const base = { kind: "fetch" as const, host: hostOf(requestUrl(input)), task: label, bytesSent: bodyBytes(init) };
+    const base = {
+      kind: "fetch" as const,
+      host: hostOf(requestUrl(input)),
+      task: label,
+      bytesSent: bodyBytes(init),
+      ...(routine ? { routine: true } : {}),
+    };
     // Fail-closed: the "sent" receipt must be durable before egress. Awaited and
     // NOT swallowed — if it throws, we never fetch, so no byte leaves unrecorded.
     await sink.append({ ...base, ts: new Date().toISOString(), bytesReceived: 0, ok: false, phase: "sent" });

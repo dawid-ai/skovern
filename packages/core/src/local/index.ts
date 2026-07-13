@@ -7,6 +7,7 @@ export { localProvider } from "./provider.js";
 export { verdict } from "./verdict.js";
 export type {
   LocalEngine,
+  LocalGenerateResult,
   LocalModelInfo,
   PullProgress,
   GpuInfo,

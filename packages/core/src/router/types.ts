@@ -13,8 +13,20 @@ export interface Provider {
   /** True when this provider runs ON the machine (e.g. a local model): the call
    *  never leaves, so the router marks its receipt `local` instead of egress. */
   readonly onMachine?: boolean;
-  /** Send a prompt, get text back. Throws on a provider/network error. */
-  generate(prompt: string): Promise<string>;
+  /** Send a prompt, get text back — a bare string, or (for a local brain that
+   *  reports them) text plus token counts. Throws on a provider/network error. */
+  generate(prompt: string): Promise<string | ProviderOutput>;
+}
+
+/** What a provider hands back. Cloud providers return a bare `string`; a local
+ *  (on-machine) engine may return this richer shape so the receipt can show tokens
+ *  ("all on your computer") instead of bytes. */
+export interface ProviderOutput {
+  text: string;
+  /** Prompt tokens the model read, if the engine reports them. */
+  tokensIn?: number;
+  /** Tokens the model generated, if the engine reports them. */
+  tokensOut?: number;
 }
 
 /** One line in the "what left your machine" log. Metadata only — never the
@@ -40,6 +52,12 @@ export interface Receipt {
    *  Absent/false for cloud brains. Lets the receipts panel prove "stayed on your
    *  computer" instead of showing a false "sent". */
   local?: boolean;
+  /** Prompt/response token counts for an on-machine (local) call, when the engine
+   *  reports them. Lets the panel say "X tokens in, Y out — all on your computer"
+   *  instead of bytes. Absent for cloud brains, and for a local call that returned
+   *  no counts (the panel falls back to the plain "stayed on your computer" line). */
+  tokensIn?: number;
+  tokensOut?: number;
 }
 
 /** Where receipts go. Append-only. Injected, so core stays Electron-agnostic

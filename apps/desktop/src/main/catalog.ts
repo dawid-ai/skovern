@@ -79,7 +79,9 @@ const SNAPSHOT: CatalogModel[] = validateCatalog(snapshotJson) ?? [];
  *  body, fall back to the bundled snapshot with a descriptive notice. `fetchSink`
  *  makes the fetch appear in the receipts log; `url` override is a loopback test seam. */
 export async function loadCatalog(fetchSink: FetchSink, url: string = LIVE_URL): Promise<CatalogResult> {
-  const doFetch = receiptedFetch(fetchSink, "Deskhand: model list");
+  // The catalog list is the app's own housekeeping fetch (no business data) → routine,
+  // so the panel groups it instead of a row per view-open.
+  const doFetch = receiptedFetch(fetchSink, "Deskhand: model list", { routine: true });
   try {
     const res = await doFetch(url);
     if (!res.ok) {
@@ -105,4 +107,28 @@ export async function loadCatalog(fetchSink: FetchSink, url: string = LIVE_URL):
 /** The bundled snapshot, for callers that just want a default without a fetch. */
 export function snapshotCatalog(): CatalogModel[] {
   return SNAPSHOT;
+}
+
+// Opening the local view fires two IPC calls (`local:status` + `local:models`), each
+// of which needs the catalog — without a cache that's two identical github fetches and
+// two "model list" receipts per open. This collapses them: a load within TTL of the
+// last one (or racing it) shares the SAME in-flight promise → one fetch, one receipt.
+// The promise is cached, not just the result, so the near-simultaneous status+models
+// pair share the in-flight request. `loadCatalog` never rejects (falls back to the
+// snapshot), so a cached promise is always safe to hand back.
+// ponytail: 3s TTL — long enough to collapse one view-open's two calls, short enough
+// that "Check my computer again" a moment later still refetches a fresh list.
+const CATALOG_TTL_MS = 3000;
+
+export function createCachedCatalogLoader(
+  now: () => number = () => Date.now(),
+): (fetchSink: FetchSink, url?: string) => Promise<CatalogResult> {
+  let cache: { url: string; at: number; promise: Promise<CatalogResult> } | null = null;
+  return function load(fetchSink: FetchSink, url: string = LIVE_URL): Promise<CatalogResult> {
+    const t = now();
+    if (cache && cache.url === url && t - cache.at < CATALOG_TTL_MS) return cache.promise;
+    const promise = loadCatalog(fetchSink, url);
+    cache = { url, at: t, promise };
+    return promise;
+  };
 }
