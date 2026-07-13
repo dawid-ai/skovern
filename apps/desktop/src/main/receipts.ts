@@ -6,10 +6,12 @@ import path from "node:path";
 import type { FetchReceipt, FetchSink, Receipt, ReceiptSink } from "@deskhand/core";
 import type { ReceiptView } from "../shared/receipts.js";
 
-// The "what left your machine" log, on disk. One JSON object per line so a future
-// panel can tail it. Append is synchronous and unguarded on purpose: if it throws
-// (disk full, permissions), the router's call fails — fail-closed, no silent
-// egress. Receipts are metadata only; the router never puts a key or body here.
+// The "what left your machine" log, on disk. One JSON object per line so the panel
+// can tail it. Every append (model + fetch) runs through one single-writer queue
+// (see `serialize` below) so two concurrent writers can't interleave a line, and is
+// awaited-and-unswallowed at the call site: if it throws (disk full, permissions),
+// the router's/fetch's call fails — fail-closed, no silent egress. Receipts are
+// metadata only; the caller never puts a key or body here.
 
 export function receiptsFile(): string {
   return path.join(app.getPath("userData"), "receipts.jsonl");
