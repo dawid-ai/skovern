@@ -24,8 +24,12 @@ export interface LocalModelView {
   label: string;
   /** "what you already have" (pulled in Ollama) vs "our suggestions" (catalog). */
   group: "have" | "suggested";
-  /** Already downloaded (in Ollama)? Drives "Get this one" vs "Ready to use". */
+  /** Already downloaded (in Ollama, or as a verified embedded file)? Drives "Get this
+   *  one" vs "Use this one". */
   downloaded: boolean;
+  /** Runs on the embedded runtime (has a gguf) → downloadable + usable WITHOUT Ollama.
+   *  The UI keeps its action live even when Ollama is off. */
+  embedded?: boolean;
   tier: FitTier;
   usable: boolean;
   /** Warm one-liner for this model on this computer. */

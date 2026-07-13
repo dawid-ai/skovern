@@ -31,8 +31,11 @@ function injectCsp(policy: string, apply: "build" | "serve"): Plugin {
 
 export default defineConfig({
   main: {
-    // @deskhand/core + plugin-sdk are workspace TS source — bundle, don't externalize
-    plugins: [externalizeDepsPlugin({ exclude: ["@deskhand/core", "@deskhand/plugin-sdk"] })],
+    // @deskhand/core + plugin-sdk are workspace TS source — bundle, don't externalize.
+    // node-llama-cpp is an OPTIONAL native dep (not in `dependencies`, so not auto-
+    // externalized) — force it external so the llama-child never bundles its native
+    // internals (which import per-platform binary packages that aren't all installed).
+    plugins: [externalizeDepsPlugin({ exclude: ["@deskhand/core", "@deskhand/plugin-sdk"], include: ["node-llama-cpp"] })],
     build: {
       rollupOptions: {
         // Second entry: the sandboxed child. Emitted as a fully-bundled .mjs (no bare
@@ -40,6 +43,9 @@ export default defineConfig({
         input: {
           index: resolve(__dirname, "src/main/index.ts"),
           "plugin-child": resolve(__dirname, "src/plugin-child/index.ts"),
+          // The embedded-runtime child. Built like `index` (deps externalized — it must
+          // resolve the native node-llama-cpp at runtime), NOT bundled like plugin-child.
+          "llama-child": resolve(__dirname, "src/main/llama-child.ts"),
         },
         output: {
           entryFileNames: (chunk) => (chunk.name === "plugin-child" ? "plugin-child.mjs" : "[name].js"),

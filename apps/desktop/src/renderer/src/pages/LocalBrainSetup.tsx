@@ -87,6 +87,10 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
   const all = models ?? [];
   const active = savedId ? all.find((m) => m.id === savedId) ?? null : null;
   const recommended = all.find((m) => m.recommended) ?? null;
+  // Embedded models run WITHOUT Ollama, so the actionable UI shows whenever Ollama is
+  // ready OR at least one embedded model exists (the no-Ollama private-brain path).
+  const hasEmbedded = all.some((m) => m.embedded);
+  const canAct = (status?.ollamaReady ?? false) || hasEmbedded;
   // One card when the model you're using IS the recommendation — no confusing dupes.
   const sameActiveAndPick = active !== null && recommended !== null && active.id === recommended.id;
 
@@ -120,8 +124,10 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
         </button>
       );
     }
+    // An embedded model downloads via our own downloader — no Ollama needed, so its
+    // button stays live. A non-embedded (Ollama) model needs Ollama running to fetch.
     return (
-      <button className="primary" onClick={() => void getModel(m.id)} disabled={!status?.ollamaReady}>
+      <button className="primary" onClick={() => void getModel(m.id)} disabled={!m.embedded && !status?.ollamaReady}>
         Get this one
       </button>
     );
@@ -217,8 +223,8 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
 
           {notice.length > 0 && <p className="notice">{notice}</p>}
 
-          {!status.ollamaReady ? (
-            // Ollama not running → no actionable pick exists; lead with the honest
+          {!canAct ? (
+            // Nothing actionable: no Ollama AND no embedded model. Lead with the honest
             // guidance (the verdict still scores the catalog, but there's nothing to click).
             <p className="hint">
               Start Ollama (the free helper that runs a private brain), then choose “Check my computer again.”

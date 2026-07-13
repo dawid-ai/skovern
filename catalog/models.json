@@ -26,6 +26,25 @@
       "tradeoff": "Still light and quick, a step smarter than the 0.5B. A good starting point on a modest computer."
     },
     {
+      "id": "qwen2.5:3b",
+      "label": "Qwen2.5 3B",
+      "params": 3,
+      "sizeBytes": 2104932768,
+      "quant": "Q4_K_M",
+      "creator": "Alibaba (Qwen team)",
+      "homepage": "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF",
+      "license": "Apache 2.0 — free to use, even for your business.",
+      "licenseUrl": "https://www.apache.org/licenses/LICENSE-2.0",
+      "tradeoff": "A strong little all-rounder — noticeably smarter than the small ones, and it runs privately right on your computer with no extra setup.",
+      "gguf": {
+        "url": "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf",
+        "sha256": "626b4a6678b86442240e33df819e00132d3ba7dddfe1cdc4fbb18e0a9615c62d",
+        "sizeBytes": 2104932768,
+        "filename": "qwen2.5-3b-instruct-q4_k_m.gguf",
+        "contextSize": 4096
+      }
+    },
+    {
       "id": "llama3.2:1b",
       "label": "Llama 3.2 1B",
       "params": 1,

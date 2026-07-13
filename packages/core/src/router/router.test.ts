@@ -111,6 +111,24 @@ describe("model router", () => {
     await expect(router.generate({ task: "t", prompt: "hi" })).rejects.not.toThrow(/sk-secret/);
   });
 
+  it("stamps a valid on-machine token count, but never a non-integer one (trust boundary)", async () => {
+    // A good on-machine provider: integer counts land on the receipt.
+    const good = arraySink();
+    const goodLocal: Provider = { id: "local", model: "m", onMachine: true, generate: async () => ({ text: "hi", tokensIn: 7, tokensOut: 42 }) };
+    const { receipt: goodReceipt } = await createRouter({ providers: { local: goodLocal }, defaultProvider: "local", sink: good, now: FIXED }).generate({ task: "t", prompt: "hi" });
+    expect(goodReceipt.tokensIn).toBe(7);
+    expect(goodReceipt.tokensOut).toBe(42);
+
+    // A misbehaving on-machine provider returning a non-integer / negative count: the
+    // receipt OMITS the count (never a fabricated/garbage value), it doesn't throw.
+    const bad = arraySink();
+    const badLocal: Provider = { id: "local", model: "m", onMachine: true, generate: async () => ({ text: "hi", tokensIn: 3.5, tokensOut: -2 }) };
+    const { receipt: badReceipt } = await createRouter({ providers: { local: badLocal }, defaultProvider: "local", sink: bad, now: FIXED }).generate({ task: "t", prompt: "hi" });
+    expect(badReceipt.tokensIn).toBeUndefined();
+    expect(badReceipt.tokensOut).toBeUndefined();
+    expect(JSON.stringify(bad.receipts)).not.toContain("3.5");
+  });
+
   it("refuses to construct without a sink or a configured default", () => {
     const sink = arraySink();
     // @ts-expect-error — proving the runtime guard, not just the type

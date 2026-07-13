@@ -82,6 +82,23 @@ export interface HardwareProfile {
   notes: string[];
 }
 
+/** Where + how to fetch a model for the EMBEDDED runtime (node-llama-cpp). Present
+ *  only on catalog models we can run without Ollama; absent → Ollama-only. Untrusted
+ *  network input (it rides in the fetched catalog) — validated on load: https-only
+ *  url, 64-hex sha256, a filename with no path separators. */
+export interface GgufSource {
+  /** Direct https GGUF URL (e.g. a Hugging Face `resolve` link; may 302 to a CDN). */
+  url: string;
+  /** Expected file sha256, lowercase hex (64 chars) — the integrity gate. */
+  sha256: string;
+  /** Expected download size in bytes (progress + a free-disk check). */
+  sizeBytes: number;
+  /** Local filename under userData/models — safe charset, no separators or "..". */
+  filename: string;
+  /** Context window to allocate when the child loads it (e.g. 4096). */
+  contextSize: number;
+}
+
 /** One curated model in `catalog/models.json`. Untrusted network input once
  *  fetched — every string is validated on load and escaped on render. */
 export interface CatalogModel {
@@ -103,6 +120,8 @@ export interface CatalogModel {
   licenseUrl: string;
   /** One-line honest trade-off ("fastest, lighter answers"). */
   tradeoff: string;
+  /** Present only for models runnable with the embedded runtime (no Ollama needed). */
+  gguf?: GgufSource;
 }
 
 /** Green / amber / red per the honesty engine. */
