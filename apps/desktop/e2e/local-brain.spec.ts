@@ -217,6 +217,18 @@ test("user sets up a private on-computer brain, always sees which brain is activ
     await expect(page.getByText("Already on your computer").first()).toBeVisible();
     await expect(page.getByText("Best for your computer").first()).toBeVisible();
 
+    // DOUBLE-FETCH FIXED (closes local-catalog-double-fetch): this is the FIRST — and so
+    // far ONLY — open of the local view, and both its IPC calls (local:status +
+    // local:models) fire together on mount and share the cached catalog. So exactly ONE
+    // "model list" sent receipt exists now — pre-fix it was two. Checked here, right after
+    // the open, so the count can't be perturbed by later interaction or the cache TTL. The
+    // deterministic collapse+refetch proof lives in the local-catalog unit test.
+    const afterOpen = readFileSync(path.join(userDataDir, "receipts.jsonl"), "utf8");
+    const modelListSent = afterOpen
+      .split("\n")
+      .filter((l) => l.includes('"task":"Deskhand: model list"') && l.includes('"phase":"sent"'));
+    expect(modelListSent).toHaveLength(1);
+
     // everything else folds under "Other options" (hidden by default)
     await expect(page.getByText("Qwen2.5 235B")).toBeHidden();
     await expect(page.getByRole("heading", { name: "Qwen2.5 3B" })).toBeHidden();
@@ -250,18 +262,10 @@ test("user sets up a private on-computer brain, always sees which brain is activ
     await expect(page.getByRole("heading", { name: "Routine background checks" })).toBeVisible();
     await expect(page.getByText("Checked the model list").first()).toBeVisible();
 
-    // DOUBLE-FETCH FIXED (closes local-catalog-double-fetch): opening the local view
-    // fired ONE catalog fetch (status + models share the cache), so exactly ONE "model
-    // list" sent receipt exists for that open — not two.
-    const log = readFileSync(path.join(userDataDir, "receipts.jsonl"), "utf8");
-    const modelListSent = log
-      .split("\n")
-      .filter((l) => l.includes('"task":"Deskhand: model list"') && l.includes('"phase":"sent"'));
-    expect(modelListSent).toHaveLength(1);
-
     // on-disk proof: a local:true model receipt WITH token counts (never bytes for the
     // local reply), the catalog poll tagged routine:true at the source, and the reply
     // body never touched the log.
+    const log = readFileSync(path.join(userDataDir, "receipts.jsonl"), "utf8");
     expect(log).toContain('"provider":"local"');
     expect(log).toContain('"local":true');
     expect(log).toContain('"tokensIn":7');
