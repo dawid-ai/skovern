@@ -123,4 +123,18 @@ describe("verdict — recommends only a fetchable model", () => {
     const v = verdict(profile({ ramBytes: 64 * GB, bestVramBytes: 24 * GB }), MODELS);
     expect(v.recommendedModelId).toBe("qwen2.5:14b");
   });
+
+  // Loop 028 prod scenario: 3B/7B/14B all shipped as embedded (fetchable) GGUFs; on a big
+  // GPU the pick is the biggest FITTING embedded one (14B) — the flagship path. On a small
+  // machine it steps down to the biggest embedded that still fits, never over-promising.
+  it("all three embedded on a 24GB GPU → recommends the 14B; on a small machine it steps down", () => {
+    const embedded: VerdictModel[] = [
+      { id: "qwen2.5:3b", label: "Qwen 3B", params: 3, fetchable: true },
+      { id: "qwen2.5:7b", label: "Qwen 7B", params: 7, fetchable: true },
+      { id: "qwen2.5:14b", label: "Qwen 14B", params: 14, fetchable: true },
+    ];
+    expect(verdict(profile({ ramBytes: 64 * GB, bestVramBytes: 24 * GB }), embedded).recommendedModelId).toBe("qwen2.5:14b");
+    // 8GB VRAM: the 14B spills (amber), so the biggest GREEN embedded (7B) is the pick.
+    expect(verdict(profile({ ramBytes: 16 * GB, bestVramBytes: 8 * GB }), embedded).recommendedModelId).toBe("qwen2.5:7b");
+  });
 });
