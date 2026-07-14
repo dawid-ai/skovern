@@ -563,6 +563,10 @@ app
 
     // Reclaim disk from interrupted downloads (crashes, the old unique-name scheme),
     // keeping any `.part` that resume can still finish. Best-effort, non-blocking.
+    // ponytail: the keep-set is seeded from the bundled snapshot (pre live-catalog fetch),
+    // so a partial of a live-catalog-ONLY model gets swept → re-downloads from scratch.
+    // Wasteful, never corrupt; the snapshot is the shipped baseline. Widen to the live
+    // catalog here if snapshot/live gguf filenames ever diverge meaningfully.
     void sweepOrphanParts(embeddedFilenames());
 
     createWindow();

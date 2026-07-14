@@ -220,15 +220,22 @@ export async function downloadModel(
       }
       const total = gguf.sizeBytes;
       const out = createWriteStream(part, { flags: received > 0 ? "a" : "w" });
+      // A write error (e.g. the disk fills after the pre-check, from another process) must
+      // REJECT this download cleanly — never surface as an unhandled 'error' on the writable
+      // that crashes main. Race every await against it; the noop .catch keeps a late error
+      // (after we've already finished) from becoming an unhandled rejection.
+      const streamError = new Promise<never>((_, reject) => out.once("error", reject));
+      streamError.catch(() => {});
       const reader = (res.body as ReadableStream<Uint8Array>).getReader();
       try {
         for (;;) {
-          const { done, value } = await reader.read();
+          const { done, value } = await Promise.race([reader.read(), streamError]);
           if (done) break;
           if (!value) continue;
           hash.update(value);
           received += value.byteLength;
-          if (!out.write(value)) await new Promise((r) => out.once("drain", r)); // backpressure, never buffer whole
+          // backpressure, never buffer the whole body
+          if (!out.write(value)) await Promise.race([new Promise((r) => out.once("drain", r)), streamError]);
           onProgress?.({
             completed: received,
             total,
@@ -238,7 +245,10 @@ export async function downloadModel(
       } finally {
         reader.releaseLock();
       }
-      await new Promise<void>((resolve, reject) => out.end((err?: Error | null) => (err ? reject(err) : resolve())));
+      await Promise.race([
+        new Promise<void>((resolve, reject) => out.end((err?: Error | null) => (err ? reject(err) : resolve()))),
+        streamError,
+      ]);
     } catch (err) {
       // Leave the `.part` in place — a later call resumes it. (A hash mismatch below is
       // the one case we DO delete, since the bytes themselves are wrong.)

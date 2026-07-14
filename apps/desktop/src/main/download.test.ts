@@ -11,6 +11,24 @@ import type { FetchReceipt, FetchSink, GgufSource } from "@deskhand/core";
 const state = { dir: "" };
 vi.mock("electron", () => ({ app: { getPath: () => state.dir } }));
 
+// A seam to force a WRITE-stream error mid-download (simulating e.g. a disk that fills
+// after the pre-check). The wrapper is a passthrough unless `writeStreamError` is set.
+const fsControl = vi.hoisted(() => ({ writeStreamError: null as Error | null }));
+vi.mock("node:fs", async (orig) => {
+  const actual = await orig<typeof import("node:fs")>();
+  return {
+    ...actual,
+    createWriteStream: (p: string, o?: unknown) => {
+      const s = actual.createWriteStream(p, o as never);
+      if (fsControl.writeStreamError) {
+        const err = fsControl.writeStreamError;
+        queueMicrotask(() => s.emit("error", err));
+      }
+      return s;
+    },
+  };
+});
+
 import { downloadModel, ensureDiskSpace, isSafeFinalUrl, modelDownloaded, modelPath, modelsDir, sweepOrphanParts } from "./download.js";
 
 let server: Server | null = null;
@@ -282,6 +300,22 @@ describe("download robustness (loop 029)", () => {
   it("R2b: ensureDiskSpace blocks only when the measured free space is short", async () => {
     await expect(ensureDiskSpace(1000, async () => Number.POSITIVE_INFINITY)).resolves.toBeUndefined();
     await expect(ensureDiskSpace(1000, async () => 10)).rejects.toThrow(/enough free space/i);
+  });
+
+  // R2c — a WRITE error mid-download (e.g. the disk fills after the pre-check) rejects
+  // CLEANLY, never surfacing as an unhandled 'error' on the writable that crashes main.
+  it("R2c: a mid-stream write error rejects cleanly instead of crashing", async () => {
+    const body = Buffer.alloc(80 * 1024, 4);
+    const base = await startServer(body, { chunks: 8 });
+    const g = gguf(body, "writefail.gguf");
+    const { sink } = collectingSink();
+    fsControl.writeStreamError = new Error("ENOSPC simulated");
+    try {
+      await expect(downloadModel(g, sink, undefined, via(base))).rejects.toThrow(/ENOSPC/);
+    } finally {
+      fsControl.writeStreamError = null;
+    }
+    expect(existsSync(modelPath(g.filename))).toBe(false); // no bad model file
   });
 
   // R3 — ORPHAN sweep: stale `.part`/`.part.<n>` temps are removed, but a resumable
