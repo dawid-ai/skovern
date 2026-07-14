@@ -8,6 +8,15 @@ function done(ts: string): ReceiptView {
 function sent(ts: string): ReceiptView {
   return { ...done(ts), phase: "sent" };
 }
+// A routine background poll (the 5s unread-message / news check) — a done FetchReceipt
+// tagged routine:true. Must NOT count toward the calendar.
+function routine(ts: string): ReceiptView {
+  return { ts, kind: "fetch", host: "app.test", task: "Deskhand: messages", bytesSent: 0, bytesReceived: 0, ok: true, phase: "done", routine: true };
+}
+// A real (non-routine) egress fetch — a download / publish — that DOES count.
+function realFetch(ts: string): ReceiptView {
+  return { ts, kind: "fetch", host: "huggingface.co", task: "Downloading model", bytesSent: 0, bytesReceived: 1, ok: true, phase: "done" };
+}
 
 describe("dayKey", () => {
   it("is the UTC date, stable regardless of the ts offset", () => {
@@ -30,6 +39,18 @@ describe("computeActivity", () => {
   });
   it("skips an unparseable ts without throwing", () => {
     expect(computeActivity([done("garbage")])).toEqual({});
+  });
+  it("excludes routine background polls but keeps real egress", () => {
+    const map = computeActivity([
+      routine("2026-07-14T10:00:00Z"), // 5s message poll — excluded
+      routine("2026-07-14T10:00:05Z"), // excluded
+      realFetch("2026-07-14T11:00:00Z"), // a real download — counted
+      done("2026-07-14T12:00:00Z"), // a model call — counted
+    ]);
+    expect(map).toEqual({ "2026-07-14": 2 }); // only the 2 non-routine calls
+  });
+  it("a day of nothing but message polls is empty on the calendar", () => {
+    expect(computeActivity([routine("2026-07-14T10:00:00Z"), routine("2026-07-14T10:00:05Z")])).toEqual({});
   });
 });
 

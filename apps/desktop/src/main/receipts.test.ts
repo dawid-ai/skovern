@@ -19,7 +19,7 @@ function receiptsPath(): string {
 }
 
 function activityPath(): string {
-  return path.join(state.dir, "receipts-activity.json");
+  return path.join(state.dir, "receipts-activity-v2.json"); // -v2: routine polls excluded
 }
 
 // Loop 027: rotation renames the live log to a UNIQUE dated archive that is NEVER
@@ -393,6 +393,17 @@ describe("durable activity index", () => {
     await fileReceiptSink().append({ ...modelReceipt("c"), phase: "sent", ts: "2026-07-14T21:00:00.000Z" });
     await flush();
     expect(await readActivityIndex()).toEqual({ "2026-07-14": 2 });
+  });
+
+  // I6 — a routine background poll (the 5s message/news check) is a done fetch but must
+  // NOT bump the calendar index — else the heatmap drowns in poll noise.
+  it("I6: a routine poll does not bump the index; a real fetch does", async () => {
+    writeFileSync(activityPath(), JSON.stringify({ "2026-07-14": 0 }));
+    await fileFetchSink().append({ ...fetchReceiptAt("Deskhand: messages", 1, "done"), routine: true, ts: "2026-07-14T10:00:00.000Z" });
+    await fileFetchSink().append({ ...fetchReceiptAt("Deskhand: news", 2, "done"), routine: true, ts: "2026-07-14T10:00:05.000Z" });
+    await fileFetchSink().append({ ...fetchReceiptAt("Downloading model", 3, "done"), ts: "2026-07-14T11:00:00.000Z" }); // real egress
+    await flush();
+    expect(await readActivityIndex()).toEqual({ "2026-07-14": 1 }); // only the real fetch counted
   });
 
   // I2 — the index is a SEPARATE file that log rotation never touches: a pre-rotation

@@ -11,13 +11,24 @@ export function dayKey(ts: string): string | null {
   return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
 }
 
-// Tally receipts into a day→count map, counting only completed ("done") calls so a
-// call isn't double-counted by its "sent" + "done" pair. Empty in → empty out, never
-// throws. This doubles as the durable index's rebuild-from-log path in main.
+// Does a receipt count toward the activity calendar? Only a COMPLETED ("done") call
+// (so a "sent"+"done" pair isn't double-counted) that ISN'T a routine background poll.
+// The 5-second unread-message and news polls are `routine:true` (loop 023) — counting
+// them would drown the heatmap in thousands of no-business-data checks a day, hiding the
+// real egress. The table already de-emphasizes routine polls into a quiet summary; the
+// calendar excludes them the same way. `routine` lives only on FetchReceipt, so `"routine"
+// in r` narrows to it (a model receipt is never routine).
+export function countsForActivity(r: ReceiptView): boolean {
+  if (r.phase !== "done") return false;
+  return !("routine" in r && r.routine === true);
+}
+
+// Tally receipts into a day→count map, counting only calls that pass countsForActivity.
+// Empty in → empty out, never throws. This doubles as the durable index's rebuild path.
 export function computeActivity(receipts: readonly ReceiptView[]): ActivityMap {
   const map: ActivityMap = {};
   for (const r of receipts) {
-    if (r.phase !== "done") continue;
+    if (!countsForActivity(r)) continue;
     const key = dayKey(r.ts);
     if (key === null) continue;
     map[key] = (map[key] ?? 0) + 1;

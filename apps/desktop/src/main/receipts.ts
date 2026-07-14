@@ -4,7 +4,7 @@ import { open } from "node:fs/promises";
 import path from "node:path";
 import type { FetchReceipt, FetchSink, Receipt, ReceiptSink } from "@deskhand/core";
 import type { ActivityMap, ReceiptView } from "../shared/receipts.js";
-import { computeActivity, dayKey } from "../shared/receipt-calendar.js";
+import { computeActivity, countsForActivity, dayKey } from "../shared/receipt-calendar.js";
 
 // The egress-fetch wrapper lives in its own module now (concern split); re-exported here
 // so existing `from "./receipts.js"` importers are unchanged.
@@ -135,7 +135,9 @@ export function fileFetchSink(): FetchSink {
 //     rebuild (which streams the log while holding the queue) can't see that line, so we
 //     MUST bump it, and we do. (Closes the "appended during the first rebuild" under-count.)
 function appendAndIndex(receipt: ReceiptView): Promise<void> {
-  const shouldBump = receipt.phase === "done" && (existsSync(activityFile()) || rebuildInFlight);
+  // Only calls that count toward the calendar bump the index (excludes routine polls) —
+  // same predicate the rebuild uses, so incremental + rebuild counts always agree.
+  const shouldBump = countsForActivity(receipt) && (existsSync(activityFile()) || rebuildInFlight);
   const written = serialize(() => appendLine(JSON.stringify(receipt) + "\n"));
   if (shouldBump) void written.then(() => bumpActivity(receipt.ts)).catch(() => {});
   return written;
@@ -276,7 +278,10 @@ export async function readReceiptsInRange(range: { from?: string; to?: string })
 // heals). The jsonl log is the source of truth; this is only a cache.
 
 function activityFile(): string {
-  return path.join(app.getPath("userData"), "receipts-activity.json");
+  // -v2: the count rule changed (routine polls now excluded), so an existing pre-v2 index
+  // holds inflated counts. A new filename ignores it → the calendar rebuilds once from the
+  // log under the new rule. (The orphaned v1 file is tiny; a future sweep can reclaim it.)
+  return path.join(app.getPath("userData"), "receipts-activity-v2.json");
 }
 
 // True while a rebuild is enqueued-but-not-yet-persisted. Set synchronously the instant
@@ -339,7 +344,7 @@ async function computeActivityFromFiles(): Promise<ActivityMap> {
   for (const file of allLogFiles()) {
     await streamLines(file, (line) => {
       const view = parseLine(line);
-      if (view !== null && view.phase === "done") all.push(view);
+      if (view !== null && countsForActivity(view)) all.push(view);
     });
   }
   return computeActivity(all);
