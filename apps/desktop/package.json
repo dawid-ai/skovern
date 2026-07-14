@@ -11,7 +11,10 @@
     "typecheck": "tsc --noEmit",
     "test": "pnpm run test:unit && pnpm run test:e2e",
     "test:unit": "vitest run",
-    "test:e2e": "electron-vite build && playwright test"
+    "test:e2e": "electron-vite build && playwright test",
+    "package:win": "electron-vite build && electron-builder --win --dir",
+    "dist:win": "electron-vite build && electron-builder --win",
+    "test:packaging": "playwright test packaging.spec.ts"
   },
   "dependencies": {
     "@deskhand/core": "workspace:^",
@@ -32,6 +35,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.2.0",
     "electron": "^43.1.0",
+    "electron-builder": "^26.0.12",
     "electron-vite": "^5.0.0",
     "pg": "^8.13.1",
     "vite": "^7.3.6",

@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,7 +11,25 @@ import type { FetchReceipt, FetchSink, GgufSource } from "@deskhand/core";
 const state = { dir: "" };
 vi.mock("electron", () => ({ app: { getPath: () => state.dir } }));
 
-import { downloadModel, isSafeFinalUrl, modelDownloaded, modelPath, modelsDir } from "./download.js";
+// A seam to force a WRITE-stream error mid-download (simulating e.g. a disk that fills
+// after the pre-check). The wrapper is a passthrough unless `writeStreamError` is set.
+const fsControl = vi.hoisted(() => ({ writeStreamError: null as Error | null }));
+vi.mock("node:fs", async (orig) => {
+  const actual = await orig<typeof import("node:fs")>();
+  return {
+    ...actual,
+    createWriteStream: (p: string, o?: unknown) => {
+      const s = actual.createWriteStream(p, o as never);
+      if (fsControl.writeStreamError) {
+        const err = fsControl.writeStreamError;
+        queueMicrotask(() => s.emit("error", err));
+      }
+      return s;
+    },
+  };
+});
+
+import { downloadModel, ensureDiskSpace, isSafeFinalUrl, modelDownloaded, modelPath, modelsDir, sweepOrphanParts } from "./download.js";
 
 let server: Server | null = null;
 
@@ -58,6 +76,42 @@ function gguf(body: Buffer, filename = "test-model.gguf"): GgufSource {
 }
 function via(base: string): typeof fetch {
   return (() => fetch(base)) as typeof fetch;
+}
+// Forwards the request init (so the Range header reaches the fixture) to a real server.
+function viaRange(base: string): typeof fetch {
+  return ((_url, init) => fetch(base, init)) as typeof fetch;
+}
+
+// A Range-aware fixture: honors `Range: bytes=N-` with a 206 (records N), or ignores it
+// (always 200 full body) when `ignoreRange` — the "server can't resume" fallback path.
+function startRangeServer(body: Buffer, opts: { ignoreRange?: boolean } = {}): Promise<{ base: string; servedFrom: () => number | null }> {
+  let servedFrom: number | null = null;
+  return new Promise((resolve) => {
+    server = createServer((req, res) => {
+      const range = req.headers["range"];
+      const m = range ? /bytes=(\d+)-/.exec(String(range)) : null;
+      let start = 0;
+      if (m && !opts.ignoreRange) {
+        start = Number(m[1]);
+        servedFrom = start;
+        res.writeHead(206, { "content-range": `bytes ${start}-${body.length - 1}/${body.length}`, "content-type": "application/octet-stream" });
+      } else {
+        servedFrom = null; // whole body from 0
+        res.writeHead(200, { "content-type": "application/octet-stream" });
+      }
+      const slice = body.subarray(start);
+      const size = Math.max(1, Math.ceil(slice.length / 6)); // several ticks so streaming is real
+      let i = 0;
+      const writeNext = (): void => {
+        if (i >= slice.length) return void res.end();
+        res.write(slice.subarray(i, i + size));
+        i += size;
+        setImmediate(writeNext);
+      };
+      writeNext();
+    });
+    server.listen(0, "127.0.0.1", () => resolve({ base: `http://127.0.0.1:${(server!.address() as AddressInfo).port}`, servedFrom: () => servedFrom }));
+  });
 }
 
 beforeEach(() => {
@@ -175,5 +229,111 @@ describe("downloadModel", () => {
     expect(() => modelPath("sub/dir.gguf")).toThrow(/isn't allowed/i);
     // a good name resolves under the models dir
     expect(modelPath("ok.gguf")).toBe(path.join(modelsDir(), "ok.gguf"));
+  });
+});
+
+describe("download robustness (loop 029)", () => {
+  // R1 — RESUME across restarts: a pre-seeded correct-prefix `.part` resumes via Range,
+  // the server serves ONLY the missing tail, and the reassembled file passes the gate.
+  it("R1: resumes a partial download, fetching only the missing tail", async () => {
+    const body = Buffer.alloc(120 * 1024, 9); // 120 KB
+    const g = gguf(body, "resume.gguf");
+    // Pre-seed the first 40 KB as if a prior run had been interrupted.
+    mkdirSync(modelsDir(), { recursive: true });
+    const seeded = 40 * 1024;
+    writeFileSync(`${modelPath(g.filename)}.part`, body.subarray(0, seeded));
+
+    const { base, servedFrom } = await startRangeServer(body);
+    const { sink } = collectingSink();
+    const dest = await downloadModel(g, sink, undefined, viaRange(base));
+
+    expect(servedFrom()).toBe(seeded); // asked the server for bytes 40K- only
+    expect(readFileSync(dest)).toEqual(body); // reassembled file is byte-exact
+    expect(existsSync(`${modelPath(g.filename)}.part`)).toBe(false); // renamed away
+  });
+
+  // R1b — resume SAFETY: a server that ignores Range (200, not 206) forces a clean
+  // restart, and the result still passes the sha256 gate (no stale-prefix corruption).
+  it("R1b: restarts cleanly when the server ignores Range", async () => {
+    const body = Buffer.alloc(80 * 1024, 5);
+    const g = gguf(body, "norange.gguf");
+    mkdirSync(modelsDir(), { recursive: true });
+    writeFileSync(`${modelPath(g.filename)}.part`, body.subarray(0, 20 * 1024));
+
+    const { base, servedFrom } = await startRangeServer(body, { ignoreRange: true });
+    const { sink } = collectingSink();
+    const dest = await downloadModel(g, sink, undefined, viaRange(base));
+
+    expect(servedFrom()).toBeNull(); // whole body, not a range
+    expect(readFileSync(dest)).toEqual(body); // clean restart → correct bytes, gate passes
+  });
+
+  // R1c — a WRONG partial (not a prefix of the real bytes) is caught by the sha256 gate:
+  // the resumed file mismatches and is deleted, never loaded.
+  it("R1c: a corrupt partial is caught by the sha256 gate on resume", async () => {
+    const body = Buffer.alloc(60 * 1024, 3);
+    const g = gguf(body, "corrupt.gguf");
+    mkdirSync(modelsDir(), { recursive: true });
+    // Seed 20 KB of WRONG bytes (0xFF), so resume appends the tail onto a bad prefix.
+    writeFileSync(`${modelPath(g.filename)}.part`, Buffer.alloc(20 * 1024, 0xff));
+
+    const { base } = await startRangeServer(body);
+    const { sink } = collectingSink();
+    await expect(downloadModel(g, sink, undefined, viaRange(base))).rejects.toThrow(/safety check|didn't match/i);
+    expect(existsSync(modelPath(g.filename))).toBe(false); // never loaded
+    expect(existsSync(`${modelPath(g.filename)}.part`)).toBe(false); // bad bytes removed
+  });
+
+  // R2 — DISK pre-check (degraded state): when free space can't hold the model, the pull
+  // is refused BEFORE any byte leaves (fetch never called), with a florist-copy message.
+  it("R2: refuses the download when there isn't enough disk space", async () => {
+    const g = gguf(Buffer.from("x".repeat(1000)), "toobig.gguf");
+    const { sink } = collectingSink();
+    const fetchSpy = vi.fn<typeof fetch>();
+    const tinyFree = async (): Promise<number> => 10; // 10 bytes free, model needs ~1 KB + margin
+    await expect(downloadModel(g, sink, undefined, fetchSpy, tinyFree)).rejects.toThrow(/enough free space/i);
+    expect(fetchSpy).toHaveBeenCalledTimes(0); // no byte left the machine
+  });
+
+  // R2b — the disk check is permissive when it can't measure (Infinity) and strict when
+  // it can (direct unit — the exact threshold behavior).
+  it("R2b: ensureDiskSpace blocks only when the measured free space is short", async () => {
+    await expect(ensureDiskSpace(1000, async () => Number.POSITIVE_INFINITY)).resolves.toBeUndefined();
+    await expect(ensureDiskSpace(1000, async () => 10)).rejects.toThrow(/enough free space/i);
+  });
+
+  // R2c — a WRITE error mid-download (e.g. the disk fills after the pre-check) rejects
+  // CLEANLY, never surfacing as an unhandled 'error' on the writable that crashes main.
+  it("R2c: a mid-stream write error rejects cleanly instead of crashing", async () => {
+    const body = Buffer.alloc(80 * 1024, 4);
+    const base = await startServer(body, { chunks: 8 });
+    const g = gguf(body, "writefail.gguf");
+    const { sink } = collectingSink();
+    fsControl.writeStreamError = new Error("ENOSPC simulated");
+    try {
+      await expect(downloadModel(g, sink, undefined, via(base))).rejects.toThrow(/ENOSPC/);
+    } finally {
+      fsControl.writeStreamError = null;
+    }
+    expect(existsSync(modelPath(g.filename))).toBe(false); // no bad model file
+  });
+
+  // R3 — ORPHAN sweep: stale `.part`/`.part.<n>` temps are removed, but a resumable
+  // `<f>.part` for a current model, a finished `.gguf`, and a model whose NAME contains
+  // "part" are all left untouched.
+  it("R3: sweeps stale part files but keeps resumable + finished ones", async () => {
+    mkdirSync(modelsDir(), { recursive: true });
+    const write = (name: string): void => writeFileSync(path.join(modelsDir(), name), "x");
+    write("a.gguf"); // finished model → keep
+    write("a.gguf.part"); // resumable for a current model → keep
+    write("my.part.gguf"); // model whose name contains "part" → keep (not a temp)
+    write("old.gguf.part.3"); // legacy unique-name orphan → remove
+    write("gone.gguf.part"); // partial for a model no longer known → remove
+
+    const removed = await sweepOrphanParts(["a.gguf", "my.part.gguf"]);
+
+    expect(removed).toBe(2);
+    const left = readdirSync(modelsDir()).sort();
+    expect(left).toEqual(["a.gguf", "a.gguf.part", "my.part.gguf"]);
   });
 });
