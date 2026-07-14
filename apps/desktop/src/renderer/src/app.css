@@ -1232,3 +1232,43 @@ footer {
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+/* ── Loop 028: embedded-first local brain groups ─────────────────────────────── */
+.local-group {
+  margin-top: 20px;
+}
+
+.local-group > h2 {
+  margin: 0 0 2px;
+}
+
+.local-advanced {
+  margin-top: 20px;
+  border-top: 1px solid #ece3d7;
+  padding-top: 14px;
+}
+
+.local-advanced > summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--ink);
+  font-size: 15px;
+  list-style: none;
+}
+
+.local-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+.local-advanced > summary::before {
+  content: "▸ ";
+  color: var(--muted);
+}
+
+.local-advanced[open] > summary::before {
+  content: "▾ ";
+}
+
+.local-advanced > summary:hover {
+  color: var(--accent);
+}

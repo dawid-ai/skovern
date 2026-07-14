@@ -18,15 +18,16 @@ import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningSer
 // PASS/FAIL is a pure function of the diff — the real 2 GB native run is hand-validation.
 
 const FAKE_REPLY = "Hello — I'm your private brain, running right here on your computer.";
-const GGUF_FILENAME = "qwen2.5-3b-instruct-q4_k_m.gguf";
+const GGUF_FILENAME = "qwen2.5-3b-instruct-q4_k_m.gguf"; // the small embedded model
+const GGUF_FILENAME_7B = "Qwen2.5-7B-Instruct-Q4_K_M.gguf"; // the bigger embedded model (download target)
 // The bytes the fixture "download" serves; the catalog sha256 must match these.
 const MODEL_BODY = Buffer.from("FAKE-GGUF-BYTES-for-the-embedded-runtime-e2e".repeat(50));
 const MODEL_SHA256 = createHash("sha256").update(MODEL_BODY).digest("hex");
 
-// A powerful 24 GB-GPU machine (pinned → deterministic on any runner). Both the embedded
-// 3B and the Ollama-only 7B run GREAT here, so by raw fit the 7B is the "best" — but with
-// Ollama DOWN the 7B isn't gettable, so the recommendation must fall to the fetchable
-// embedded 3B (the regression this reproduces: a dead "Our pick" download button).
+// A powerful 24 GB-GPU machine (pinned → deterministic on any runner). Loop 028: the 3B
+// AND 7B are EMBEDDED (download+run here, no Ollama) and both run great, so the pick is
+// the biggest fitting EMBEDDED one (7B) with a LIVE button; a 14B Ollama-only model is a
+// great fit too but not gettable without Ollama, so it's demoted to "Advanced".
 const GPU_HARDWARE = JSON.stringify({
   ramBytes: 64 * 1024 ** 3,
   cpuCores: 16,
@@ -69,15 +70,36 @@ function startCatalog(): Promise<string> {
               },
             },
             {
-              // An Ollama-ONLY model (no gguf): a great fit on this GPU, but not gettable
-              // without Ollama — must NOT be the recommendation, and its button says so.
+              // A BIGGER embedded model (has gguf) → runs here with no Ollama, and being
+              // the biggest fitting embedded one it's the recommendation ("Our pick").
               id: "qwen2.5:7b",
               label: "Qwen2.5 7B",
               params: 7,
-              sizeBytes: Math.round(4.7 * 1024 ** 3),
+              sizeBytes: MODEL_BODY.length,
               quant: "Q4_K_M",
               creator: "Alibaba (Qwen team)",
-              homepage: "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF",
+              homepage: "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF",
+              license: "Apache 2.0 — free to use.",
+              licenseUrl: "https://www.apache.org/licenses/LICENSE-2.0",
+              tradeoff: "A big step up in smarts — runs privately right here on your GPU.",
+              gguf: {
+                url: `https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/${GGUF_FILENAME_7B}`,
+                sha256: MODEL_SHA256,
+                sizeBytes: MODEL_BODY.length,
+                filename: GGUF_FILENAME_7B,
+                contextSize: 4096,
+              },
+            },
+            {
+              // An Ollama-ONLY model (no gguf): a great fit on this GPU, but not gettable
+              // without Ollama — demoted to "Advanced", its button honestly "Needs Ollama".
+              id: "qwen2.5:14b",
+              label: "Qwen2.5 14B",
+              params: 14,
+              sizeBytes: Math.round(9 * 1024 ** 3),
+              quant: "Q4_K_M",
+              creator: "Alibaba (Qwen team)",
+              homepage: "https://huggingface.co/Qwen/Qwen2.5-14B-Instruct",
               license: "Apache 2.0 — free to use.",
               licenseUrl: "https://www.apache.org/licenses/LICENSE-2.0",
               tradeoff: "Bigger and smarter, but needs the Ollama helper.",
@@ -160,30 +182,32 @@ test("no-Ollama user downloads and runs an embedded private brain", async () => 
     await page.getByRole("button", { name: "Set up the local brain →" }).click();
     await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible();
 
-    // DEGRADED (no-Ollama, but embedded exists): the table shows even though Ollama is
-    // DOWN — and the embedded Qwen's action is a live "Get this one" (a real action,
-    // NOT a dead/disabled button, and NOT a premature "Use this one").
-    const table = page.locator("table.local-table");
-    const qwenRow = table.locator("tr.receipt-row", { hasText: "Qwen2.5 3B" });
-    await expect(qwenRow).toBeVisible({ timeout: 30_000 });
-    const getBtn = qwenRow.getByRole("button", { name: "Get this one" });
-    await expect(getBtn).toBeEnabled(); // real action available without Ollama, not a dead button
+    // EMBEDDED-FIRST (loop 028): the main "Runs right here" list holds the models that
+    // download AND run with no Ollama (3B + 7B), each a LIVE "Get this one". Even with
+    // Ollama DOWN, the pick is the biggest FITTING embedded model (7B) — a real button.
+    const hereTable = page.locator(".local-group table.local-table");
+    const row7b = hereTable.locator("tr.receipt-row", { hasText: "Qwen2.5 7B" });
+    await expect(row7b).toBeVisible({ timeout: 30_000 });
+    await expect(hereTable.locator("tr.receipt-row", { hasText: "Qwen2.5 3B" })).toBeVisible();
+    await expect(row7b.locator(".local-status.status-pick")).toHaveText("Our pick"); // biggest embedded
+    const getBtn = row7b.getByRole("button", { name: "Get this one" });
+    await expect(getBtn).toBeEnabled(); // real action without Ollama, not a dead button
 
-    // REGRESSION (fetchable recommendation): even though the Ollama-only 7B fits this GPU
-    // better, it isn't gettable without Ollama — so "Our pick" is the fetchable embedded
-    // 3B (a LIVE button), never a dead one. The 7B is shown honestly as "Needs Ollama".
-    await expect(qwenRow.locator(".local-status.status-pick")).toHaveText("Our pick");
-    const bigRow = table.locator("tr.receipt-row", { hasText: "Qwen2.5 7B" });
-    await expect(bigRow.locator(".local-status.status-pick")).toHaveCount(0); // NOT the pick
-    await expect(bigRow.getByRole("button", { name: "Needs Ollama" })).toBeDisabled();
+    // The Ollama-only 14B is NOT in the main list — it's demoted behind a collapsed
+    // "Advanced — needs Ollama" section; expanding shows the honest disabled button.
+    await expect(hereTable.locator("tr.receipt-row", { hasText: "Qwen2.5 14B" })).toHaveCount(0);
+    const advanced = page.locator("details.local-advanced");
+    await expect(advanced.locator("summary")).toContainText("Advanced");
+    await advanced.locator("summary").click(); // expand it
+    const row14b = advanced.locator("tr.receipt-row", { hasText: "Qwen2.5 14B" });
+    await expect(row14b).toBeVisible();
+    await expect(row14b.getByRole("button", { name: "Needs Ollama" })).toBeDisabled();
 
-    // GET THIS ONE → our streaming + sha256-gated downloader (fixture bytes) → then it
-    // becomes the active brain in one click.
+    // GET THIS ONE (the 7B, our pick) → streaming + sha256-gated downloader (fixture bytes)
+    // → becomes the active brain in one click. Proves a BIGGER embedded model downloads.
     await getBtn.click();
-    await expect(page.getByText("Local: qwen2.5:3b")).toBeVisible({ timeout: 30_000 });
-
-    // the verified model file is on disk
-    expect(existsSync(path.join(userDataDir, "models", GGUF_FILENAME))).toBe(true);
+    await expect(page.getByText("Local: qwen2.5:7b")).toBeVisible({ timeout: 30_000 });
+    expect(existsSync(path.join(userDataDir, "models", GGUF_FILENAME_7B))).toBe(true);
 
     // run a skill on the embedded brain (faked child) → the private reply shows
     await page.getByRole("button", { name: "← Back to Settings" }).click();
@@ -201,7 +225,7 @@ test("no-Ollama user downloads and runs an embedded private brain", async () => 
     // on-disk proof: the download is a fetch receipt (huggingface host, direction in) and
     // the generate is a local:true on-machine call — the model reply never touched the log.
     const log = readFileSync(path.join(userDataDir, "receipts.jsonl"), "utf8");
-    expect(log).toContain(`"task":"Downloading ${GGUF_FILENAME}"`);
+    expect(log).toContain(`"task":"Downloading ${GGUF_FILENAME_7B}"`);
     expect(log).toContain('"host":"huggingface.co"');
     expect(log).toContain('"direction":"in"');
     expect(log).toContain('"provider":"local"');
