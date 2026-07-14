@@ -16,6 +16,13 @@ directories:
 files:
   - out/**
   - package.json
+  # electron-vite already inlines @deskhand/core + plugin-sdk into out/main, so their raw
+  # TS source (their package.json `main` points at ./src) would ride along redundantly —
+  # first-party logic disclosure + bloat in a shipped installer. Drop it, plus test files
+  # and dependency source maps (reverse-engineering aids, all upstream-public anyway).
+  - "!**/@deskhand/*/src/**"
+  - "!**/*.test.*"
+  - "!**/*.map"
 
 # node-llama-cpp loads a NATIVE .node addon (in the per-platform @node-llama-cpp/*
 # sub-package). A native binary can't be dlopen'd from inside app.asar, so it must be
