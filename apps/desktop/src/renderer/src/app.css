@@ -183,6 +183,36 @@ button.link {
   text-decoration: underline;
 }
 
+/* A prominent "← Back" control for sub-pages. A bordered ink pill (not a faint gray
+   link) so it's obvious you can get back — distinct from the orange primary CTA, fills
+   on hover. Sits at the top-left of a sub-page's header. */
+button.page-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 16px;
+  padding: 8px 15px;
+  border-radius: 10px;
+  border: 1.5px solid var(--ink);
+  background: none;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+button.page-back:hover {
+  background: var(--ink);
+  color: #fff;
+}
+
+button.page-back:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* Processing indicator — shown whenever a brain/skill is thinking. */
 .spinner {
   display: inline-block;

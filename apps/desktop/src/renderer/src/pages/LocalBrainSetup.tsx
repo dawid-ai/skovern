@@ -190,7 +190,7 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
   return (
     <section className="page">
       <header className="page-head">
-        <button className="link" onClick={onBack}>
+        <button className="page-back" onClick={onBack}>
           ← Back to Settings
         </button>
         <h1>On this computer</h1>

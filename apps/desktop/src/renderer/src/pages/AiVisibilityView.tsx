@@ -73,7 +73,7 @@ export function AiVisibilityView({ onBack }: { onBack: () => void }) {
   return (
     <section className="page page-narrow">
       <header className="page-head">
-        <button className="link" onClick={onBack}>
+        <button className="page-back" onClick={onBack}>
           ← Back to Skills
         </button>
         <h1>AI Visibility</h1>
