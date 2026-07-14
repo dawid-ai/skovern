@@ -224,3 +224,26 @@ describe("validateCatalog — gguf block (embedded runtime, untrusted input)", (
     expect(validateCatalog({ models: [modelWith({ ...goodGguf, contextSize: -1 })] })).toBeNull();
   });
 });
+
+// C-SNAP — the BUNDLED snapshot (real shipped catalog data) must yield the embedded
+// models we promise, through the real validator. Guards a bad catalog edit (a filename
+// the validator drops, a split-file name, a truncated hash) from silently shrinking the
+// no-Ollama model set. Loop 028 added 7B + 14B embedded.
+describe("bundled snapshot — real embedded catalog (028)", () => {
+  it("validates and exposes exactly the 3B/7B/14B embedded models with safe filenames", () => {
+    const models = snapshotCatalog();
+    const embedded = models.filter((m) => m.gguf);
+    expect(embedded.map((m) => m.id).sort()).toEqual(["qwen2.5:14b", "qwen2.5:3b", "qwen2.5:7b"]);
+    for (const m of embedded) {
+      expect(m.gguf!.filename).toMatch(/^[A-Za-z0-9][A-Za-z0-9._-]*\.gguf$/); // single safe file, no split/traversal
+      expect(m.gguf!.sha256).toMatch(/^[a-f0-9]{64}$/); // full sha256
+      expect(m.gguf!.url).toMatch(/^https:\/\/huggingface\.co\//); // https HF source
+      expect(m.gguf!.sizeBytes).toBeGreaterThan(0);
+    }
+    // The two new ones carry the verified hashes (a truncation/typo trips this).
+    const b7 = embedded.find((m) => m.id === "qwen2.5:7b")!;
+    const b14 = embedded.find((m) => m.id === "qwen2.5:14b")!;
+    expect(b7.gguf!.sha256).toBe("65b8fcd92af6b4fefa935c625d1ac27ea29dcb6ee14589c55a8f115ceaaa1423");
+    expect(b14.gguf!.sha256).toBe("e47ad95dad6ff848b431053b375adb5d39321290ea2c638682577dafca87c008");
+  });
+});

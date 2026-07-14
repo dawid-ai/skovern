@@ -72,13 +72,39 @@
       "id": "qwen2.5:7b",
       "label": "Qwen2.5 7B",
       "params": 7,
-      "sizeBytes": 4683000000,
+      "sizeBytes": 4683074240,
       "quant": "Q4_K_M",
       "creator": "Alibaba (Qwen team)",
       "homepage": "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct",
       "license": "Apache 2.0 — free to use, even for your business.",
       "licenseUrl": "https://www.apache.org/licenses/LICENSE-2.0",
-      "tradeoff": "The smartest of these, but it needs more memory and a graphics card to feel quick. Best on a stronger computer."
+      "tradeoff": "A big step up in smarts — great on a computer with a graphics card. Runs privately right here, no extra setup.",
+      "gguf": {
+        "url": "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+        "sha256": "65b8fcd92af6b4fefa935c625d1ac27ea29dcb6ee14589c55a8f115ceaaa1423",
+        "sizeBytes": 4683074240,
+        "filename": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+        "contextSize": 4096
+      }
+    },
+    {
+      "id": "qwen2.5:14b",
+      "label": "Qwen2.5 14B",
+      "params": 14,
+      "sizeBytes": 8988110976,
+      "quant": "Q4_K_M",
+      "creator": "Alibaba (Qwen team)",
+      "homepage": "https://huggingface.co/Qwen/Qwen2.5-14B-Instruct",
+      "license": "Apache 2.0 — free to use, even for your business.",
+      "licenseUrl": "https://www.apache.org/licenses/LICENSE-2.0",
+      "tradeoff": "The most capable private brain here — best on a strong graphics card with plenty of memory. A bigger download, but genuinely smart.",
+      "gguf": {
+        "url": "https://huggingface.co/bartowski/Qwen2.5-14B-Instruct-GGUF/resolve/main/Qwen2.5-14B-Instruct-Q4_K_M.gguf",
+        "sha256": "e47ad95dad6ff848b431053b375adb5d39321290ea2c638682577dafca87c008",
+        "sizeBytes": 8988110976,
+        "filename": "Qwen2.5-14B-Instruct-Q4_K_M.gguf",
+        "contextSize": 4096
+      }
     }
   ]
 }

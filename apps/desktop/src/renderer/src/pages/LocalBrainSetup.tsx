@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { LocalModelView, LocalStatusView, PullProgressView } from "../../../shared/local.js";
+import { partitionModels } from "./local-partition.js";
 
 // "On this computer — free & private": the local-brain setup view, reached from
 // Settings (its own place, per the IA rule). Full-width: two callout cards up top —
@@ -85,6 +86,9 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
   }
 
   const all = models ?? [];
+  // Embedded-first: what's actionable now (embedded, or Ollama models when Ollama is up)
+  // vs what needs Ollama that isn't running (demoted to a collapsed "Advanced" section).
+  const { here, advanced } = partitionModels(all, status?.ollamaReady ?? false);
   const active = savedId ? all.find((m) => m.id === savedId) ?? null : null;
   const recommended = all.find((m) => m.recommended) ?? null;
   // Embedded models run WITHOUT Ollama, so the actionable UI shows whenever Ollama is
@@ -189,6 +193,49 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
     return { text: "Not downloaded", cls: "status-none" };
   }
 
+  // One model table — shared by the main "runs here" list and the Advanced (Ollama) list.
+  function modelTable(rows: LocalModelView[]) {
+    return (
+      <div className="receipt-scroll">
+        <table className="receipt-table local-table">
+          <thead>
+            <tr>
+              <th>Model</th>
+              <th>Fits your computer</th>
+              <th>Size</th>
+              <th>Status</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((m) => {
+              const st = statusOf(m);
+              return (
+                <tr key={m.id} className="receipt-row">
+                  <td className="receipt-what">
+                    <span className="receipt-who">{m.label}</span>
+                    {transparency(m, true)}
+                  </td>
+                  <td>
+                    <span className="local-fit">
+                      <span className={`fit-dot fit-${m.tier}`} aria-hidden="true" />
+                      {TIER_WORD[m.tier] ?? ""}
+                    </span>
+                  </td>
+                  <td>{m.size ?? "—"}</td>
+                  <td>
+                    <span className={`local-status ${st.cls}`}>{st.text}</span>
+                  </td>
+                  <td className="local-action-cell">{action(m)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
   return (
     <section className="page">
       <header className="page-head">
@@ -254,45 +301,27 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
                 </p>
               )}
 
-              {/* Every model in one table — nothing hidden. */}
-              {all.length > 0 && (
-                <div className="receipt-scroll">
-                  <table className="receipt-table local-table">
-                    <thead>
-                      <tr>
-                        <th>Model</th>
-                        <th>Fits your computer</th>
-                        <th>Size</th>
-                        <th>Status</th>
-                        <th>Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {all.map((m) => {
-                        const st = statusOf(m);
-                        return (
-                          <tr key={m.id} className="receipt-row">
-                            <td className="receipt-what">
-                              <span className="receipt-who">{m.label}</span>
-                              {transparency(m, true)}
-                            </td>
-                            <td>
-                              <span className="local-fit">
-                                <span className={`fit-dot fit-${m.tier}`} aria-hidden="true" />
-                                {TIER_WORD[m.tier] ?? ""}
-                              </span>
-                            </td>
-                            <td>{m.size ?? "—"}</td>
-                            <td>
-                              <span className={`local-status ${st.cls}`}>{st.text}</span>
-                            </td>
-                            <td className="local-action-cell">{action(m)}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+              {/* Embedded-first: models that download AND run right here (no Ollama) up
+                  top; anything that needs the Ollama helper tucked into "Advanced". */}
+              {here.length > 0 && (
+                <div className="local-group">
+                  <h2>Runs on this computer</h2>
+                  <p className="hint">
+                    Pick one and Deskhand downloads it and runs it right here. Nothing you type ever leaves.
+                  </p>
+                  {modelTable(here)}
                 </div>
+              )}
+
+              {advanced.length > 0 && (
+                <details className="local-advanced">
+                  <summary>Advanced — models that need Ollama ({advanced.length})</summary>
+                  <p className="hint">
+                    These run through Ollama, a separate free helper. If it&apos;s not installed and running, they
+                    can&apos;t download here — the ones above need nothing extra.
+                  </p>
+                  {modelTable(advanced)}
+                </details>
               )}
             </>
           )}
