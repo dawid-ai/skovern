@@ -124,14 +124,18 @@ export function fileFetchSink(): FetchSink {
 // index bump is best-effort and its failure swallowed — a UX cache must never deny a
 // receipt its egress record.
 //
-// We schedule a bump ONLY when the index file already exists at append time. If it's
-// missing (fresh install, or first open after this loop shipped), we do NOT bump: the
-// next `readActivityIndex` rebuilds from the whole log and counts this now-durable line
-// exactly once. This closes the append→rebuild→bump double-count — a rebuild only ever
-// fires while the index is missing, and in that window no bump is scheduled, so a bump
-// can never re-add a line a concurrent rebuild also counted.
+// We schedule a bump when the index file already exists at append time OR a rebuild is
+// currently in flight. Reasoning (counts every `done` line EXACTLY once across the
+// bump/rebuild boundary — both writes share the single-writer queue):
+//   - Index exists, no rebuild: normal path — the bump increments the valid index.
+//   - Index missing, no rebuild in flight: we DON'T bump; the next `readActivityIndex`
+//     rebuilds from the whole log and counts this now-durable line. (No bump, no double.)
+//   - Rebuild in flight: the flag is set synchronously the instant the rebuild is
+//     enqueued, so any append that sees it enqueues its line AFTER the rebuild job — the
+//     rebuild (which streams the log while holding the queue) can't see that line, so we
+//     MUST bump it, and we do. (Closes the "appended during the first rebuild" under-count.)
 function appendAndIndex(receipt: ReceiptView): Promise<void> {
-  const shouldBump = receipt.phase === "done" && existsSync(activityFile());
+  const shouldBump = receipt.phase === "done" && (existsSync(activityFile()) || rebuildInFlight);
   const written = serialize(() => appendLine(JSON.stringify(receipt) + "\n"));
   if (shouldBump) void written.then(() => bumpActivity(receipt.ts)).catch(() => {});
   return written;
@@ -275,6 +279,12 @@ function activityFile(): string {
   return path.join(app.getPath("userData"), "receipts-activity.json");
 }
 
+// True while a rebuild is enqueued-but-not-yet-persisted. Set synchronously the instant
+// the rebuild is enqueued (see readActivityIndex), so an append that observes it is
+// guaranteed to enqueue its line AFTER the rebuild job — letting appendAndIndex know it
+// must bump that line (the rebuild won't have seen it). Module-level: single-writer main.
+let rebuildInFlight = false;
+
 function isActivityMap(o: unknown): o is ActivityMap {
   if (o === null || typeof o !== "object" || Array.isArray(o)) return false;
   return Object.values(o as Record<string, unknown>).every((v) => typeof v === "number" && Number.isFinite(v));
@@ -342,6 +352,9 @@ async function computeActivityFromFiles(): Promise<ActivityMap> {
 export async function readActivityIndex(): Promise<ActivityMap> {
   const cached = readActivityFileStrict();
   if (cached !== null) return cached;
+  // Flag set BEFORE enqueuing (synchronously, no await in between) so appends that race
+  // the rebuild bump their own lines (appendAndIndex). Cleared once the job has persisted.
+  rebuildInFlight = true;
   try {
     return await serialize(async () => {
       const again = readActivityFileStrict(); // a concurrent write may have just created it
@@ -356,5 +369,7 @@ export async function readActivityIndex(): Promise<ActivityMap> {
     });
   } catch {
     return {};
+  } finally {
+    rebuildInFlight = false;
   }
 }

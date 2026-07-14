@@ -21,6 +21,9 @@ const EMPTY_DAY = "2026-07-04"; // 0 receipts — an empty square
 const OLD_DAY = "2026-06-25"; // 6 receipts — older, lands on page 2
 const RANGE_FROM = "2026-06-20";
 const RANGE_TO = "2026-07-10"; // spans all seeded days, excludes the real-now sign-in
+// A receipt seeded in the OLDEST archive file — beyond the recent (last-2-files) window,
+// so it's reachable ONLY via the full-history ranged read. Proves finding #1's fix e2e.
+const ARCHIVED_DAY = "2026-05-10";
 
 let container: StartedPostgreSqlContainer;
 let pool: pg.Pool;
@@ -89,7 +92,31 @@ test("the Receipts timeline: calendar, date filter, pagination, and CSV export",
   test.setTimeout(180_000);
   const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-timeline-"));
   const exportPath = path.join(userDataDir, "export.csv");
-  // Seed the log BEFORE launch so the page reads it on open.
+  // Seed the log BEFORE launch so the page reads it on open. Two dated ARCHIVE files +
+  // the live file: the oldest archive is beyond the recent (last-2-files) window, so its
+  // row is reachable only through the full-history ranged read.
+  const archivedRow = JSON.stringify({
+    ts: `${ARCHIVED_DAY}T09:00:00.000Z`,
+    provider: "openrouter",
+    model: "m",
+    task: "archived-old",
+    bytesSent: 1,
+    bytesReceived: 2,
+    ok: true,
+    phase: "done",
+  });
+  const midRow = JSON.stringify({
+    ts: "2026-06-01T09:00:00.000Z", // before RANGE_FROM, so it stays out of the pagination range
+    provider: "openrouter",
+    model: "m",
+    task: "archived-mid",
+    bytesSent: 1,
+    bytesReceived: 2,
+    ok: true,
+    phase: "done",
+  });
+  writeFileSync(path.join(userDataDir, "receipts.20260510T000000Z.jsonl"), archivedRow + "\n"); // oldest archive
+  writeFileSync(path.join(userDataDir, "receipts.20260601T000000Z.jsonl"), midRow + "\n"); // middle archive (in recent window)
   writeFileSync(path.join(userDataDir, "receipts.jsonl"), seedLines());
 
   const app = await electron.launch({
@@ -136,6 +163,12 @@ test("the Receipts timeline: calendar, date filter, pagination, and CSV export",
     await expect(page.getByText("Page 2 of 2")).toBeVisible();
     await expect(page.locator(".receipt-why", { hasText: "old-0" })).toBeVisible();
     await expect(page.locator(".receipt-why", { hasText: "light-0" })).toHaveCount(0);
+
+    // 3b — Full-history reach: a range over the OLDEST archive (beyond the recent window)
+    // surfaces its row in the real table — the calendar's history is actually reachable.
+    await page.getByLabel("From").fill("2026-05-01");
+    await page.getByLabel("To").fill("2026-05-31");
+    await expect(page.locator(".receipt-why", { hasText: "archived-old" })).toBeVisible();
 
     // 2b — A range with no receipts shows the empty state, and the calendar still renders.
     await page.getByLabel("From").fill("2026-01-01");

@@ -144,8 +144,11 @@ corrupt/oversized line → skipped, calendar degrades to empty rather than throw
 
 - **Add** `shared/receipt-calendar.ts` (counts+intensity), `shared/receipt-filter.ts`
   (range+paginate), `csv.ts` (main), `receipted-fetch.ts` (main — the fetch wrapper split out of
-  `receipts.ts` to keep it under the ~300-line smell threshold; behaviour-preserving, re-exported
-  from `receipts.ts` so importers are unchanged). NB the two pure modules live in `shared/` (not
+  `receipts.ts` as a distinct concern; behaviour-preserving, re-exported from `receipts.ts` so
+  importers are unchanged). `receipts.ts` is still ~360 lines after the split — over the ~300 smell
+  line, but it's one cohesive concern (the on-disk log + its derived activity index, sharing one
+  single-writer queue), so further splitting would spread that queue across files for no real gain.
+  NB the two pure modules live in `shared/` (not
   `renderer/pages/` as the contract wrote) because main's index-rebuild + ranged read import them too.
 - **Change** `receipts.ts` (archive-not-delete rotation + all-files reader + ranged read + per-line
   cap + durable index), `index.ts` (`receipts:list(range?)`, `receipts:activity`,
