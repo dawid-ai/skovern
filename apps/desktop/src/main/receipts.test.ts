@@ -19,7 +19,7 @@ function receiptsPath(): string {
 }
 
 function activityPath(): string {
-  return path.join(state.dir, "receipts-activity-v2.json"); // -v2: routine polls excluded
+  return path.join(state.dir, "receipts-activity-v3.json"); // -v3: routine excluded by flag OR label
 }
 
 // Loop 027: rotation renames the live log to a UNIQUE dated archive that is NEVER

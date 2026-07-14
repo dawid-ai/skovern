@@ -11,16 +11,28 @@ export function dayKey(ts: string): string | null {
   return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
 }
 
+// The task labels the app tags `routine:true` for its background plumbing: the 5-second
+// unread-message + news polls and the catalog fetch (all no-business-data housekeeping,
+// see index.ts / catalog.ts). We match on the label AS WELL AS the flag because the log
+// holds HISTORICAL receipts written before the `routine` flag existed — flag-only filtering
+// would leave thousands of old polls counted. Keep this in sync with the `routine:true`
+// call sites; the flag is authoritative for new receipts, the labels rescue legacy ones.
+const ROUTINE_TASKS = new Set(["Deskhand: messages", "Deskhand: news", "Deskhand: model list"]);
+
+// Is this a routine background poll (excluded from the calendar)? True if flagged
+// `routine`, OR — for pre-flag legacy receipts — if its task is a known routine label.
+function isRoutinePoll(r: ReceiptView): boolean {
+  if ("routine" in r && r.routine === true) return true;
+  return ROUTINE_TASKS.has(r.task);
+}
+
 // Does a receipt count toward the activity calendar? Only a COMPLETED ("done") call
-// (so a "sent"+"done" pair isn't double-counted) that ISN'T a routine background poll.
-// The 5-second unread-message and news polls are `routine:true` (loop 023) — counting
-// them would drown the heatmap in thousands of no-business-data checks a day, hiding the
-// real egress. The table already de-emphasizes routine polls into a quiet summary; the
-// calendar excludes them the same way. `routine` lives only on FetchReceipt, so `"routine"
-// in r` narrows to it (a model receipt is never routine).
+// (so a "sent"+"done" pair isn't double-counted) that ISN'T a routine background poll —
+// counting the every-5s polls would drown the heatmap in housekeeping and hide the real
+// egress (model calls, downloads, publishes, messages you actually send). The table
+// de-emphasizes routine polls into a quiet summary; the calendar excludes them the same way.
 export function countsForActivity(r: ReceiptView): boolean {
-  if (r.phase !== "done") return false;
-  return !("routine" in r && r.routine === true);
+  return r.phase === "done" && !isRoutinePoll(r);
 }
 
 // Tally receipts into a day→count map, counting only calls that pass countsForActivity.

@@ -278,10 +278,11 @@ export async function readReceiptsInRange(range: { from?: string; to?: string })
 // heals). The jsonl log is the source of truth; this is only a cache.
 
 function activityFile(): string {
-  // -v2: the count rule changed (routine polls now excluded), so an existing pre-v2 index
-  // holds inflated counts. A new filename ignores it → the calendar rebuilds once from the
-  // log under the new rule. (The orphaned v1 file is tiny; a future sweep can reclaim it.)
-  return path.join(app.getPath("userData"), "receipts-activity-v2.json");
+  // -v3: the count rule changed again (routine now caught by LABEL too, not just the flag,
+  // so pre-flag legacy polls are excluded). A new filename ignores any older index →
+  // the calendar rebuilds once from the log under the current rule. (Orphaned older index
+  // files are tiny; a future sweep can reclaim them.)
+  return path.join(app.getPath("userData"), "receipts-activity-v3.json");
 }
 
 // True while a rebuild is enqueued-but-not-yet-persisted. Set synchronously the instant
