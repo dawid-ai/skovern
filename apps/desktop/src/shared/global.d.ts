@@ -4,7 +4,7 @@ import type { DmSendResult, DmThreadView, NewsPostView, PublishResultView, Publi
 import type { BrainStatusView, SaveBrainInput, SaveBrainResult, TestBrainResult } from "./brain.js";
 import type { LocalActionResult, LocalModelsView, LocalStatusView, PullProgressView } from "./local.js";
 import type { RunSkillResult, SandboxCheckResult, SkillView } from "./plugin.js";
-import type { ReceiptView } from "./receipts.js";
+import type { ActivitySummary, ReceiptView } from "./receipts.js";
 
 declare global {
   interface Window {
@@ -49,6 +49,8 @@ declare global {
       };
       receipts: {
         list(): Promise<ReceiptView[]>;
+        activity(): Promise<ActivitySummary>;
+        exportCsv(rows: ReceiptView[]): Promise<string | null>;
       };
     };
   }

@@ -1088,3 +1088,147 @@ footer {
   min-width: 150px;
   margin-top: 0;
 }
+
+/* ── Loop 027: activity calendar, date filter, pagination, export ─────────────── */
+.cal {
+  margin: 8px 0 20px;
+}
+
+.cal-head h2 {
+  margin: 0 0 2px;
+}
+
+.cal-scroll {
+  overflow-x: auto;
+  padding: 6px 0 2px;
+}
+
+/* Week columns of 7 day-squares, GitHub-style. */
+.cal-grid {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.cal-col {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.cal-day {
+  width: 13px;
+  height: 13px;
+  border-radius: 3px;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  background: #efe7db; /* cal-0: an empty day */
+}
+
+.cal-day:hover {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Warm accent ramp: paler → deeper as the day gets busier. */
+.cal-1 { background: #f6d9bd; }
+.cal-2 { background: #f0b483; }
+.cal-3 { background: #ea9350; }
+.cal-4 { background: var(--accent); }
+
+.cal-future {
+  background: transparent;
+  cursor: default;
+}
+
+.cal-future:hover {
+  outline: none;
+}
+
+/* Filter + export row above the table. */
+.receipt-controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.receipt-controls label {
+  font-size: 13px;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.receipt-controls input[type="date"] {
+  font-family: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+  border: 1px solid #e3d8c8;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+}
+
+.receipt-controls-spacer {
+  flex: 1 1 auto;
+}
+
+.receipt-controls .primary {
+  padding: 9px 14px;
+  font-size: 13px;
+}
+
+.link-btn {
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+
+.receipt-saved {
+  margin-top: -4px;
+  color: #3f8a4f;
+}
+
+/* The selection checkbox column. */
+.receipt-pick {
+  width: 34px;
+  text-align: center;
+}
+
+.receipt-pick input {
+  cursor: pointer;
+}
+
+/* Pager under the table. */
+.receipt-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.receipt-pager button {
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 12px;
+  border: 1px solid #e3d8c8;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.receipt-pager button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

@@ -1,10 +1,14 @@
 import { app } from "electron";
-import { createReadStream, existsSync, renameSync, statSync, unlinkSync } from "node:fs";
+import { createReadStream, existsSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { open } from "node:fs/promises";
-import { createInterface } from "node:readline";
 import path from "node:path";
 import type { FetchReceipt, FetchSink, Receipt, ReceiptSink } from "@deskhand/core";
-import type { ReceiptView } from "../shared/receipts.js";
+import type { ActivityMap, ReceiptView } from "../shared/receipts.js";
+import { computeActivity, dayKey } from "../shared/receipt-calendar.js";
+
+// The egress-fetch wrapper lives in its own module now (concern split); re-exported here
+// so existing `from "./receipts.js"` importers are unchanged.
+export { receiptedFetch } from "./receipted-fetch.js";
 
 // The "what left your machine" log, on disk. One JSON object per line so the panel
 // can tail it. Every append (model + fetch) runs through one single-writer queue
@@ -17,29 +21,56 @@ export function receiptsFile(): string {
   return path.join(app.getPath("userData"), "receipts.jsonl");
 }
 
-// The single rotated log. One `.1` is enough: ~2 MB holds thousands of receipts,
-// far more than the panel's 500, so aging out the oldest costs no visible history.
-const MAX_BYTES = 2 * 1024 * 1024; // ~2 MB before the current log rotates to .1
+// The live log rotates at ~2 MB. Loop 027: full retention — on rotation the live file
+// is renamed to a UNIQUE dated archive and KEPT forever (never deleted), so the "what
+// leaves your machine" log is the user's complete history, not a rolling window.
+// Receipts are tiny metadata lines (~250 B), so this is a few MB/year.
+// ponytail: no retention cap — add a "keep last N years" sweep only if disk is ever
+// noticed; keeping full history IS the transparency promise, and CSV export can offload.
+const MAX_BYTES = 2 * 1024 * 1024;
 
-function rotatedFile(): string {
-  return receiptsFile() + ".1";
+// A unique archive path: `receipts.<basic-ISO>.jsonl` (e.g. receipts.20260714T131502Z
+// .jsonl). Unique → the rename has no pre-existing target, so it's atomic on BOTH
+// Windows and POSIX (unlike the old `.1`, which needed an unlink-first on Windows).
+// The name sorts chronologically. A same-second collision (rotation twice in one
+// second — impossible in practice: a fresh live file is far from the cap) gets a
+// numeric suffix so we still never clobber history.
+function archivePath(): string {
+  const dir = app.getPath("userData");
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+  let name = `receipts.${stamp}.jsonl`;
+  for (let n = 1; existsSync(path.join(dir, name)); n++) name = `receipts.${stamp}.${n}.jsonl`;
+  return path.join(dir, name);
 }
 
-// Bound the log on disk: when the current file reaches the cap, rename it to `.1`
-// (replacing any prior `.1`) so on-disk usage stays ~2×cap. Renames are atomic and
-// never truncate the live file mid-write. Called BEFORE every append, and NOT
-// wrapped in a try/catch: if it throws, the append fails closed — same as an append
-// failure today, so no byte leaves the machine unrecorded.
+// Bound the LIVE file on disk: when it reaches the cap, rename it to a dated archive
+// and start a fresh live file. Full retention → the archive is never deleted. Called
+// BEFORE every append inside the write lock, and NOT wrapped in try/catch: if it throws
+// the append fails closed — no byte leaves the machine unrecorded.
 function rotateIfNeeded(): void {
   const file = receiptsFile();
   if (!existsSync(file)) return; // nothing written yet
   if (statSync(file).size < MAX_BYTES) return;
-  const rotated = rotatedFile();
-  // Windows renameSync throws if the target already exists (EEXIST/EPERM); POSIX
-  // would overwrite. Clear any prior `.1` first so a single rotated file is kept
-  // uniformly on both platforms.
-  if (existsSync(rotated)) unlinkSync(rotated);
-  renameSync(file, rotated);
+  renameSync(file, archivePath()); // unique target → atomic on win+posix, history preserved
+}
+
+// Every receipt log file, OLDEST→NEWEST: a legacy pre-027 `.1` (if an install had one)
+// first, then the dated archives in chronological (name) order, then the live file last.
+// Used by the calendar's index rebuild (needs ALL history) and, for the panel, only the
+// tail two (see readReceipts).
+function allLogFiles(): string[] {
+  const dir = app.getPath("userData");
+  let entries: string[] = [];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    entries = [];
+  }
+  const legacy = entries.filter((f) => f === "receipts.jsonl.1"); // pre-027 rolled log, if any
+  const archives = entries
+    .filter((f) => f.startsWith("receipts.") && f.endsWith(".jsonl") && f !== "receipts.jsonl")
+    .sort(); // basic-ISO names sort chronologically, oldest first
+  return [...legacy, ...archives, "receipts.jsonl"].map((f) => path.join(dir, f));
 }
 
 // Single-writer queue: model AND fetch receipts share ONE serialized append chain, so
@@ -76,9 +107,7 @@ export function fileReceiptSink(): ReceiptSink {
   return {
     // Returns a Promise (ReceiptSink.append is `void | Promise<void>`); the router
     // already awaits it, so the sent-before-egress ordering is unchanged.
-    append(receipt: Receipt): Promise<void> {
-      return serialize(() => appendLine(JSON.stringify(receipt) + "\n"));
-    },
+    append: (receipt: Receipt): Promise<void> => appendAndIndex(receipt),
   };
 }
 
@@ -86,16 +115,29 @@ export function fileReceiptSink(): ReceiptSink {
 // durable single-writer path: the broker records the "sent" line before any byte leaves.
 export function fileFetchSink(): FetchSink {
   return {
-    append(receipt: FetchReceipt): Promise<void> {
-      return serialize(() => appendLine(JSON.stringify(receipt) + "\n"));
-    },
+    append: (receipt: FetchReceipt): Promise<void> => appendAndIndex(receipt),
   };
 }
 
-// How many receipts the panel ever loads. The file grows forever (rotation is a
-// deferred ledger item), so the reader is bounded: it streams line-by-line and
-// keeps only the newest N in memory — a huge log never loads whole.
+// Append a receipt line (fail-closed egress record) and, for a COMPLETED call, bump the
+// durable daily-activity index afterwards. The caller awaits only the line write; the
+// index bump is best-effort and its failure swallowed — a UX cache must never deny a
+// receipt its egress record. The bump runs after the line is durable so an index
+// rebuild (which reads the log) stays consistent.
+function appendAndIndex(receipt: ReceiptView): Promise<void> {
+  const written = serialize(() => appendLine(JSON.stringify(receipt) + "\n"));
+  if (receipt.phase === "done") void written.then(() => bumpActivity(receipt.ts)).catch(() => {});
+  return written;
+}
+
+// How many receipts the panel ever loads at once — a bounded window, newest-first.
 const MAX_RECEIPTS = 500;
+
+// A hard per-line ceiling for the reader. A receipt line is ~250 B; anything past this
+// is corrupt or hostile, so the streaming reader DROPS it without ever buffering the
+// whole line in memory (closes the `receipts-reader-line-bytes` ledger item now that
+// the reader can span archived history). 64 KB leaves generous headroom over a real line.
+const MAX_LINE_BYTES = 64 * 1024;
 
 // Turn one raw log line into a view, or null if it's not a well-formed receipt.
 // A crash mid-append (or the known unlocked-append race) can leave a half-written
@@ -121,120 +163,152 @@ function parseLine(line: string): ReceiptView | null {
   return null;
 }
 
-// Stream one log file's lines into the shared ring, keeping only the newest N.
-// Missing file → no-op (the `.1` may not exist, or the current log not yet written).
-async function streamInto(file: string, ring: ReceiptView[]): Promise<void> {
+// Stream one log file, invoking `onLine` per newline-terminated line. Reads in chunks
+// and splits manually (not `readline`) so an over-long line can be DROPPED without ever
+// holding it whole in memory: once the pending buffer passes MAX_LINE_BYTES with no
+// newline, we discard it and resync at the next newline. Missing file → no-op.
+async function streamLines(file: string, onLine: (line: string) => void): Promise<void> {
   if (!existsSync(file)) return;
-  const rl = createInterface({ input: createReadStream(file, "utf8"), crlfDelay: Infinity });
+  const stream = createReadStream(file, { encoding: "utf8", highWaterMark: 64 * 1024 });
+  let buf = "";
+  let dropping = false; // discarding an over-cap line until its terminating newline
   try {
-    for await (const line of rl) {
-      const view = parseLine(line);
-      if (view === null) continue;
-      ring.push(view);
-      // Keep memory bounded regardless of file size: hold only the newest N.
-      if (ring.length > MAX_RECEIPTS) ring.shift();
+    for await (const chunk of stream) {
+      buf += chunk;
+      let nl: number;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        if (dropping) {
+          dropping = false; // this segment was the tail of a dropped over-cap line
+          continue;
+        }
+        onLine(line);
+      }
+      if (buf.length > MAX_LINE_BYTES) {
+        buf = ""; // over-cap partial line: drop it, keep memory bounded, resync at next newline
+        dropping = true;
+      }
     }
   } finally {
-    rl.close();
+    stream.destroy();
   }
+  // A trailing line with no final newline (only if within the cap and not mid-drop).
+  if (!dropping && buf.length > 0 && buf.length <= MAX_LINE_BYTES) onLine(buf);
 }
 
-// Read the egress log for the panel: at most the last MAX_RECEIPTS entries,
-// newest first, malformed lines skipped, [] if the file doesn't exist yet.
-// Reads the rotated `.1` (older) THEN the current file (newer) into the SAME ring,
-// so the newest-N window and the final reverse fall out naturally across a rotation.
-// Read-only — the renderer can never write here.
+// Stream one file's parseable receipts into the shared ring, keeping only the newest N.
+async function streamInto(file: string, ring: ReceiptView[]): Promise<void> {
+  await streamLines(file, (line) => {
+    const view = parseLine(line);
+    if (view === null) return;
+    ring.push(view);
+    if (ring.length > MAX_RECEIPTS) ring.shift(); // bound memory regardless of file size
+  });
+}
+
+// Read the egress log for the panel: at most the last MAX_RECEIPTS entries, newest
+// first, malformed/over-cap lines skipped, [] if nothing's written yet. The newest 500
+// always live in the current file (2 MB ≈ thousands of receipts) except right after a
+// rotation, so reading the most-recent archive + the live file covers the window while
+// staying O(2 files) instead of scanning all of history. The calendar's full history
+// comes from the durable index, not here. Read-only — the renderer can never write here.
 export async function readReceipts(): Promise<ReceiptView[]> {
   const ring: ReceiptView[] = [];
-  await streamInto(rotatedFile(), ring);
-  await streamInto(receiptsFile(), ring);
+  const files = allLogFiles();
+  for (const file of files.slice(-2)) await streamInto(file, ring); // most-recent archive + live
   return ring.reverse(); // newest first
 }
 
-// Wrap `fetch` so every first-party cloud call is receipted like a plugin fetch:
-// a `"sent"` line lands on disk BEFORE any byte leaves (fail-closed — if the sink
-// throws we never fetch), then a `"done"` line with the outcome. Metadata only:
-// host (never the full URL / query string), a caller-supplied label, and byte
-// counts — never a key, header, or body. One wrapper is built per client with its
-// own label ("Deskhand: news", etc.).
-function encodedBytes(s: string): number {
-  return new TextEncoder().encode(s).length;
+// ── Durable daily-activity index (the calendar's fast path) ─────────────────────────
+// A tiny `receipts-activity.json` (day→count) that the calendar renders from, so its
+// cost is O(days shown), not O(all history). It's a separate file → log rotation never
+// touches it. Bumped on each `done` append; rebuilt from the full log if ever missing
+// or corrupt (so an existing install's pre-027 history shows up, and corruption self-
+// heals). The jsonl log is the source of truth; this is only a cache.
+
+function activityFile(): string {
+  return path.join(app.getPath("userData"), "receipts-activity.json");
 }
 
-function requestUrl(input: Parameters<typeof fetch>[0]): string {
-  if (typeof input === "string") return input;
-  if (input instanceof URL) return input.href;
-  return input.url;
+function isActivityMap(o: unknown): o is ActivityMap {
+  if (o === null || typeof o !== "object" || Array.isArray(o)) return false;
+  return Object.values(o as Record<string, unknown>).every((v) => typeof v === "number" && Number.isFinite(v));
 }
 
-function hostOf(url: string): string {
+// The index as-persisted, or null if missing/corrupt (→ caller rebuilds). Never throws.
+function readActivityFileStrict(): ActivityMap | null {
+  let raw: string;
   try {
-    return new URL(url).host; // host only — the path/query (where secrets hide) is dropped
+    raw = readFileSync(activityFile(), "utf8");
   } catch {
-    return "unknown";
+    return null; // missing
+  }
+  try {
+    const obj: unknown = JSON.parse(raw);
+    return isActivityMap(obj) ? obj : null; // corrupt/wrong shape
+  } catch {
+    return null;
   }
 }
 
-function bodyBytes(init: Parameters<typeof fetch>[1]): number {
-  const body = init?.body;
-  // The cloud clients send JSON strings; measure those, ignore other body shapes.
-  return typeof body === "string" ? encodedBytes(body) : 0;
+// Best-effort write of the index. Non-atomic on purpose (ponytail): it's a cache, and a
+// crash mid-write yields a corrupt file the reader simply rebuilds — no temp+rename
+// dance needed. A write failure is swallowed by the callers.
+function writeActivity(map: ActivityMap): void {
+  writeFileSync(activityFile(), JSON.stringify(map));
 }
 
-// `routine:true` marks the app's own timer polls (news/messages/model list) so the
-// panel groups them at the source, not by sniffing the label. Default false — a
-// caller must opt a client in explicitly, so no meaningful egress is ever grouped.
-// `direction` (in/out) is likewise stamped here at the call site, never inferred.
-export function receiptedFetch(
-  sink: FetchSink,
-  label: string,
-  opts?: { routine?: boolean; direction?: "in" | "out" },
-): typeof fetch {
-  const routine = opts?.routine === true;
-  const direction = opts?.direction;
-  const wrapped = async (
-    input: Parameters<typeof fetch>[0],
-    init?: Parameters<typeof fetch>[1],
-  ): Promise<Response> => {
-    const base = {
-      kind: "fetch" as const,
-      host: hostOf(requestUrl(input)),
-      task: label,
-      bytesSent: bodyBytes(init),
-      ...(routine ? { routine: true } : {}),
-      ...(direction ? { direction } : {}),
-    };
-    // Fail-closed: the "sent" receipt must be durable before egress. Awaited and
-    // NOT swallowed — if it throws, we never fetch, so no byte leaves unrecorded.
-    await sink.append({ ...base, ts: new Date().toISOString(), bytesReceived: 0, ok: false, phase: "sent" });
+// Bump a completed call's day by one — only when the index file already exists and is
+// valid. If it's missing/corrupt we SKIP (don't overwrite good history with a stub);
+// the next `readActivityIndex` rebuilds authoritatively from the log, which counts every
+// `done` line exactly once. Runs on the single-writer queue so concurrent bumps (and the
+// rebuild) can't lose an update. A rebuild REPLACES the count (not adds), so a bump can
+// never double-count a line a later rebuild also sees.
+async function bumpActivity(ts: string): Promise<void> {
+  const key = dayKey(ts);
+  if (key === null) return;
+  await serialize(async () => {
+    const map = readActivityFileStrict();
+    if (map === null) return; // defer to rebuild-on-read
+    map[key] = (map[key] ?? 0) + 1;
+    writeActivity(map);
+  });
+}
 
-    let res: Response;
-    try {
-      res = await fetch(input, init);
-    } catch (err) {
+// Rebuild the index from the ENTIRE log (all archives + live). Only run when the index
+// is absent/corrupt, so the O(all-rows) cost is rare. Streams, so memory stays bounded.
+async function computeActivityFromFiles(): Promise<ActivityMap> {
+  const all: ReceiptView[] = [];
+  for (const file of allLogFiles()) {
+    await streamLines(file, (line) => {
+      const view = parseLine(line);
+      if (view !== null && view.phase === "done") all.push(view);
+    });
+  }
+  return computeActivity(all);
+}
+
+// The calendar's read: the durable index if present+valid (fast); otherwise rebuild it
+// from the log once, persist it, and return that. Never throws — a rebuild that can't
+// read disk falls back to an empty map. The rebuild runs on the write queue so it can't
+// interleave with a concurrent bump.
+export async function readActivityIndex(): Promise<ActivityMap> {
+  const cached = readActivityFileStrict();
+  if (cached !== null) return cached;
+  try {
+    return await serialize(async () => {
+      const again = readActivityFileStrict(); // a concurrent write may have just created it
+      if (again !== null) return again;
+      const rebuilt = await computeActivityFromFiles();
       try {
-        await sink.append({ ...base, ts: new Date().toISOString(), bytesReceived: 0, ok: false, phase: "done" });
+        writeActivity(rebuilt);
       } catch {
-        // egress already receipted by the "sent" line
+        // best-effort cache; the map is still correct to return
       }
-      throw err;
-    }
-
-    let bytesReceived = 0;
-    try {
-      // Clone so the caller still gets an unread body; only the count is kept.
-      bytesReceived = (await res.clone().arrayBuffer()).byteLength;
-    } catch {
-      bytesReceived = 0;
-    }
-    try {
-      await sink.append({ ...base, ts: new Date().toISOString(), bytesReceived, ok: res.ok, phase: "done" });
-    } catch {
-      // egress already receipted by the "sent" line
-    }
-    return res;
-  };
-  // why: our wrapper covers the (input, init) call shape the clients use; the
-  // extra static members on `typeof fetch` (e.g. preconnect) are never called.
-  return wrapped as typeof fetch;
+      return rebuilt;
+    });
+  } catch {
+    return {};
+  }
 }

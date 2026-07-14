@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,14 +12,23 @@ vi.mock("electron", () => ({
   app: { getPath: () => state.dir },
 }));
 
-import { fileFetchSink, fileReceiptSink, readReceipts, receiptedFetch } from "./receipts.js";
+import { fileFetchSink, fileReceiptSink, readActivityIndex, readReceipts, receiptedFetch } from "./receipts.js";
 
 function receiptsPath(): string {
   return path.join(state.dir, "receipts.jsonl");
 }
 
-function rotatedPath(): string {
-  return receiptsPath() + ".1";
+function activityPath(): string {
+  return path.join(state.dir, "receipts-activity.json");
+}
+
+// Loop 027: rotation renames the live log to a UNIQUE dated archive that is NEVER
+// deleted. These list the archives that exist (the live file excluded).
+function archiveFiles(): string[] {
+  return readdirSync(state.dir).filter((f) => f.startsWith("receipts.") && f.endsWith(".jsonl") && f !== "receipts.jsonl");
+}
+function archivePath(name: string): string {
+  return path.join(state.dir, name);
 }
 
 // Mirrors MAX_BYTES in receipts.ts (kept private there — this is the cap under test).
@@ -147,13 +156,11 @@ describe("receiptedFetch", () => {
   });
 });
 
-describe("rotation", () => {
+describe("rotation → durable archive (full retention)", () => {
   // T1 — rotation on size: once the current log crosses the cap, the next append
-  // rotates it to `.1` (holding the pre-rotation content) and starts a fresh, small
-  // current file that holds only the new line.
-  it("T1: rotates the current log to .1 when it crosses the cap", async () => {
-    // One oversized line pushes the file past the cap. Distinct ts marks it so we
-    // can find it in the rotated file afterwards.
+  // renames it to a dated ARCHIVE (holding the pre-rotation content) and starts a
+  // fresh, small current file. Full retention → the archive is kept, not deleted.
+  it("T1: rotates the current log to a dated archive when it crosses the cap", async () => {
     const before = { ...modelReceipt("before-rotation", MAX_BYTES), ts: "2026-01-01T00:00:00.000Z" };
     writeFileSync(receiptsPath(), JSON.stringify(before) + "\n");
     expect(statSync(receiptsPath()).size).toBeGreaterThanOrEqual(MAX_BYTES);
@@ -161,62 +168,40 @@ describe("rotation", () => {
     const after = { ...modelReceipt("after-rotation"), ts: "2026-02-02T00:00:00.000Z" };
     await fileReceiptSink().append(after);
 
-    // .1 now holds the pre-rotation content; current is fresh and small.
-    expect(existsSync(rotatedPath())).toBe(true);
-    expect(readFileSync(rotatedPath(), "utf8")).toContain("2026-01-01T00:00:00.000Z");
+    // Exactly one archive now holds the pre-rotation content; current is fresh + small.
+    const archives = archiveFiles();
+    expect(archives).toHaveLength(1);
+    expect(readFileSync(archivePath(archives[0]!), "utf8")).toContain("2026-01-01T00:00:00.000Z");
     const current = readFileSync(receiptsPath(), "utf8");
     expect(current).toContain("2026-02-02T00:00:00.000Z");
     expect(current).not.toContain("2026-01-01T00:00:00.000Z");
     expect(statSync(receiptsPath()).size).toBeLessThan(MAX_BYTES);
   });
 
-  // T2 — bounded disk: writing well past 2×cap through the sink leaves exactly two
-  // files (.jsonl + .jsonl.1), never a .2, and neither exceeds the cap by more than
-  // one receipt-line.
-  it("T2: on-disk usage stays bounded to two files, no .2", async () => {
-    const pad = 20 * 1024; // ~20 KB per line so a few hundred appends cross 2×cap
+  // T2 — full retention: many rotations accumulate MANY archives, NONE deleted, so no
+  // history is ever lost (the whole point of the 027 retention change vs. the old
+  // delete-oldest `.1`). Each archive holds its own generation's content.
+  it("T2: repeated rotations keep every archive, losing no history", async () => {
+    const pad = 20 * 1024;
     const sink = fileReceiptSink();
-    let maxLineBytes = 0;
-    // Write comfortably past 2×MAX_BYTES of total volume.
+    // Drive several rotations by writing well past 3×MAX_BYTES.
     let written = 0;
     let i = 0;
-    while (written < 3 * MAX_BYTES) {
+    while (written < 4 * MAX_BYTES) {
       const receipt = modelReceipt("bulk-" + i, pad);
-      const bytes = Buffer.byteLength(JSON.stringify(receipt) + "\n");
-      maxLineBytes = Math.max(maxLineBytes, bytes);
+      written += Buffer.byteLength(JSON.stringify(receipt) + "\n");
       await sink.append(receipt);
-      written += bytes;
       i++;
     }
-
-    expect(existsSync(receiptsPath())).toBe(true);
-    expect(existsSync(rotatedPath())).toBe(true);
-    expect(existsSync(receiptsPath() + ".2")).toBe(false);
-    // Neither file exceeds the cap by more than one line: rotation fires when a file
-    // reaches the cap, so the largest a file gets is (just under cap) + one line.
-    expect(statSync(receiptsPath()).size).toBeLessThanOrEqual(MAX_BYTES + maxLineBytes);
-    expect(statSync(rotatedPath()).size).toBeLessThanOrEqual(MAX_BYTES + maxLineBytes);
+    // More than one archive survives (old delete-oldest would have left at most one).
+    expect(archiveFiles().length).toBeGreaterThanOrEqual(2);
+    // The very first receipt is still on disk somewhere (never deleted).
+    const everywhere = [receiptsPath(), ...archiveFiles().map(archivePath)].map((f) => readFileSync(f, "utf8")).join("");
+    expect(everywhere).toContain("bulk-0");
   });
 
-  // Windows gotcha: renameSync to an EXISTING target throws on Windows. Rotating
-  // when a `.1` already exists must succeed (delete-then-rename), replacing it.
-  it("replaces a pre-existing .1 on rotation without throwing", async () => {
-    const stale = { ...modelReceipt("stale-rotated"), ts: "2020-01-01T00:00:00.000Z" };
-    writeFileSync(rotatedPath(), JSON.stringify(stale) + "\n");
-    const before = { ...modelReceipt("before", MAX_BYTES), ts: "2026-01-01T00:00:00.000Z" };
-    writeFileSync(receiptsPath(), JSON.stringify(before) + "\n");
-
-    await expect(fileReceiptSink().append({ ...modelReceipt("after"), ts: "2026-02-02T00:00:00.000Z" })).resolves.toBeUndefined();
-
-    // The old .1 is gone; the fresh .1 holds the just-rotated current log.
-    const rotated = readFileSync(rotatedPath(), "utf8");
-    expect(rotated).toContain("2026-01-01T00:00:00.000Z");
-    expect(rotated).not.toContain("2020-01-01T00:00:00.000Z");
-  });
-
-  // The async fetch sink rotates too, and keeps its fsync-before-resolve intact
-  // (the append still resolves only after the write lands).
-  it("the fetch sink rotates the log before appending", async () => {
+  // The async fetch sink rotates too, keeping its fsync-before-resolve intact.
+  it("the fetch sink rotates the log to an archive before appending", async () => {
     const before = { ...modelReceipt("before", MAX_BYTES), ts: "2026-01-01T00:00:00.000Z" };
     writeFileSync(receiptsPath(), JSON.stringify(before) + "\n");
 
@@ -232,41 +217,39 @@ describe("rotation", () => {
     };
     await fileFetchSink().append(fetchReceipt);
 
-    expect(existsSync(rotatedPath())).toBe(true);
-    expect(readFileSync(rotatedPath(), "utf8")).toContain("2026-01-01T00:00:00.000Z");
+    const archives = archiveFiles();
+    expect(archives).toHaveLength(1);
+    expect(readFileSync(archivePath(archives[0]!), "utf8")).toContain("2026-01-01T00:00:00.000Z");
     expect(readFileSync(receiptsPath(), "utf8")).toContain("2026-03-03T00:00:00.000Z");
   });
 });
 
-describe("readReceipts across rotation", () => {
-  // T3 — reader spans the boundary: a receipt written just before rotation (last
-  // line of `.1`) and one just after (first line of current) are BOTH reachable,
-  // newest-first, no gap or dup at the seam.
-  it("T3: reads .1 then current, continuous across the seam", async () => {
+describe("readReceipts across the rotation seam", () => {
+  // T3 — the panel reader spans the newest archive + live: a receipt in the most-recent
+  // archive and one in the live file are both reachable, newest-first, no gap/dup.
+  it("T3: reads the most-recent archive then live, continuous across the seam", async () => {
     const older = [
       { ...modelReceipt("old-a"), ts: "2026-01-01T00:00:00.000Z" },
-      { ...modelReceipt("before-seam"), ts: "2026-01-01T00:00:01.000Z" }, // last before rotation
+      { ...modelReceipt("before-seam"), ts: "2026-01-01T00:00:01.000Z" },
     ];
     const newer = [
-      { ...modelReceipt("after-seam"), ts: "2026-01-01T00:00:02.000Z" }, // first after rotation
+      { ...modelReceipt("after-seam"), ts: "2026-01-01T00:00:02.000Z" },
       { ...modelReceipt("new-b"), ts: "2026-01-01T00:00:03.000Z" },
     ];
-    writeFileSync(rotatedPath(), older.map((r) => JSON.stringify(r)).join("\n") + "\n");
+    // A real archive name (basic-ISO) so allLogFiles picks it up as the newest archive.
+    writeFileSync(archivePath("receipts.20260101T000001Z.jsonl"), older.map((r) => JSON.stringify(r)).join("\n") + "\n");
     writeFileSync(receiptsPath(), newer.map((r) => JSON.stringify(r)).join("\n") + "\n");
 
     const out = await readReceipts();
-    // newest-first across both files, no gap/dup at the seam.
     expect(out.map((r) => r.task)).toEqual(["new-b", "after-seam", "before-seam", "old-a"]);
-    // The seam pair is adjacent and correctly ordered (after newer than before).
     const beforeIdx = out.findIndex((r) => r.task === "before-seam");
     const afterIdx = out.findIndex((r) => r.task === "after-seam");
     expect(afterIdx).toBe(beforeIdx - 1);
   });
 
-  // The newest-500 window is drawn from BOTH files: with 300 in `.1` and 400 in
-  // current (700 total), the reader returns the newest 500, oldest kept straddling
-  // into the rotated file.
-  it("keeps the newest 500 across both files", async () => {
+  // The newest-500 window spans the most-recent archive + live: 300 archived + 400 live
+  // (700 total) → the newest 500, oldest kept reaching back into the archive.
+  it("keeps the newest 500 across the newest archive + live", async () => {
     const older: string[] = [];
     for (let i = 0; i < 300; i++) {
       older.push(JSON.stringify({ ...modelReceipt("o" + String(i).padStart(3, "0")), ts: `2026-01-01T00:00:00.${String(i).padStart(3, "0")}Z` }));
@@ -275,15 +258,25 @@ describe("readReceipts across rotation", () => {
     for (let i = 0; i < 400; i++) {
       newer.push(JSON.stringify({ ...modelReceipt("n" + String(i).padStart(3, "0")), ts: `2026-01-01T00:01:00.${String(i).padStart(3, "0")}Z` }));
     }
-    writeFileSync(rotatedPath(), older.join("\n") + "\n");
+    writeFileSync(archivePath("receipts.20260101T000100Z.jsonl"), older.join("\n") + "\n");
     writeFileSync(receiptsPath(), newer.join("\n") + "\n");
 
     const out = await readReceipts();
     expect(out).toHaveLength(500);
-    // newest = last current line; oldest kept = 200th-from-end overall = o200 (the
-    // window reaches back into the rotated file: 400 current + 100 from `.1`).
     expect(out[0]).toMatchObject({ task: "n399" });
     expect(out[499]).toMatchObject({ task: "o200" });
+  });
+
+  // Over-cap-line defense: a single line larger than the reader's per-line ceiling is
+  // dropped (never buffered whole), and the good lines around it survive.
+  it("skips a line past the per-line byte cap and keeps its neighbours", async () => {
+    const good1 = { ...modelReceipt("good-1"), ts: "2026-01-01T00:00:00.000Z" };
+    const good2 = { ...modelReceipt("good-2"), ts: "2026-01-01T00:00:02.000Z" };
+    const monster = JSON.stringify({ ...modelReceipt("monster", 128 * 1024), ts: "2026-01-01T00:00:01.000Z" }); // > 64 KB cap
+    writeFileSync(receiptsPath(), `${JSON.stringify(good1)}\n${monster}\n${JSON.stringify(good2)}\n`);
+
+    const out = await readReceipts();
+    expect(out.map((r) => r.task)).toEqual(["good-2", "good-1"]); // monster dropped, neighbours kept
   });
 });
 
@@ -382,5 +375,66 @@ describe("append serialization", () => {
   it("A4: a resolved model append is on disk", async () => {
     await fileReceiptSink().append({ ...modelReceipt("durable"), ts: "2026-07-13T13:00:00.000Z" });
     expect(readFileSync(receiptsPath(), "utf8")).toContain("durable");
+  });
+});
+
+describe("durable activity index", () => {
+  // The index bump runs fire-and-forget after a `done` line lands. Because ALL writes
+  // share one FIFO queue, awaiting a later throwaway append guarantees prior bumps ran.
+  const flush = (): Promise<void> =>
+    Promise.resolve(fileReceiptSink().append({ ...modelReceipt("flush"), phase: "sent", ts: "2000-01-01T00:00:00.000Z" }));
+
+  // I1 — a done append bumps its UTC day's bucket; a sent append does not. (bump only
+  // increments an already-valid index, so seed one at 0.)
+  it("I1: a done receipt bumps its day; sent does not", async () => {
+    writeFileSync(activityPath(), JSON.stringify({ "2026-07-14": 0 }));
+    await fileReceiptSink().append({ ...modelReceipt("a"), phase: "done", ts: "2026-07-14T10:00:00.000Z" });
+    await fileReceiptSink().append({ ...modelReceipt("b"), phase: "done", ts: "2026-07-14T20:00:00.000Z" });
+    await fileReceiptSink().append({ ...modelReceipt("c"), phase: "sent", ts: "2026-07-14T21:00:00.000Z" });
+    await flush();
+    expect(await readActivityIndex()).toEqual({ "2026-07-14": 2 });
+  });
+
+  // I2 — the index is a SEPARATE file that log rotation never touches: a pre-rotation
+  // day's count survives a rotation, and a new done still bumps.
+  it("I2: index survives log rotation (separate file)", async () => {
+    writeFileSync(activityPath(), JSON.stringify({ "2025-12-31": 7 }));
+    writeFileSync(receiptsPath(), JSON.stringify({ ...modelReceipt("before", MAX_BYTES), ts: "2026-01-01T00:00:00.000Z" }) + "\n");
+    await fileReceiptSink().append({ ...modelReceipt("after"), phase: "done", ts: "2026-01-02T00:00:00.000Z" });
+    await flush();
+    const idx = await readActivityIndex();
+    expect(idx["2025-12-31"]).toBe(7); // untouched by the rotation the `after` append triggered
+    expect(idx["2026-01-02"]).toBe(1); // and the new done still bumped
+    expect(archiveFiles()).toHaveLength(1); // the log DID rotate to an archive
+  });
+
+  // I3 — missing index rebuilds from the WHOLE log (archives + live), counting done only.
+  it("I3: rebuilds from the whole log when the index is missing", async () => {
+    writeFileSync(
+      archivePath("receipts.20260101T000000Z.jsonl"),
+      JSON.stringify({ ...modelReceipt("x"), phase: "done", ts: "2026-01-01T05:00:00.000Z" }) + "\n",
+    );
+    writeFileSync(
+      receiptsPath(),
+      [
+        JSON.stringify({ ...modelReceipt("y"), phase: "done", ts: "2026-01-02T05:00:00.000Z" }),
+        JSON.stringify({ ...modelReceipt("z"), phase: "sent", ts: "2026-01-02T06:00:00.000Z" }),
+      ].join("\n") + "\n",
+    );
+    expect(existsSync(activityPath())).toBe(false);
+    expect(await readActivityIndex()).toEqual({ "2026-01-01": 1, "2026-01-02": 1 });
+    expect(existsSync(activityPath())).toBe(true); // the rebuild persisted the cache
+  });
+
+  // I4 — a corrupt index self-heals by rebuilding (never degrades to empty).
+  it("I4: rebuilds when the index file is corrupt", async () => {
+    writeFileSync(activityPath(), "{ not json");
+    writeFileSync(receiptsPath(), JSON.stringify({ ...modelReceipt("q"), phase: "done", ts: "2026-03-03T05:00:00.000Z" }) + "\n");
+    expect(await readActivityIndex()).toEqual({ "2026-03-03": 1 });
+  });
+
+  // I5 — empty/missing log and index → empty map, never throws.
+  it("I5: empty everything → {}", async () => {
+    expect(await readActivityIndex()).toEqual({});
   });
 });
