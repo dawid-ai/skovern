@@ -406,7 +406,9 @@ app
     // Returns the path written, or null if the user cancelled / nothing to export.
     registerTrusted(TRUST, "receipts:exportCsv", async (raw: unknown): Promise<string | null> => {
       const rows = Array.isArray(raw) ? (raw as ReceiptView[]) : [];
-      if (rows.length === 0) return null; // nothing selected → no-op, never an empty file
+      // Trust-boundary guard: the UI can only select what it loaded (≤2000), so a payload
+      // past that is a buggy/hostile caller — refuse rather than serialize an unbounded blob.
+      if (rows.length === 0 || rows.length > 10_000) return null;
       const csv = toCsv(rows);
       let dest = EXPORT_PATH_OVERRIDE;
       if (!dest) {
