@@ -86,6 +86,12 @@ function hasEmbedded(): boolean {
   return latestEmbedded.length > 0;
 }
 
+/** The gguf filenames of the currently-known embedded models — the set the startup
+ *  orphan sweep must KEEP (their `.part` is resumable). Seeded from the snapshot. */
+export function embeddedFilenames(): string[] {
+  return latestEmbedded.map((m) => m.gguf.filename);
+}
+
 // A dev/test seam (unpackaged only, mirror of DESKHAND_OLLAMA_URL / DESKHAND_CLAUDE_BIN):
 // when set, the embedded engine uses a FAKE in-process child that answers with canned
 // text — so the app e2e can drive the real UI + real downloader without the native

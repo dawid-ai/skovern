@@ -26,7 +26,8 @@ import { fileFetchSink, fileReceiptSink, readActivityIndex, readReceipts, readRe
 import { toCsv } from "./csv.js";
 import { runPlugin, sandboxCheck } from "./plugin-host.js";
 import { claudeCliProvider } from "./claude-cli.js";
-import { disposeLocal, engineForModel, isEmbeddedModel, localModels, localStatus, pullModel } from "./local.js";
+import { disposeLocal, embeddedFilenames, engineForModel, isEmbeddedModel, localModels, localStatus, pullModel } from "./local.js";
+import { sweepOrphanParts } from "./download.js";
 import { initialNewness, observeThread } from "./dm-newness.js";
 import { helloManifest } from "../plugins/hello/manifest.js";
 import { aiVisibilityManifest } from "../plugins/ai-visibility/manifest.js";
@@ -559,6 +560,10 @@ app
     });
 
     registerTrusted(TRUST, "plugin:sandboxCheck", (): Promise<SandboxCheckResult> => sandboxCheck());
+
+    // Reclaim disk from interrupted downloads (crashes, the old unique-name scheme),
+    // keeping any `.part` that resume can still finish. Best-effort, non-blocking.
+    void sweepOrphanParts(embeddedFilenames());
 
     createWindow();
     try {
