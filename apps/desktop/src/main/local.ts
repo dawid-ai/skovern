@@ -174,9 +174,12 @@ function hardwareView(p: HardwareProfile): HardwareView {
 
 // A pulled model may not report its parameter size; estimate from disk size so the
 // verdict can still score it (Q4 ≈ 0.6 GB per billion params).
-function toVerdictModel(m: { id: string; label: string; params?: number; sizeBytes?: number }): VerdictModel {
+function toVerdictModel(
+  m: { id: string; label: string; params?: number; sizeBytes?: number },
+  fetchable: boolean,
+): VerdictModel {
   const params = m.params ?? (m.sizeBytes ? m.sizeBytes / (0.6 * GB) : 3);
-  return { id: m.id, label: m.label, params, sizeBytes: m.sizeBytes };
+  return { id: m.id, label: m.label, params, sizeBytes: m.sizeBytes, fetchable };
 }
 
 // The candidate set the verdict scores: the catalog suggestions PLUS the user's own
@@ -185,12 +188,18 @@ function toVerdictModel(m: { id: string; label: string; params?: number; sizeByt
 // diverges — the headline would pick the best catalog model while the hero picks a
 // bigger already-installed one. Single source → they always agree.
 function candidateVerdictModels(
-  catalogModels: { id: string; label: string; params?: number; sizeBytes?: number }[],
+  catalogModels: { id: string; label: string; params?: number; sizeBytes?: number; gguf?: unknown }[],
   have: LocalModelInfo[],
+  ollamaReady: boolean,
 ): VerdictModel[] {
   const catalogIds = new Set(catalogModels.map((m) => m.id));
   const ownHave = have.filter((m) => !catalogIds.has(m.id));
-  return [...catalogModels.map(toVerdictModel), ...ownHave.map(toVerdictModel)];
+  // Fetchable now: an embedded (gguf) model always is; an Ollama-only catalog model only
+  // when Ollama is up. The user's own already-pulled models are in Ollama (so it's up).
+  return [
+    ...catalogModels.map((m) => toVerdictModel(m, m.gguf !== undefined || ollamaReady)),
+    ...ownHave.map((m) => toVerdictModel(m, true)),
+  ];
 }
 
 async function detectAndList(engine: LocalEngine): Promise<{ ready: boolean; have: LocalModelInfo[] }> {
@@ -213,7 +222,7 @@ export async function localStatus(): Promise<LocalStatusView> {
     detectAndList(engine),
   ]);
   rememberEmbedded(catalog.models);
-  const v = verdict(profile, candidateVerdictModels(catalog.models, det.have));
+  const v = verdict(profile, candidateVerdictModels(catalog.models, det.have, det.ready));
   return {
     ollamaReady: det.ready,
     hardware: hardwareView(profile),
@@ -243,7 +252,7 @@ export async function localModels(): Promise<LocalModelsView> {
 
   // Same candidate set as `localStatus` — so the headline and the hero name the
   // SAME recommendation (see candidateVerdictModels).
-  const v = verdict(profile, candidateVerdictModels(catalog.models, det.have));
+  const v = verdict(profile, candidateVerdictModels(catalog.models, det.have, det.ready));
   const tierOf = (id: string) => v.fits.find((f) => f.modelId === id);
 
   const suggested: LocalModelView[] = catalog.models.map((c: CatalogModel) => {

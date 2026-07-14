@@ -105,10 +105,16 @@ export function verdict(profile: HardwareProfile, models: VerdictModel[]): Verdi
   const b = budgetOf(profile);
   const fits = models.map((m) => fitOne(m, b));
 
+  // The recommendation only ever names a model the user can ACTUALLY get right now
+  // (`fetchable !== false`) — recommending one with a dead download button is a bug.
+  // The fit table above still scores EVERY model, fetchable or not, so the user sees how
+  // each fits; only the pick is constrained. (Unset fetchable → true → unchanged.)
+  const scored = models.map((m, i) => ({ m, fit: fits[i]! }));
+  const gettable = scored.filter((x) => x.m.fetchable !== false);
+
   // A model is "good enough to steer someone to" when it's fast (green) AND
-  // capable (>= GOOD_PARAMS). The biggest such model wins.
-  const goodGreens = models
-    .map((m, i) => ({ m, fit: fits[i]! }))
+  // capable (>= GOOD_PARAMS). The biggest such GETTABLE model wins.
+  const goodGreens = gettable
     .filter((x) => x.fit.tier === "green" && x.m.params >= GOOD_PARAMS)
     .sort((a, b2) => b2.m.params - a.m.params);
   const canRunGoodOne = goodGreens.length > 0;
@@ -120,10 +126,9 @@ export function verdict(profile: HardwareProfile, models: VerdictModel[]): Verdi
     recommendedModelId = goodGreens[0]!.m.id;
     headline = `Good news — this computer can run a real private brain. Our pick for it: ${goodGreens[0]!.m.label}.`;
   } else {
-    // No fast, capable option. Steer to the best amber (runs, slowly) if there is
-    // one, and be honest that the cloud brain will feel better.
-    const usable = models
-      .map((m, i) => ({ m, fit: fits[i]! }))
+    // No fast, capable, gettable option. Steer to the best gettable amber (runs, slowly)
+    // if there is one, and be honest that the cloud brain will feel better.
+    const usable = gettable
       .filter((x) => x.fit.usable)
       .sort((a, b2) => b2.m.params - a.m.params);
     if (usable.length > 0) {

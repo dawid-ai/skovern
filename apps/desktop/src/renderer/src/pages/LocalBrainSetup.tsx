@@ -125,10 +125,12 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
       );
     }
     // An embedded model downloads via our own downloader — no Ollama needed, so its
-    // button stays live. A non-embedded (Ollama) model needs Ollama running to fetch.
+    // button stays live. A non-embedded (Ollama) model needs Ollama running to fetch —
+    // when it's not, say so honestly instead of showing a dead, unexplained button.
+    const needsOllama = !m.embedded && !status?.ollamaReady;
     return (
-      <button className="primary" onClick={() => void getModel(m.id)} disabled={!m.embedded && !status?.ollamaReady}>
-        Get this one
+      <button className="primary" onClick={() => void getModel(m.id)} disabled={needsOllama}>
+        {needsOllama ? "Needs Ollama" : "Get this one"}
       </button>
     );
   }

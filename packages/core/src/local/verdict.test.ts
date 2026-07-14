@@ -94,3 +94,33 @@ describe("verdict — honesty table", () => {
     expect(v.fits[0]!.note).toMatch(/couldn't check|not sure/i);
   });
 });
+
+// V2 — the recommendation must be a model the user can ACTUALLY get. A model marked
+// `fetchable:false` (e.g. an Ollama-only model when Ollama isn't installed) is still
+// scored in the fit table, but is NEVER recommended — recommending a model whose
+// download button is dead is the bug this pins (24GB machine, no Ollama, only the
+// small embedded model is gettable).
+describe("verdict — recommends only a fetchable model", () => {
+  it("skips the biggest capable model when it isn't fetchable, picks the best fetchable one", () => {
+    const models: VerdictModel[] = [
+      { id: "qwen2.5:3b", label: "Qwen 3B", params: 3, fetchable: true }, // embedded, gettable
+      { id: "qwen2.5:7b", label: "Qwen 7B", params: 7, fetchable: false }, // Ollama-only, no Ollama
+      { id: "qwen2.5:14b", label: "Qwen 14B", params: 14, fetchable: false },
+    ];
+    const v = verdict(profile({ ramBytes: 64 * GB, bestVramBytes: 24 * GB }), models);
+    expect(tierOf(v, "qwen2.5:14b")).toBe("green"); // still scored in the fit table
+    expect(v.recommendedModelId).toBe("qwen2.5:3b"); // but the pick is the fetchable one
+    expect(v.headline).toContain("Qwen 3B"); // headline names the SAME model (no divergence)
+  });
+
+  it("recommends nothing (not a dead button) when no fetchable model is usable", () => {
+    const models: VerdictModel[] = [{ id: "qwen2.5:7b", label: "Qwen 7B", params: 7, fetchable: false }];
+    const v = verdict(profile({ ramBytes: 64 * GB, bestVramBytes: 24 * GB }), models);
+    expect(v.recommendedModelId).toBeNull();
+  });
+
+  it("fetchable defaults to true — existing callers/behaviour unchanged", () => {
+    const v = verdict(profile({ ramBytes: 64 * GB, bestVramBytes: 24 * GB }), MODELS);
+    expect(v.recommendedModelId).toBe("qwen2.5:14b");
+  });
+});

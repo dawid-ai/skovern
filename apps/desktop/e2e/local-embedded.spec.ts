@@ -23,15 +23,17 @@ const GGUF_FILENAME = "qwen2.5-3b-instruct-q4_k_m.gguf";
 const MODEL_BODY = Buffer.from("FAKE-GGUF-BYTES-for-the-embedded-runtime-e2e".repeat(50));
 const MODEL_SHA256 = createHash("sha256").update(MODEL_BODY).digest("hex");
 
-// A CPU-only machine so the verdict is deterministic on any runner; 16 GB → the 3B model
-// is amber/usable and, as the only catalog model, the recommendation.
-const CPU_HARDWARE = JSON.stringify({
-  ramBytes: 16 * 1024 ** 3,
-  cpuCores: 8,
-  gpus: [],
-  bestVramBytes: null,
+// A powerful 24 GB-GPU machine (pinned → deterministic on any runner). Both the embedded
+// 3B and the Ollama-only 7B run GREAT here, so by raw fit the 7B is the "best" — but with
+// Ollama DOWN the 7B isn't gettable, so the recommendation must fall to the fetchable
+// embedded 3B (the regression this reproduces: a dead "Our pick" download button).
+const GPU_HARDWARE = JSON.stringify({
+  ramBytes: 64 * 1024 ** 3,
+  cpuCores: 16,
+  gpus: [{ model: "Test GPU 24GB", vramBytes: 24 * 1024 ** 3 }],
+  bestVramBytes: 24 * 1024 ** 3,
   unifiedMemory: false,
-  diskFreeBytes: 200 * 1024 ** 3,
+  diskFreeBytes: 500 * 1024 ** 3,
   notes: [],
 });
 
@@ -65,6 +67,20 @@ function startCatalog(): Promise<string> {
                 filename: GGUF_FILENAME,
                 contextSize: 4096,
               },
+            },
+            {
+              // An Ollama-ONLY model (no gguf): a great fit on this GPU, but not gettable
+              // without Ollama — must NOT be the recommendation, and its button says so.
+              id: "qwen2.5:7b",
+              label: "Qwen2.5 7B",
+              params: 7,
+              sizeBytes: Math.round(4.7 * 1024 ** 3),
+              quant: "Q4_K_M",
+              creator: "Alibaba (Qwen team)",
+              homepage: "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF",
+              license: "Apache 2.0 — free to use.",
+              licenseUrl: "https://www.apache.org/licenses/LICENSE-2.0",
+              tradeoff: "Bigger and smarter, but needs the Ollama helper.",
             },
           ],
         }),
@@ -121,7 +137,7 @@ test("no-Ollama user downloads and runs an embedded private brain", async () => 
       DESKHAND_API_URL: server.url,
       DESKHAND_OLLAMA_URL: "http://127.0.0.1:1", // nothing listening → Ollama is DOWN
       DESKHAND_CATALOG_URL: catalogUrl,
-      DESKHAND_HARDWARE: CPU_HARDWARE,
+      DESKHAND_HARDWARE: GPU_HARDWARE,
       DESKHAND_LLAMA_FAKE: "1", // fake the native child (canned reply)
       DESKHAND_MODEL_DOWNLOAD_URL: downloadUrl, // stream the model bytes from the fixture
     },
@@ -152,6 +168,14 @@ test("no-Ollama user downloads and runs an embedded private brain", async () => 
     await expect(qwenRow).toBeVisible({ timeout: 30_000 });
     const getBtn = qwenRow.getByRole("button", { name: "Get this one" });
     await expect(getBtn).toBeEnabled(); // real action available without Ollama, not a dead button
+
+    // REGRESSION (fetchable recommendation): even though the Ollama-only 7B fits this GPU
+    // better, it isn't gettable without Ollama — so "Our pick" is the fetchable embedded
+    // 3B (a LIVE button), never a dead one. The 7B is shown honestly as "Needs Ollama".
+    await expect(qwenRow.locator(".local-status.status-pick")).toHaveText("Our pick");
+    const bigRow = table.locator("tr.receipt-row", { hasText: "Qwen2.5 7B" });
+    await expect(bigRow.locator(".local-status.status-pick")).toHaveCount(0); // NOT the pick
+    await expect(bigRow.getByRole("button", { name: "Needs Ollama" })).toBeDisabled();
 
     // GET THIS ONE → our streaming + sha256-gated downloader (fixture bytes) → then it
     // becomes the active brain in one click.

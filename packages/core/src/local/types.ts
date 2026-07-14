@@ -156,4 +156,10 @@ export interface VerdictModel {
   label: string;
   params: number;
   sizeBytes?: number;
+  /** Can the user download this model RIGHT NOW in their current setup? Embedded (gguf)
+   *  models are always fetchable; an Ollama-only model is fetchable only when Ollama is
+   *  running. The fit table scores every model, but the recommendation only ever names a
+   *  fetchable one — a recommended model with a dead download button is never shown.
+   *  Defaults to true when unset (keeps pure hardware-only callers unchanged). */
+  fetchable?: boolean;
 }
