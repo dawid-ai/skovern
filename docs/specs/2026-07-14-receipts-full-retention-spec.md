@@ -81,8 +81,12 @@ round-tripping them adds no new disclosure, and main stays the only writer.
    `readActivityIndex` rebuilds from all files (never throws; `{}` only if the rebuild itself can't
    read disk).
 2. **Activity counts (`receipt-calendar.ts`, pure).** `computeActivity(receipts)` → `ActivityMap`
-   (day→count of `done`), keyed by local calendar day of `ts`; empty input → `{}`, never throws.
-   Doubles as the index rebuild path. Plus `intensity(count, max)` → a 0–4 bucket for the shade.
+   (day→count of `done`), keyed by the **UTC** calendar day of `ts`; empty input → `{}`, never
+   throws. Doubles as the index rebuild path. Plus `intensity(count, max)` → a 0–4 bucket for the
+   shade. **UTC, not local** (deliberate): it makes the heatmap + date-filter buckets deterministic
+   on any runner/timezone with no `TZ` seam. Cost: activity in the hours around local midnight lands
+   on the UTC day. Minor for a heatmap; `ponytail:` switch to local-day keys + a pinned `TZ` in the
+   test configs only if a florist reports the midnight boundary bucketing wrong.
 3. **CSV serialization (`csv.ts`, main, security-critical, negative).** Every captured field
    (ts, kind, provider/model, host, task, direction, routine, local, bytesSent, bytesReceived,
    tokensIn, tokensOut, ok, phase) with correct headers + RFC-4180 quoting (commas/quotes/newlines).
@@ -102,16 +106,19 @@ round-tripping them adds no new disclosure, and main stays the only writer.
   `DESKHAND_EXPORT_PATH` (gated `!app.isPackaged`) writes to a fixed temp path, bypassing the
   dialog, so the e2e asserts file CONTENT deterministically. Empty `rows` → no-op (button disabled
   renderer-side too).
-- `receipts:list` stays, but the reader now spans archives (bounded window still applies to what
-  the table loads; see ceiling below).
+- `receipts:list(range?)` — **no range** → the recent window (`readReceipts`: most-recent archive +
+  live, newest-500; the fast mount load). **A range** → `readReceiptsInRange`: streams EVERY archive
+  + live, filtered to the dates, newest-first, bounded to 2000 (logs if it truncates). This is what
+  makes a **calendar click reach rows that aged out of the recent window** — without it the calendar
+  would advertise history the table couldn't show.
 
 **Reader ceiling (`receipts-reader-line-bytes` ledger, pulled in):** widening the read to all
-archives touches that item. We (a) enforce a **per-line byte cap** while streaming (skip a line
-longer than e.g. 64 KB — a corrupt/oversized line can't OOM the reader), closing the ledger item,
-and (b) keep the table's in-memory load bounded to the most-recent N (existing 500-ring) while the
-**calendar tally streams without holding rows**. `ponytail: table pages the recent window; full
-date-range over deep history reads all files each call — fine at florist volume, add an index if a
-year of rows ever measures slow.`
+archives touches that item. We (a) enforce a **per-line byte cap** while streaming — a manual
+chunked reader DROPS a line past 64 KB without ever buffering it whole, closing the ledger item —
+and (b) bound each read: the no-range table load holds the newest-500 ring, a date-range read holds
+the newest-2000 in range, and the **calendar tally streams without holding rows** (O(days) memory).
+`ponytail: a date-range over deep history reads all files each call — fine at florist volume; add a
+day-paged archive index only if someone genuinely ranges over >2000 receipts.`
 
 ## Determinism seam
 
@@ -135,12 +142,17 @@ corrupt/oversized line → skipped, calendar degrades to empty rather than throw
 
 ## Boundary (delta from contract)
 
-- **Add** `receipt-calendar.ts` (counts+intensity), `receipt-filter.ts` (range+paginate),
-  `csv.ts` (main).
-- **Change** `receipts.ts` (archive-not-delete rotation + all-files reader + per-line cap),
-  `index.ts` (`receipts:activity`, `receipts:exportCsv`, `DESKHAND_NOW`/`DESKHAND_EXPORT_PATH`
-  seams), `preload/index.ts` (expose the two IPCs), `shared/receipts.ts` (`ActivityMap`,
-  `DateRange`), `ReceiptsPage.tsx` (calendar + controls + selection + Export), `app.css`.
+- **Add** `shared/receipt-calendar.ts` (counts+intensity), `shared/receipt-filter.ts`
+  (range+paginate), `csv.ts` (main), `receipted-fetch.ts` (main — the fetch wrapper split out of
+  `receipts.ts` to keep it under the ~300-line smell threshold; behaviour-preserving, re-exported
+  from `receipts.ts` so importers are unchanged). NB the two pure modules live in `shared/` (not
+  `renderer/pages/` as the contract wrote) because main's index-rebuild + ranged read import them too.
+- **Change** `receipts.ts` (archive-not-delete rotation + all-files reader + ranged read + per-line
+  cap + durable index), `index.ts` (`receipts:list(range?)`, `receipts:activity`,
+  `receipts:exportCsv`, `DESKHAND_NOW`/`DESKHAND_EXPORT_PATH` seams), `preload/index.ts` +
+  `shared/global.d.ts` (expose the IPCs to the renderer), `shared/receipts.ts` (`ActivityMap`,
+  `ActivitySummary`, `DateRange`), `ReceiptsPage.tsx` (calendar + controls + selection + Export),
+  `app.css`.
 - **Kept from contract:** the durable daily-index (`receipts-activity.json`), now backed by
   full-retention archives + a rebuild-on-missing path.
 - **`apps/site` untouched. No new dependency** (native `<input type="date">`, hand-rolled CSV).

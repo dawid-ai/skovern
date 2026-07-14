@@ -122,11 +122,18 @@ export function fileFetchSink(): FetchSink {
 // Append a receipt line (fail-closed egress record) and, for a COMPLETED call, bump the
 // durable daily-activity index afterwards. The caller awaits only the line write; the
 // index bump is best-effort and its failure swallowed — a UX cache must never deny a
-// receipt its egress record. The bump runs after the line is durable so an index
-// rebuild (which reads the log) stays consistent.
+// receipt its egress record.
+//
+// We schedule a bump ONLY when the index file already exists at append time. If it's
+// missing (fresh install, or first open after this loop shipped), we do NOT bump: the
+// next `readActivityIndex` rebuilds from the whole log and counts this now-durable line
+// exactly once. This closes the append→rebuild→bump double-count — a rebuild only ever
+// fires while the index is missing, and in that window no bump is scheduled, so a bump
+// can never re-add a line a concurrent rebuild also counted.
 function appendAndIndex(receipt: ReceiptView): Promise<void> {
+  const shouldBump = receipt.phase === "done" && existsSync(activityFile());
   const written = serialize(() => appendLine(JSON.stringify(receipt) + "\n"));
-  if (receipt.phase === "done") void written.then(() => bumpActivity(receipt.ts)).catch(() => {});
+  if (shouldBump) void written.then(() => bumpActivity(receipt.ts)).catch(() => {});
   return written;
 }
 
@@ -220,6 +227,43 @@ export async function readReceipts(): Promise<ReceiptView[]> {
   return ring.reverse(); // newest first
 }
 
+// The most a date-range read ever loads. Full retention means a range can span the whole
+// archived history; this bounds memory + the payload to the renderer. Newest-in-range are
+// kept if a range holds more (a florist won't; a heavy range logs the truncation).
+// ponytail: 2000 rows/range is plenty at florist volume; add day-paged archive reads only
+// if someone genuinely ranges over >2000 receipts.
+const MAX_RANGE_RECEIPTS = 2000;
+
+// Read the retained log for a date range, spanning EVERY archive + live (not just the
+// recent window), so the calendar's full history is reachable from the table: clicking a
+// day or picking a range surfaces the real rows even if they aged out of the recent
+// window. Newest-first, per-line-capped, bounded to MAX_RANGE_RECEIPTS. Read-only.
+export async function readReceiptsInRange(range: { from?: string; to?: string }): Promise<ReceiptView[]> {
+  const { from, to } = range;
+  const inRange = (r: ReceiptView): boolean => {
+    const day = dayKey(r.ts);
+    if (day === null) return false;
+    if (from !== undefined && day < from) return false;
+    if (to !== undefined && day > to) return false;
+    return true;
+  };
+  const ring: ReceiptView[] = [];
+  let dropped = 0;
+  for (const file of allLogFiles()) {
+    await streamLines(file, (line) => {
+      const view = parseLine(line);
+      if (view === null || !inRange(view)) return;
+      ring.push(view);
+      if (ring.length > MAX_RANGE_RECEIPTS) {
+        ring.shift(); // keep the newest N in range
+        dropped++;
+      }
+    });
+  }
+  if (dropped > 0) console.warn(`[receipts] date range exceeded ${MAX_RANGE_RECEIPTS} rows; showing the newest (${dropped} older hidden)`);
+  return ring.reverse(); // newest first
+}
+
 // ── Durable daily-activity index (the calendar's fast path) ─────────────────────────
 // A tiny `receipts-activity.json` (day→count) that the calendar renders from, so its
 // cost is O(days shown), not O(all history). It's a separate file → log rotation never
@@ -261,10 +305,12 @@ function writeActivity(map: ActivityMap): void {
 
 // Bump a completed call's day by one — only when the index file already exists and is
 // valid. If it's missing/corrupt we SKIP (don't overwrite good history with a stub);
-// the next `readActivityIndex` rebuilds authoritatively from the log, which counts every
-// `done` line exactly once. Runs on the single-writer queue so concurrent bumps (and the
-// rebuild) can't lose an update. A rebuild REPLACES the count (not adds), so a bump can
-// never double-count a line a later rebuild also sees.
+// the next `readActivityIndex` rebuilds authoritatively from the log. Runs on the
+// single-writer queue so concurrent bumps (and the rebuild) can't lose an update.
+// Bumps are only ever SCHEDULED while the index exists (see appendAndIndex), and a
+// rebuild only fires while it's missing — so a bump and a rebuild never both count the
+// same line. (A file corrupted between append and bump is the sole residual window, and
+// is astronomically rare — we write only valid JSON.)
 async function bumpActivity(ts: string): Promise<void> {
   const key = dayKey(ts);
   if (key === null) return;

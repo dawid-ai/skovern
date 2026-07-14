@@ -5,7 +5,7 @@ import type { DmSendResult, DmThreadView, NewsPostView, PublishResultView, Publi
 import type { BrainStatusView, SaveBrainInput, SaveBrainResult, TestBrainResult } from "../shared/brain.js";
 import type { LocalActionResult, LocalModelsView, LocalStatusView, PullProgressView } from "../shared/local.js";
 import type { RunSkillResult, SandboxCheckResult, SkillView } from "../shared/plugin.js";
-import type { ActivitySummary, ReceiptView } from "../shared/receipts.js";
+import type { ActivitySummary, DateRange, ReceiptView } from "../shared/receipts.js";
 
 const api = {
   getAppInfo: (): Promise<AppInfo> => ipcRenderer.invoke("app:info") as Promise<AppInfo>,
@@ -91,7 +91,9 @@ const api = {
     },
   },
   receipts: {
-    list: (): Promise<ReceiptView[]> => ipcRenderer.invoke("receipts:list") as Promise<ReceiptView[]>,
+    // No range → the recent window; a range → the full retained history for those dates.
+    list: (range?: DateRange): Promise<ReceiptView[]> =>
+      ipcRenderer.invoke("receipts:list", range ?? {}) as Promise<ReceiptView[]>,
     activity: (): Promise<ActivitySummary> => ipcRenderer.invoke("receipts:activity") as Promise<ActivitySummary>,
     // Export selected rows to CSV (main sanitizes + writes). Resolves to the path
     // written, or null if the user cancelled or nothing was selected.

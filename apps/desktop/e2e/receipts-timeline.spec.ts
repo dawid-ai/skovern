@@ -149,6 +149,8 @@ test("the Receipts timeline: calendar, date filter, pagination, and CSV export",
     await expect(page.getByRole("button", { name: /Export/ })).toBeDisabled();
     await page.locator(`[title="${LIGHT_DAY}: 1 thing"]`).first().click();
     await expect(page.getByLabel("From")).toHaveValue(LIGHT_DAY); // clicking a day set the range
+    await expect(page.locator(".receipt-why", { hasText: "light-0" })).toBeVisible(); // ranged reload done
+    await expect(page.locator(".receipt-table tbody tr")).toHaveCount(1);
     await page.getByLabel("Select all shown").check();
     await page.getByRole("button", { name: /Export/ }).click();
     await expect.poll(() => existsSync(exportPath), { timeout: 15_000 }).toBe(true);

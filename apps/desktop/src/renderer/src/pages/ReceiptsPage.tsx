@@ -180,10 +180,26 @@ export function ReceiptsPage() {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [savedTo, setSavedTo] = useState<string | null>(null);
 
+  // The calendar's full history loads once. The table re-loads when the date range
+  // changes: with no range it's the recent window; with a range, main returns the full
+  // retained history for those dates (spanning archives), so a calendar click reaches
+  // rows that aged out of the recent window. A reload clears selection (the idx pairing
+  // is only valid within one loaded list).
   useEffect(() => {
-    void window.deskhand.receipts.list().then(setReceipts);
     void window.deskhand.receipts.activity().then(setActivity);
   }, []);
+  useEffect(() => {
+    const range = from || to ? { from: from || undefined, to: to || undefined } : undefined;
+    let alive = true;
+    void window.deskhand.receipts.list(range).then((r) => {
+      if (!alive) return;
+      setReceipts(r);
+      setSelected(new Set());
+    });
+    return () => {
+      alive = false;
+    };
+  }, [from, to]);
 
   // Pair each meaningful (completed, non-routine) receipt with its stable index in the
   // loaded list, so selection survives filtering + paging. Routine polls are summarized
@@ -293,9 +309,9 @@ export function ReceiptsPage() {
 
           {visible.length === 0 ? (
             <p className="hint">
-              {pairs.length === 0
-                ? "Nothing has left your machine yet. When it does, you'll see it here."
-                : "No activity in those dates. Try a wider range or clear the dates."}
+              {from || to
+                ? "No activity in those dates. Try a wider range or clear the dates."
+                : "Nothing has left your machine yet. When it does, you'll see it here."}
             </p>
           ) : (
             <>

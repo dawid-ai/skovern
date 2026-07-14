@@ -12,7 +12,7 @@ vi.mock("electron", () => ({
   app: { getPath: () => state.dir },
 }));
 
-import { fileFetchSink, fileReceiptSink, readActivityIndex, readReceipts, receiptedFetch } from "./receipts.js";
+import { fileFetchSink, fileReceiptSink, readActivityIndex, readReceipts, readReceiptsInRange, receiptedFetch } from "./receipts.js";
 
 function receiptsPath(): string {
   return path.join(state.dir, "receipts.jsonl");
@@ -436,5 +436,31 @@ describe("durable activity index", () => {
   // I5 — empty/missing log and index → empty map, never throws.
   it("I5: empty everything → {}", async () => {
     expect(await readActivityIndex()).toEqual({});
+  });
+});
+
+describe("readReceiptsInRange (full-history date read)", () => {
+  function doneAt(task: string, day: string): string {
+    return JSON.stringify({ ...modelReceipt(task), phase: "done", ts: `${day}T10:00:00.000Z` });
+  }
+
+  // RR1 — spans EVERY archive + live (not just the recent 2), filtered to the range,
+  // newest-first. This is what makes a calendar click reach rows that aged out of the
+  // recent window.
+  it("RR1: reads all archives + live within the range, newest-first", async () => {
+    writeFileSync(archivePath("receipts.20260101T000000Z.jsonl"), doneAt("jan", "2026-01-15") + "\n");
+    writeFileSync(archivePath("receipts.20260301T000000Z.jsonl"), doneAt("mar", "2026-03-15") + "\n");
+    writeFileSync(receiptsPath(), [doneAt("jul", "2026-07-15"), doneAt("aug", "2026-08-15")].join("\n") + "\n");
+
+    // A range that includes the two oldest archives but excludes the live "aug" row.
+    const out = await readReceiptsInRange({ from: "2026-01-01", to: "2026-07-31" });
+    expect(out.map((r) => r.task)).toEqual(["jul", "mar", "jan"]); // newest-first, "aug" excluded
+  });
+
+  it("RR2: open-ended bounds and out-of-range exclusion", async () => {
+    writeFileSync(receiptsPath(), [doneAt("a", "2026-05-10"), doneAt("b", "2026-06-10"), doneAt("c", "2026-07-10")].join("\n") + "\n");
+    expect((await readReceiptsInRange({ from: "2026-06-01" })).map((r) => r.task)).toEqual(["c", "b"]); // to open
+    expect((await readReceiptsInRange({ to: "2026-06-01" })).map((r) => r.task)).toEqual(["a"]); // from open
+    expect(await readReceiptsInRange({ from: "2027-01-01" })).toEqual([]); // nothing in range
   });
 });

@@ -22,7 +22,7 @@ import { explainCapability } from "@deskhand/plugin-sdk";
 import { registerTrusted } from "./ipc.js";
 import { clearSession, loadSession, saveSession } from "./session.js";
 import { brainStatus, loadBrain, saveBrain } from "./keys.js";
-import { fileFetchSink, fileReceiptSink, readActivityIndex, readReceipts, receiptedFetch } from "./receipts.js";
+import { fileFetchSink, fileReceiptSink, readActivityIndex, readReceipts, readReceiptsInRange, receiptedFetch } from "./receipts.js";
 import { toCsv } from "./csv.js";
 import { runPlugin, sandboxCheck } from "./plugin-host.js";
 import { claudeCliProvider } from "./claude-cli.js";
@@ -381,7 +381,15 @@ app
     // "What leaves your machine" — the panel reads the on-disk egress log. Trusted,
     // READ-ONLY: returns parsed metadata (bounded, malformed-tolerant); nothing from
     // the renderer is accepted, and there's no way to trigger egress or edit the log.
-    registerTrusted(TRUST, "receipts:list", (): Promise<ReceiptView[]> => readReceipts());
+    // No range → the recent window (fast, the mount load). A range → the full retained
+    // history for those dates, spanning every archive, so a calendar click reaches rows
+    // that aged out of the recent window. Read-only, no egress.
+    registerTrusted(TRUST, "receipts:list", (raw: unknown): Promise<ReceiptView[]> => {
+      const r = (raw ?? {}) as { from?: unknown; to?: unknown };
+      const from = typeof r.from === "string" && r.from ? r.from : undefined;
+      const to = typeof r.to === "string" && r.to ? r.to : undefined;
+      return from || to ? readReceiptsInRange({ from, to }) : readReceipts();
+    });
 
     // The activity calendar's data: the durable day→count index + the day the grid ends
     // on ("today"). Read-only, no egress.
