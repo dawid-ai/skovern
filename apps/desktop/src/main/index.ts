@@ -1,4 +1,5 @@
-import { app, BrowserWindow, Menu, Tray, nativeImage } from "electron";
+import { app, BrowserWindow, Menu, Tray, dialog, nativeImage } from "electron";
+import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import electronUpdater from "electron-updater";
@@ -21,7 +22,8 @@ import { explainCapability } from "@deskhand/plugin-sdk";
 import { registerTrusted } from "./ipc.js";
 import { clearSession, loadSession, saveSession } from "./session.js";
 import { brainStatus, loadBrain, saveBrain } from "./keys.js";
-import { fileFetchSink, fileReceiptSink, readReceipts, receiptedFetch } from "./receipts.js";
+import { fileFetchSink, fileReceiptSink, readActivityIndex, readReceipts, readReceiptsInRange, receiptedFetch } from "./receipts.js";
+import { toCsv } from "./csv.js";
 import { runPlugin, sandboxCheck } from "./plugin-host.js";
 import { claudeCliProvider } from "./claude-cli.js";
 import { disposeLocal, engineForModel, isEmbeddedModel, localModels, localStatus, pullModel } from "./local.js";
@@ -33,7 +35,7 @@ import type { DmSendResult, DmThreadView, NewsPostView, PublishResultView } from
 import type { BrainStatusView, SaveBrainResult, TestBrainResult } from "../shared/brain.js";
 import type { LocalActionResult, LocalModelsView, LocalStatusView, PullProgressView } from "../shared/local.js";
 import type { RunSkillResult, SandboxCheckResult, SkillView } from "../shared/plugin.js";
-import type { ReceiptView } from "../shared/receipts.js";
+import type { ActivitySummary, ReceiptView } from "../shared/receipts.js";
 
 const { autoUpdater } = electronUpdater;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -47,6 +49,18 @@ const TRUST = { devServerUrl: DEV_SERVER_URL, rendererIndexUrl: RENDERER_INDEX_U
 // The core auth client is the ONLY thing that talks to the cloud API. Local
 // server by default; a hosted URL is injected via env when one exists.
 const API_BASE = process.env["DESKHAND_API_URL"] ?? "http://127.0.0.1:8787";
+
+// Receipts calendar "today" and CSV export path — dev/test seams (mirror of
+// DEV_SERVER_URL), honored ONLY unpackaged so the e2e day-grid is fixed on any runner
+// and the export asserts file content without the OS save dialog. Production uses the
+// real clock and the real dialog.
+const NOW_OVERRIDE = (!app.isPackaged && process.env["DESKHAND_NOW"]) || undefined;
+const EXPORT_PATH_OVERRIDE = (!app.isPackaged && process.env["DESKHAND_EXPORT_PATH"]) || undefined;
+function todayKey(): string {
+  const base = NOW_OVERRIDE ? new Date(NOW_OVERRIDE) : new Date();
+  const when = Number.isNaN(base.getTime()) ? new Date() : base;
+  return when.toISOString().slice(0, 10); // YYYY-MM-DD (UTC), matches the index's day keys
+}
 
 // Brain base-URL overrides are a dev/test seam (point the real adapter at a mock).
 // Honored ONLY in unpackaged builds — a shipped app must never let an env var
@@ -367,7 +381,48 @@ app
     // "What leaves your machine" — the panel reads the on-disk egress log. Trusted,
     // READ-ONLY: returns parsed metadata (bounded, malformed-tolerant); nothing from
     // the renderer is accepted, and there's no way to trigger egress or edit the log.
-    registerTrusted(TRUST, "receipts:list", (): Promise<ReceiptView[]> => readReceipts());
+    // No range → the recent window (fast, the mount load). A range → the full retained
+    // history for those dates, spanning every archive, so a calendar click reaches rows
+    // that aged out of the recent window. Read-only, no egress.
+    registerTrusted(TRUST, "receipts:list", (raw: unknown): Promise<ReceiptView[]> => {
+      const r = (raw ?? {}) as { from?: unknown; to?: unknown };
+      const from = typeof r.from === "string" && r.from ? r.from : undefined;
+      const to = typeof r.to === "string" && r.to ? r.to : undefined;
+      return from || to ? readReceiptsInRange({ from, to }) : readReceipts();
+    });
+
+    // The activity calendar's data: the durable day→count index + the day the grid ends
+    // on ("today"). Read-only, no egress.
+    registerTrusted(
+      TRUST,
+      "receipts:activity",
+      async (): Promise<ActivitySummary> => ({ counts: await readActivityIndex(), today: todayKey() }),
+    );
+
+    // Export selected receipts to a CSV the user keeps. Main sanitizes (formula-injection
+    // safe) + serializes + writes to a user-chosen path (save dialog); a temp-path seam
+    // bypasses the dialog in CI. Metadata only — the same non-secret fields the log holds,
+    // never a key/body. A LOCAL file write, not network egress, so no egress receipt.
+    // Returns the path written, or null if the user cancelled / nothing to export.
+    registerTrusted(TRUST, "receipts:exportCsv", async (raw: unknown): Promise<string | null> => {
+      const rows = Array.isArray(raw) ? (raw as ReceiptView[]) : [];
+      // Trust-boundary guard: the UI can only select what it loaded (≤2000), so a payload
+      // past that is a buggy/hostile caller — refuse rather than serialize an unbounded blob.
+      if (rows.length === 0 || rows.length > 10_000) return null;
+      const csv = toCsv(rows);
+      let dest = EXPORT_PATH_OVERRIDE;
+      if (!dest) {
+        const res = await dialog.showSaveDialog({
+          title: "Save your receipts",
+          defaultPath: "deskhand-receipts.csv",
+          filters: [{ name: "Spreadsheet (CSV)", extensions: ["csv"] }],
+        });
+        if (res.canceled || !res.filePath) return null;
+        dest = res.filePath;
+      }
+      writeFileSync(dest, csv);
+      return dest;
+    });
 
     // Brain (model router). The key lives in the keychain (keys.ts) and never
     // leaves main; the renderer only picks a brain and sees the result + receipt.
