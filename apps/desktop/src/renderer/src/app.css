@@ -1272,3 +1272,120 @@ footer {
 .local-advanced > summary:hover {
   color: var(--accent);
 }
+
+/* ── Chat page (loop 031): a chat-list rail + a conversation pane ─────────────────── */
+.chat-page {
+  max-width: 1160px;
+  flex-direction: row;
+  gap: 24px;
+  align-items: stretch;
+  height: 100%;
+}
+
+.chat-list {
+  flex: 0 0 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-right: 1px solid #ece3d7;
+  padding-right: 20px;
+  overflow-y: auto;
+}
+
+.chat-list .chat-new {
+  width: 100%;
+}
+
+.chat-list ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chat-row {
+  display: flex;
+  flex-direction: column;
+  border-radius: 10px;
+  padding: 2px 4px;
+}
+
+.chat-row.active {
+  background: #f4ece0;
+}
+
+.chat-title {
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--ink);
+  font-size: 14px;
+  padding: 8px 8px;
+  cursor: pointer;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-title:hover {
+  color: var(--accent);
+}
+
+.chat-row-actions {
+  display: flex;
+  gap: 12px;
+  padding: 0 8px 6px;
+}
+
+.chat-row-actions .link {
+  font-size: 12px;
+}
+
+.chat-rename {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 4px;
+}
+
+.chat-rename input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid #e5ddd3;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.chat-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.chat-cloud-note {
+  margin: 0;
+}
+
+.chat-thread {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 200px;
+}
+
+.from-brain {
+  align-self: flex-start;
+  background: #fff;
+  border: 1px solid #e5ddd3;
+  color: var(--ink);
+}
+
+.chat-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}

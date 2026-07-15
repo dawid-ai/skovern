@@ -6,6 +6,7 @@ import type { BrainStatusView, SaveBrainInput, SaveBrainResult, TestBrainResult 
 import type { LocalActionResult, LocalModelsView, LocalStatusView, PullProgressView } from "../shared/local.js";
 import type { RunSkillResult, SandboxCheckResult, SkillView } from "../shared/plugin.js";
 import type { ActivitySummary, DateRange, ReceiptView } from "../shared/receipts.js";
+import type { ChatMeta, ChatSendResult, ChatTokenEvent, ChatView } from "../shared/chat.js";
 
 const api = {
   getAppInfo: (): Promise<AppInfo> => ipcRenderer.invoke("app:info") as Promise<AppInfo>,
@@ -88,6 +89,29 @@ const api = {
       };
       ipcRenderer.on("local:pullProgress", handler);
       return () => ipcRenderer.removeListener("local:pullProgress", handler);
+    },
+  },
+  chat: {
+    list: (): Promise<ChatMeta[]> => ipcRenderer.invoke("chat:list") as Promise<ChatMeta[]>,
+    get: (id: string): Promise<ChatView | null> => ipcRenderer.invoke("chat:get", id) as Promise<ChatView | null>,
+    new: (): Promise<ChatMeta> => ipcRenderer.invoke("chat:new") as Promise<ChatMeta>,
+    rename: (id: string, title: string): Promise<void> => ipcRenderer.invoke("chat:rename", id, title) as Promise<void>,
+    delete: (id: string): Promise<void> => ipcRenderer.invoke("chat:delete", id) as Promise<void>,
+    send: (chatId: string, text: string): Promise<ChatSendResult> =>
+      ipcRenderer.invoke("chat:send", { chatId, text }) as Promise<ChatSendResult>,
+    stop: (chatId: string): Promise<void> => ipcRenderer.invoke("chat:stop", chatId) as Promise<void>,
+    // Listen-only: the renderer subscribes to streamed tokens; it can never emit here.
+    // Re-validate the shape at the trust boundary so a malformed payload never reaches
+    // React. Returns an unsubscribe the view calls on unmount.
+    onToken: (cb: (e: ChatTokenEvent) => void): (() => void) => {
+      const handler = (_event: unknown, payload: unknown): void => {
+        const p = (payload ?? {}) as Record<string, unknown>;
+        if (typeof p["chatId"] === "string" && typeof p["messageId"] === "string" && typeof p["delta"] === "string") {
+          cb({ chatId: p["chatId"], messageId: p["messageId"], delta: p["delta"] });
+        }
+      };
+      ipcRenderer.on("chat:token", handler);
+      return () => ipcRenderer.removeListener("chat:token", handler);
     },
   },
   receipts: {
