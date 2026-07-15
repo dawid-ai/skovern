@@ -105,28 +105,36 @@ function killOllamaTree(pid: number): void {
  *  runner is left holding VRAM. */
 export function disposeOllama(): void {
   const pid = ollamaChild?.pid;
-  if (pid) killOllamaTree(pid);
+  if (pid) {
+    ollamaLog(`app exiting → killing our ollama tree (pid ${pid})`);
+    killOllamaTree(pid);
+  }
   ollamaChild = null;
   clearOllamaPid();
 }
 
-/** Startup reaper: if a previous session's hard kill orphaned the `ollama serve` WE spawned,
- *  it's still holding VRAM. Identify it by the recorded pid, VERIFY the image is really ollama
- *  (so a reused pid can't hit an unrelated process), then kill its tree. Best-effort. */
+/** Startup reaper: if a previous session's exit didn't clean up (hard kill, or a dev Ctrl+C the
+ *  harness swallowed), the `ollama serve` WE spawned is still holding VRAM. Identify it by the
+ *  recorded pid, VERIFY the image is really ollama (so a reused pid can't hit an unrelated
+ *  process), then kill its tree. Verbose so a dev can SEE it fire. Best-effort. */
 export function sweepOrphanedOllama(): void {
-  let pid: number;
+  let raw: string;
   try {
-    pid = parseInt(readFileSync(pidFile(), "utf8").trim(), 10);
+    raw = readFileSync(pidFile(), "utf8").trim();
   } catch {
-    return; // no pidfile → nothing to reap
+    ollamaLog("startup reaper: no pid file → nothing we spawned to reap");
+    return;
   }
+  const pid = parseInt(raw, 10);
   if (!Number.isInteger(pid) || pid <= 0) {
+    ollamaLog(`startup reaper: pid file has a bad value (${raw}) → clearing`);
     clearOllamaPid();
     return;
   }
   try {
     process.kill(pid, 0); // liveness probe — throws if the pid is gone
   } catch {
+    ollamaLog(`startup reaper: our previous ollama (pid ${pid}) already exited → clearing`);
     clearOllamaPid();
     return;
   }
@@ -135,15 +143,17 @@ export function sweepOrphanedOllama(): void {
     try {
       const out = spawnSync("tasklist", ["/FI", `PID eq ${pid}`, "/NH", "/FO", "CSV"], { encoding: "utf8", timeout: 4000 });
       if (!/ollama/i.test(out.stdout ?? "")) {
+        ollamaLog(`startup reaper: pid ${pid} is no longer ollama (reused) → clearing, not killing`);
         clearOllamaPid();
         return;
       }
     } catch {
+      ollamaLog(`startup reaper: couldn't verify pid ${pid} via tasklist → leaving it alone`);
       return; // couldn't verify → don't risk killing the wrong process
     }
   }
   killOllamaTree(pid);
-  ollamaLog(`reaped orphaned \`ollama serve\` (pid ${pid}) left by a previous session`);
+  ollamaLog(`startup reaper: REAPED orphaned ollama tree (pid ${pid}) from a previous session → VRAM freed`);
   clearOllamaPid();
 }
 
