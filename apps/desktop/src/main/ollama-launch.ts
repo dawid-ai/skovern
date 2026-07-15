@@ -208,7 +208,14 @@ function startOllamaProcess(): boolean {
   try {
     // Shell-free, fixed args, no user input. Pipe stderr (dev only) so we can SEE whether our
     // spawned Ollama uses the GPU; not detached so it dies with us.
-    ollamaChild = spawn(bin, ["serve"], { stdio: ["ignore", "ignore", app.isPackaged ? "ignore" : "pipe"] });
+    ollamaChild = spawn(bin, ["serve"], {
+      // Keep ONE model in VRAM at a time: switching models evicts the previous one instead of
+      // stacking them. An average user testing a few models would otherwise fill VRAM and each
+      // new model would spill to CPU (the slowdown we just chased). Only applies to the Ollama
+      // WE launch; a user running their own Ollama keeps their own config.
+      env: { ...process.env, OLLAMA_MAX_LOADED_MODELS: "1" },
+      stdio: ["ignore", "ignore", app.isPackaged ? "ignore" : "pipe"],
+    });
     ollamaChild.on("error", () => {}); // a failed spawn must never crash main
     recordOllamaPid(ollamaChild.pid); // so a hard-kill orphan is reaped next launch
     pipeOllamaDiagnostics(ollamaChild);
