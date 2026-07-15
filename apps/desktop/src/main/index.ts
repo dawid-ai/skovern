@@ -633,14 +633,15 @@ app
     });
 
     registerTrusted(TRUST, "brain:test", async (): Promise<TestBrainResult> => {
-      const router = buildRouter();
+      // Self-reliant: an unreachable Ollama brain falls back to the built-in one, same as chat.
+      const { router, note } = await routerWithSelfReliantFallback();
       if (!router) return { ok: false, message: "Add a brain first, then test it." };
       try {
         const { text, receipt } = await router.generate({
           task: "Test my brain",
           prompt: "Say a short, friendly hello so I know you're working.",
         });
-        return { ok: true, message: "Your brain answered!", reply: text, receipt };
+        return { ok: true, message: note ? `Your brain answered! (${note})` : "Your brain answered!", reply: text, receipt };
       } catch {
         // The subscription/local brains have no key — a failure means the CLI or
         // Ollama isn't there, so say that instead of "check the key".
@@ -734,7 +735,8 @@ app
       let brain = noBrain;
       let runTimeoutMs: number | undefined;
       if (manifest.capabilities.includes("brain")) {
-        const router = buildRouter();
+        // Self-reliant: skills also fall back to the built-in brain when Ollama is down.
+        const { router } = await routerWithSelfReliantFallback();
         if (!router) return { ok: false, message: "Connect a brain in Settings first, then try again." };
         brain = router;
         // The CLI brain is much slower per call — give a multi-call skill room to finish.

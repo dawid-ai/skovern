@@ -4,6 +4,7 @@ import type { BrainStatusView } from "../../shared/brain.js";
 import { providerShort } from "../../shared/brain.js";
 import { NewsPage } from "./pages/NewsPage.js";
 import { ChatPage } from "./pages/ChatPage.js";
+import { Onboarding } from "./pages/Onboarding.js";
 import { MessagesPage } from "./pages/MessagesPage.js";
 import { SkillsPage } from "./pages/SkillsPage.js";
 import { ReceiptsPage } from "./pages/ReceiptsPage.js";
@@ -13,7 +14,8 @@ import { SettingsPage } from "./pages/SettingsPage.js";
 // dedicated page at a time. New features become new nav items + pages here —
 // never another block piled onto an existing page (CLAUDE.md UI IA rule).
 
-type Page = "news" | "chat" | "messages" | "skills" | "receipts" | "settings";
+// "onboarding" is a hidden view (not in NAV) reached from the first-run banner.
+type Page = "news" | "chat" | "messages" | "skills" | "receipts" | "settings" | "onboarding";
 
 const NAV: { id: Page; label: string }[] = [
   { id: "news", label: "What's new" },
@@ -54,6 +56,24 @@ export function Shell({ ogNumber, onSignOut }: { ogNumber: number | null; onSign
   useEffect(() => {
     void refreshBrain();
   }, [refreshBrain]);
+
+  // First-run onboarding is a non-blocking PROMPT, not a gate: the shell stays usable (News,
+  // Messages, Receipts need no brain), but a no-brain user gets a prominent banner into the
+  // self-reliant built-in setup, and can open it as its own view. Once a brain is configured
+  // the banner disappears.
+  const needsBrain = brain !== null && !brain.configured;
+
+  if (page === "onboarding") {
+    return (
+      <Onboarding
+        onConfigured={() => {
+          refreshBrain();
+          setPage("news");
+        }}
+        onSkip={() => setPage("news")}
+      />
+    );
+  }
 
   return (
     <div className="shell">
@@ -116,6 +136,17 @@ export function Shell({ ogNumber, onSignOut }: { ogNumber: number | null; onSign
       </nav>
 
       <main className="content">
+        {needsBrain && (
+          <div className="brain-banner" role="note">
+            <span>
+              <strong>Set up your brain to get started.</strong> The easiest is a private one that
+              runs free, right here on your computer — nothing to install yourself.
+            </span>
+            <button className="primary" onClick={() => setPage("onboarding")}>
+              Set it up →
+            </button>
+          </div>
+        )}
         {page === "news" && <NewsPage />}
         {page === "chat" && <ChatPage brain={brain} />}
         {page === "messages" && <MessagesPage messages={thread.messages} onChanged={onChanged} />}
