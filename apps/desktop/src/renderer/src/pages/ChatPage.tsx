@@ -221,7 +221,9 @@ export function ChatPage({ brain, onSetup }: { brain: BrainStatusView | null; on
               <button className="primary" onClick={onSetup}>
                 Set up a brain →
               </button>
-              {brain?.ollamaInstalled && (
+              {/* "Start Ollama" only helps when a brain IS configured but its Ollama is down
+                  (offerSetup) — not in the pure no-brain state, where there's nothing to run. */}
+              {offerSetup && brain?.ollamaInstalled && (
                 <button className="link" onClick={() => void startOllama()} disabled={startingOllama}>
                   {startingOllama ? "Starting Ollama…" : "Start Ollama"}
                 </button>
