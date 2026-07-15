@@ -96,18 +96,64 @@ export function embeddedFilenames(): string[] {
 // when set, the embedded engine uses a FAKE in-process child that answers with canned
 // text — so the app e2e can drive the real UI + real downloader without the native
 // runtime. Inert (undefined) in a packaged app, which always forks the real child.
+const FAKE_REPLY = "Hello — I'm your private brain, running right here on your computer.";
+
+// The per-word gap the fake streams at. A dev/test seam (unpackaged only) so the chat
+// e2e can slow the stream enough to deterministically observe a mid-stream partial.
+function fakeStreamDelayMs(): number {
+  const raw = !app.isPackaged ? process.env["DESKHAND_LLAMA_FAKE_DELAY_MS"] : undefined;
+  const n = raw ? Number(raw) : NaN;
+  return Number.isFinite(n) && n >= 0 ? n : 60;
+}
+
 function fakeLlamaSpawn(): (() => ChildLike) | undefined {
   if (app.isPackaged || process.env["DESKHAND_LLAMA_FAKE"] !== "1") return undefined;
+  const delayMs = fakeStreamDelayMs();
   return () => {
     const listeners: { message: ((m: FromChild) => void)[] } = { message: [] };
     const emit = (m: FromChild): void => queueMicrotask(() => listeners.message.forEach((cb) => cb(m)));
+    // Per-request stream state so an `abort` can stop mid-reply and finalize the partial.
+    const streams = new Map<number, { timer: ReturnType<typeof setTimeout>; sent: string }>();
     emit({ type: "ready" });
     return {
-      send: (msg) => emit({ type: "result", id: msg.id, text: "Hello — I'm your private brain, running right here on your computer.", tokensIn: 12, tokensOut: 13 }),
+      // Stream the canned reply word-by-word (a small gap between words) so the renderer
+      // paints incremental partials — the e2e proves a mid-stream partial before the
+      // final. The plain (non-streaming) `generate` path ignores `chunk`s and resolves
+      // on the terminal `result`, whose text is the full reply (backward-compatible).
+      send: (msg) => {
+        if (msg.type === "abort") {
+          const s = streams.get(msg.id);
+          if (!s) return;
+          clearTimeout(s.timer);
+          streams.delete(msg.id);
+          emit({ type: "result", id: msg.id, text: s.sent, tokensIn: 12, tokensOut: s.sent.split(" ").length });
+          return;
+        }
+        const words = FAKE_REPLY.split(" ");
+        const st = { timer: undefined as unknown as ReturnType<typeof setTimeout>, sent: "" };
+        streams.set(msg.id, st);
+        let i = 0;
+        const step = (): void => {
+          if (i >= words.length) {
+            streams.delete(msg.id);
+            emit({ type: "result", id: msg.id, text: st.sent, tokensIn: 12, tokensOut: words.length });
+            return;
+          }
+          const chunk = (i === 0 ? "" : " ") + words[i];
+          st.sent += chunk;
+          i++;
+          emit({ type: "chunk", id: msg.id, text: chunk });
+          st.timer = setTimeout(step, delayMs);
+        };
+        st.timer = setTimeout(step, delayMs);
+      },
       on: (event, cb) => {
         if (event === "message") listeners.message.push(cb as (m: FromChild) => void);
       },
-      kill: () => {},
+      kill: () => {
+        for (const s of streams.values()) clearTimeout(s.timer);
+        streams.clear();
+      },
     };
   };
 }

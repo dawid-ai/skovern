@@ -3,6 +3,7 @@ import type { DmThreadView } from "../../shared/cloud.js";
 import type { BrainStatusView } from "../../shared/brain.js";
 import { providerShort } from "../../shared/brain.js";
 import { NewsPage } from "./pages/NewsPage.js";
+import { ChatPage } from "./pages/ChatPage.js";
 import { MessagesPage } from "./pages/MessagesPage.js";
 import { SkillsPage } from "./pages/SkillsPage.js";
 import { ReceiptsPage } from "./pages/ReceiptsPage.js";
@@ -12,10 +13,11 @@ import { SettingsPage } from "./pages/SettingsPage.js";
 // dedicated page at a time. New features become new nav items + pages here —
 // never another block piled onto an existing page (CLAUDE.md UI IA rule).
 
-type Page = "news" | "messages" | "skills" | "receipts" | "settings";
+type Page = "news" | "chat" | "messages" | "skills" | "receipts" | "settings";
 
 const NAV: { id: Page; label: string }[] = [
   { id: "news", label: "What's new" },
+  { id: "chat", label: "Chat" },
   { id: "messages", label: "Messages" },
   { id: "skills", label: "Skills" },
   { id: "receipts", label: "Receipts" },
@@ -115,6 +117,7 @@ export function Shell({ ogNumber, onSignOut }: { ogNumber: number | null; onSign
 
       <main className="content">
         {page === "news" && <NewsPage />}
+        {page === "chat" && <ChatPage brain={brain} />}
         {page === "messages" && <MessagesPage messages={thread.messages} onChanged={onChanged} />}
         {page === "skills" && <SkillsPage />}
         {page === "receipts" && <ReceiptsPage />}

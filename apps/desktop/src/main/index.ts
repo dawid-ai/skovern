@@ -1,5 +1,6 @@
 import { app, BrowserWindow, Menu, Tray, dialog, nativeImage } from "electron";
 import { writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import electronUpdater from "electron-updater";
@@ -27,6 +28,7 @@ import { toCsv } from "./csv.js";
 import { runPlugin, sandboxCheck } from "./plugin-host.js";
 import { claudeCliProvider } from "./claude-cli.js";
 import { disposeLocal, embeddedFilenames, engineForModel, isEmbeddedModel, localModels, localStatus, pullModel } from "./local.js";
+import { appendMessage, createTokenCoalescer, deleteChat, getChat, listChats, newChat, renameChat, sendChatToken } from "./chat-store.js";
 import { sweepOrphanParts } from "./download.js";
 import { initialNewness, observeThread } from "./dm-newness.js";
 import { helloManifest } from "../plugins/hello/manifest.js";
@@ -37,6 +39,7 @@ import type { BrainStatusView, SaveBrainResult, TestBrainResult } from "../share
 import type { LocalActionResult, LocalModelsView, LocalStatusView, PullProgressView } from "../shared/local.js";
 import type { RunSkillResult, SandboxCheckResult, SkillView } from "../shared/plugin.js";
 import type { ActivitySummary, ReceiptView } from "../shared/receipts.js";
+import type { ChatMessage, ChatMeta, ChatSendResult, ChatView } from "../shared/chat.js";
 
 const { autoUpdater } = electronUpdater;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -123,6 +126,68 @@ function buildRouter(): Router | null {
   const providers: Partial<Record<ProviderId, Provider>> = {};
   providers[brain.provider] = provider;
   return createRouter({ providers, defaultProvider: brain.provider, sink: fileReceiptSink() });
+}
+
+// ── Chat send (loop 031) ─────────────────────────────────────────────────────────────
+const CHAT_MAX_INPUT = 32 * 1024; // bound untrusted renderer text before it reaches a brain
+const TOKEN_FLUSH_MS = 33; // coalesce tokens at ≈30fps so a fast stream can't churn the renderer
+const TOKEN_FLUSH_BYTES = 4096; // …but flush sooner if a burst piles up (flood cap)
+
+// One in-flight generation per chat; `chat:stop` aborts it by id.
+const chatAborts = new Map<string, AbortController>();
+
+// A plain transcript so the brain has conversation context. Capped to the tail so a long
+// chat can't blow the prompt budget. ponytail: char cap; token-aware trim only if needed.
+function buildChatPrompt(messages: ChatMessage[]): string {
+  const MAX = 8000;
+  const lines = messages.map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`);
+  const prompt = lines.join("\n") + "\nAssistant:";
+  return prompt.length > MAX ? prompt.slice(prompt.length - MAX) : prompt;
+}
+
+// Append the user message, stream the reply through the router (tokens coalesced onto the
+// one-way `chat:token` channel), then save the assistant reply (the partial, on stop).
+// One receipt pair per message rides the router — chat adds no new egress path.
+async function chatSend(chatId: string, text: string): Promise<ChatSendResult> {
+  if (!chatId || !text) return { ok: false, message: "Type a message first." };
+  if (text.length > CHAT_MAX_INPUT) return { ok: false, message: "That message is a bit long — try shortening it." };
+  const chat = getChat(chatId); // getChat throws only on an unsafe id; a bad id → null below
+  if (!chat) return { ok: false, message: "That chat isn't here anymore." };
+  const router = buildRouter();
+  if (!router) return { ok: false, message: "Connect a brain in Settings first, then try again." };
+
+  const now = new Date().toISOString();
+  await appendMessage(chatId, { role: "user", content: text, ts: now });
+  const prompt = buildChatPrompt(getChat(chatId)?.messages ?? []);
+
+  const messageId = randomUUID();
+  const controller = new AbortController();
+  // ponytail: one in-flight generation per chat — a second concurrent send to the same
+  // chat would overwrite this controller (Stop would then only abort the newer). The UI's
+  // `sending` guard already blocks that; per-send controllers only if a caller ever sends
+  // concurrently to one chat.
+  chatAborts.set(chatId, controller);
+
+  const coalescer = createTokenCoalescer((delta) => sendChatToken(mainWindow, { chatId, messageId, delta }), {
+    flushMs: TOKEN_FLUSH_MS,
+    flushBytes: TOKEN_FLUSH_BYTES,
+  });
+
+  try {
+    const res = await router.generateStream({ task: "Chat", prompt }, (d) => coalescer.push(d), controller.signal);
+    coalescer.flush(); // any buffered tail before we finalize
+    // The partial (on stop) is a real answer — save it, never discard (contract C3).
+    if (res.text.length > 0) {
+      await appendMessage(chatId, { role: "assistant", content: res.text, ts: new Date().toISOString() });
+    }
+    return { ok: true, messageId, text: res.text };
+  } catch {
+    coalescer.flush();
+    // The raw brain/network error stays in main (could carry a key/prompt) — warm copy out.
+    return { ok: false, messageId, message: "Your brain didn't answer. Try again in a moment." };
+  } finally {
+    chatAborts.delete(chatId);
+  }
 }
 
 // ponytail: placeholder 16x16 orange square until the real icon exists
@@ -515,6 +580,42 @@ app
         send({ modelId, percent: 0, status: message, done: true, ok: false });
         return { ok: false, message };
       }
+    });
+
+    // Chat (loop 031). Main-owned per-chat storage + streaming replies through the
+    // SAME router (so receipts + local/cloud honesty are inherited, not re-implemented).
+    // The renderer never touches disk or the brain — it drives these by IPC and listens
+    // for tokens on the one-way `chat:token` channel.
+    registerTrusted(TRUST, "chat:list", (): ChatMeta[] => listChats());
+    registerTrusted(TRUST, "chat:get", (rawId: unknown): ChatView | null => {
+      const id = typeof rawId === "string" ? rawId : "";
+      try {
+        return getChat(id);
+      } catch {
+        return null; // an unsafe id is "no such chat", never a throw across IPC
+      }
+    });
+    registerTrusted(TRUST, "chat:new", (): Promise<ChatMeta> => newChat());
+    registerTrusted(TRUST, "chat:rename", (rawId: unknown, rawTitle: unknown): Promise<void> => {
+      const id = typeof rawId === "string" ? rawId : "";
+      const title = typeof rawTitle === "string" ? rawTitle : "";
+      return renameChat(id, title);
+    });
+    registerTrusted(TRUST, "chat:delete", (rawId: unknown): Promise<void> => {
+      const id = typeof rawId === "string" ? rawId : "";
+      return deleteChat(id);
+    });
+    // Stop an in-flight generation for this chat — the router treats an abort as a
+    // legitimate partial (not a failure), so the partial reply is still saved.
+    registerTrusted(TRUST, "chat:stop", (rawId: unknown): void => {
+      const id = typeof rawId === "string" ? rawId : "";
+      chatAborts.get(id)?.abort();
+    });
+    registerTrusted(TRUST, "chat:send", (raw: unknown): Promise<ChatSendResult> => {
+      const o = (raw ?? {}) as { chatId?: unknown; text?: unknown };
+      const chatId = typeof o.chatId === "string" ? o.chatId : "";
+      const text = typeof o.text === "string" ? o.text.trim() : "";
+      return chatSend(chatId, text);
     });
 
     // Skills. `list` shows each skill's permission card (exactly what the broker

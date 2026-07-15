@@ -5,6 +5,7 @@ import type { BrainStatusView, SaveBrainInput, SaveBrainResult, TestBrainResult 
 import type { LocalActionResult, LocalModelsView, LocalStatusView, PullProgressView } from "./local.js";
 import type { RunSkillResult, SandboxCheckResult, SkillView } from "./plugin.js";
 import type { ActivitySummary, DateRange, ReceiptView } from "./receipts.js";
+import type { ChatMeta, ChatSendResult, ChatTokenEvent, ChatView } from "./chat.js";
 
 declare global {
   interface Window {
@@ -51,6 +52,17 @@ declare global {
         list(range?: DateRange): Promise<ReceiptView[]>;
         activity(): Promise<ActivitySummary>;
         exportCsv(rows: ReceiptView[]): Promise<string | null>;
+      };
+      chat: {
+        list(): Promise<ChatMeta[]>;
+        get(id: string): Promise<ChatView | null>;
+        "new"(): Promise<ChatMeta>;
+        rename(id: string, title: string): Promise<void>;
+        delete(id: string): Promise<void>;
+        send(chatId: string, text: string): Promise<ChatSendResult>;
+        stop(chatId: string): Promise<void>;
+        /** Listen for streamed reply tokens. Returns an unsubscribe. */
+        onToken(cb: (e: ChatTokenEvent) => void): () => void;
       };
     };
   }
