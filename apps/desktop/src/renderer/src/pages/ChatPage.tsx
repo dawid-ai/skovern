@@ -13,6 +13,7 @@ export function ChatPage({ brain }: { brain: BrainStatusView | null }) {
   const [streaming, setStreaming] = useState<string | null>(null); // in-progress reply, or null
   const [sending, setSending] = useState(false);
   const [error, setError] = useState(""); // last send failure, shown so it's never silent
+  const [note, setNote] = useState(""); // transparency note (e.g. fell back to the built-in brain)
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameText, setRenameText] = useState("");
 
@@ -33,6 +34,7 @@ export function ChatPage({ brain }: { brain: BrainStatusView | null }) {
     setActiveId(id);
     setStreaming(null);
     setError("");
+    setNote("");
     const view = await window.deskhand.chat.get(id);
     setMessages(view?.messages ?? []);
   }, []);
@@ -67,6 +69,7 @@ export function ChatPage({ brain }: { brain: BrainStatusView | null }) {
     const text = draft.trim();
     if (!id || !text || sending || !configured) return;
     setError("");
+    setNote("");
     setDraft("");
     setMessages((m) => [...m, { role: "user", content: text, ts: new Date().toISOString() }]);
     setStreaming("");
@@ -77,6 +80,7 @@ export function ChatPage({ brain }: { brain: BrainStatusView | null }) {
     // Never leave a failure silent: show what went wrong (the reason is on the dev
     // terminal). Empty/error → the composer stays usable so the user can retry.
     if (!res.ok) setError(res.message ?? "Something went wrong. Try again.");
+    if (res.note) setNote(res.note);
     // Re-read the authoritative messages (the assistant reply is now on disk) and refresh
     // the list so its newest-first order + derived title update.
     const view = await window.deskhand.chat.get(id);
@@ -226,6 +230,7 @@ export function ChatPage({ brain }: { brain: BrainStatusView | null }) {
                   {error}
                 </p>
               )}
+              {note.length > 0 && <p className="notice chat-fallback-note">{note}</p>}
             </div>
           </>
         )}
