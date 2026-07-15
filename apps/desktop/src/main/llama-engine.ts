@@ -25,11 +25,14 @@ const CRASHED = "The private brain stopped unexpectedly. Try again.";
 const TOO_SLOW = "The private brain took too long to answer and was stopped.";
 
 // The parent → child wire protocol.
-export type ToChild = { type: "generate"; id: number; modelPath: string; prompt: string; contextSize: number };
+export type ToChild =
+  | { type: "generate"; id: number; modelPath: string; prompt: string; contextSize: number }
+  | { type: "abort"; id: number };
 // The child → parent protocol.
 export type FromChild =
   | { type: "ready" }
   | { type: "load-error"; message: string }
+  | { type: "chunk"; id: number; text: string }
   | { type: "result"; id: number; text: string; tokensIn?: number; tokensOut?: number }
   | { type: "error"; id: number; message: string };
 
@@ -80,7 +83,7 @@ export function llamaEngine(opts: LlamaEngineOptions): LocalEngine & { dispose()
   let child: ChildLike | null = null;
   let readyPromise: Promise<void> | null = null;
   let nextId = 1;
-  const pending = new Map<number, { resolve: (r: LocalGenerateResult) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+  const pending = new Map<number, { resolve: (r: LocalGenerateResult) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>; onChunk?: (text: string) => void }>();
 
   function lookup(modelId: string): GgufSource | undefined {
     return opts.models().find((m) => m.id === modelId)?.gguf;
@@ -129,6 +132,9 @@ export function llamaEngine(opts: LlamaEngineOptions): LocalEngine & { dispose()
           resolve();
         } else if (m.type === "load-error") {
           teardownReject(new Error(m.message || RUNTIME_DOWN));
+        } else if (m.type === "chunk") {
+          // A streamed token for an in-flight request → forward it to that caller's onChunk.
+          pending.get(m.id)?.onChunk?.(m.text);
         } else if (m.type === "result") {
           const p = pending.get(m.id);
           if (p) {
@@ -191,6 +197,46 @@ export function llamaEngine(opts: LlamaEngineOptions): LocalEngine & { dispose()
           reject(new Error(TOO_SLOW));
         }, genTimeoutMs);
         pending.set(id, { resolve, reject, timer });
+        try {
+          c.send({ type: "generate", id, modelPath: modelPath(gguf.filename), prompt, contextSize: gguf.contextSize });
+        } catch {
+          pending.delete(id);
+          clearTimeout(timer);
+          reject(new Error(CRASHED));
+        }
+      });
+    },
+
+    async generateStream(modelId: string, prompt: string, onDelta: (delta: string) => void, signal?: AbortSignal): Promise<LocalGenerateResult> {
+      const gguf = lookup(modelId);
+      if (!gguf) throw new Error(NO_MODEL);
+      if (!modelDownloaded(gguf.filename)) throw new Error(NOT_DOWNLOADED);
+      await ensureReady();
+      const c = child;
+      if (!c) throw new Error(RUNTIME_DOWN);
+      const id = nextId++;
+      return new Promise<LocalGenerateResult>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          pending.delete(id);
+          reject(new Error(TOO_SLOW));
+        }, genTimeoutMs);
+        // onChunk forwards each streamed token; the terminal `result` (partial on abort)
+        // resolves this promise (handled in the shared message loop above).
+        pending.set(id, { resolve, reject, timer, onChunk: onDelta });
+        // Aborting tells the child to stop; the child then sends its `result` with the
+        // partial text, which resolves us. One-shot listener — a late abort for a
+        // finished id is harmlessly ignored by the child.
+        if (signal) {
+          const onAbort = (): void => {
+            try {
+              c.send({ type: "abort", id });
+            } catch {
+              /* child already gone — teardown will settle the pending request */
+            }
+          };
+          if (signal.aborted) onAbort();
+          else signal.addEventListener("abort", onAbort, { once: true });
+        }
         try {
           c.send({ type: "generate", id, modelPath: modelPath(gguf.filename), prompt, contextSize: gguf.contextSize });
         } catch {

@@ -16,6 +16,11 @@ export interface Provider {
   /** Send a prompt, get text back — a bare string, or (for a local brain that
    *  reports them) text plus token counts. Throws on a provider/network error. */
   generate(prompt: string): Promise<string | ProviderOutput>;
+  /** Streaming variant: emit the reply as ordered deltas via `onDelta`, resolving with
+   *  the final text (+ optional token counts). A provider that omits this is driven
+   *  through `generate` (the router emits the whole reply as one delta). `signal` aborts
+   *  an in-flight stream — the provider should stop and resolve with the partial so far. */
+  generateStream?(prompt: string, onDelta: (delta: string) => void, signal?: AbortSignal): Promise<string | ProviderOutput>;
 }
 
 /** What a provider hands back. Cloud providers return a bare `string`; a local
@@ -84,4 +89,9 @@ export interface GenerateResult {
 
 export interface Router {
   generate(input: GenerateInput): Promise<GenerateResult>;
+  /** Like `generate`, but streams the reply as ordered deltas via `onDelta`. Writes the
+   *  SAME single receipt (a `"sent"` line before egress, one `"done"` after the stream
+   *  ends) — never one per delta. `signal` aborts the stream; the returned result then
+   *  holds the partial text streamed so far, and the `"done"` receipt is still written. */
+  generateStream(input: GenerateInput, onDelta: (delta: string) => void, signal?: AbortSignal): Promise<GenerateResult>;
 }

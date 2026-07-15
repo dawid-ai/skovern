@@ -139,4 +139,51 @@ describe("llamaEngine over a fake child", () => {
     downloaded.add("qwen.gguf");
     expect(await engine.listModels()).toEqual([{ id: "qwen", label: "Qwen", sizeBytes: 10 }]);
   });
+
+  // E1 — generateStream forwards each `chunk` message to onDelta IN ORDER and resolves
+  // with the final `result` (text + token counts).
+  it("E1: generateStream forwards chunks in order and resolves the final result", async () => {
+    downloaded.add("qwen.gguf");
+    const fake = new Fake((m, f) => {
+      if (m.type !== "generate") return;
+      f.emit({ type: "chunk", id: m.id, text: "Hel" });
+      f.emit({ type: "chunk", id: m.id, text: "lo" });
+      f.emit({ type: "result", id: m.id, text: "Hello", tokensIn: 2, tokensOut: 3 });
+    });
+    const engine = llamaEngine({ models, fetchSink: noopSink, spawn: () => fake });
+    const got: string[] = [];
+    const p = engine.generateStream!("qwen", "hi", (d) => got.push(d));
+    fake.emit({ type: "ready" }); // unblock ensureReady → engine sends the generate
+    await expect(p).resolves.toEqual({ text: "Hello", tokensIn: 2, tokensOut: 3 });
+    expect(got).toEqual(["Hel", "lo"]); // deltas in order
+  });
+
+  // E2 — aborting mid-stream sends `abort` to the child; the child's partial `result`
+  // resolves the call. No hang, no crash.
+  it("E2: abort tells the child to stop and resolves with the partial", async () => {
+    downloaded.add("qwen.gguf");
+    const controller = new AbortController();
+    const fake = new Fake((m, f) => {
+      if (m.type === "generate") {
+        f.emit({ type: "chunk", id: m.id, text: "keep" }); // one token, then we wait for the abort
+      } else if (m.type === "abort") {
+        f.emit({ type: "result", id: m.id, text: "keep", tokensIn: 1, tokensOut: 1 }); // partial
+      }
+    });
+    const engine = llamaEngine({ models, fetchSink: noopSink, spawn: () => fake });
+    const got: string[] = [];
+    const p = engine.generateStream!(
+      "qwen",
+      "hi",
+      (d) => {
+        got.push(d);
+        if (got.length === 1) controller.abort(); // stop right after the first token
+      },
+      controller.signal,
+    );
+    fake.emit({ type: "ready" });
+    await expect(p).resolves.toEqual({ text: "keep", tokensIn: 1, tokensOut: 1 });
+    expect(got).toEqual(["keep"]);
+    expect(fake.sent.some((m) => m.type === "abort")).toBe(true); // the engine forwarded the abort
+  });
 });

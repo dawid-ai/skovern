@@ -9,10 +9,13 @@
 // inference); CI injects a fake child and never loads the native addon.
 
 // Inlined so the child bundle never imports llama-engine.ts (which pulls in electron).
-type ToChild = { type: "generate"; id: number; modelPath: string; prompt: string; contextSize: number };
+type ToChild =
+  | { type: "generate"; id: number; modelPath: string; prompt: string; contextSize: number }
+  | { type: "abort"; id: number };
 type FromChild =
   | { type: "ready" }
   | { type: "load-error"; message: string }
+  | { type: "chunk"; id: number; text: string }
   | { type: "result"; id: number; text: string; tokensIn?: number; tokensOut?: number }
   | { type: "error"; id: number; message: string };
 
@@ -32,8 +35,14 @@ interface LlamaContext {
 interface Llama {
   loadModel(o: { modelPath: string }): Promise<LlamaModel>;
 }
+interface PromptOptions {
+  onTextChunk?: (chunk: string) => void;
+  signal?: AbortSignal;
+  /** Resolve with the partial response so far on abort, instead of throwing. */
+  stopOnAbortSignal?: boolean;
+}
 interface ChatSession {
-  prompt(text: string): Promise<string>;
+  prompt(text: string, options?: PromptOptions): Promise<string>;
 }
 
 async function main(): Promise<void> {
@@ -63,20 +72,39 @@ async function main(): Promise<void> {
     return m;
   }
 
+  // In-flight generations by request id, so an "abort" message can stop the right one.
+  const aborters = new Map<number, AbortController>();
+
   process.on("message", (msg: ToChild) => {
-    if (!msg || msg.type !== "generate") return;
+    if (!msg) return;
+    if (msg.type === "abort") {
+      aborters.get(msg.id)?.abort();
+      return;
+    }
+    if (msg.type !== "generate") return;
     void (async () => {
+      const controller = new AbortController();
+      aborters.set(msg.id, controller);
       try {
         const model = await modelFor(msg.modelPath);
         const context = await model.createContext({ contextSize: msg.contextSize });
         const session = new ChatSessionCtor({ contextSequence: context.getSequence() });
-        const text = await session.prompt(msg.prompt);
+        // Stream each token to the parent as it's produced. `stopOnAbortSignal` makes an
+        // abort resolve with the partial text so far (not throw) — a user "Stop" is a
+        // legitimate partial answer, not an error.
+        const text = await session.prompt(msg.prompt, {
+          signal: controller.signal,
+          stopOnAbortSignal: true,
+          onTextChunk: (chunk) => send({ type: "chunk", id: msg.id, text: chunk }),
+        });
         // Honest token counts from the model's own tokenizer.
         const tokensIn = model.tokenize(msg.prompt).length;
         const tokensOut = model.tokenize(text).length;
         send({ type: "result", id: msg.id, text, tokensIn, tokensOut });
       } catch (e) {
         send({ type: "error", id: msg.id, message: e instanceof Error ? e.message.slice(0, 200) : "generate failed" });
+      } finally {
+        aborters.delete(msg.id);
       }
     })();
   });
