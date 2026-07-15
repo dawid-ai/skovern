@@ -338,3 +338,36 @@ test("C7: with a CLOUD brain, the chat shows an honest 'leaves your computer' no
     rmSync(userDataDir, { recursive: true, force: true });
   }
 });
+
+test("a brain that FAILS surfaces an error in the chat, never silence", async () => {
+  test.setTimeout(120_000);
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const app = await electron.launch({
+    args: [".", `--user-data-dir=${userDataDir}`],
+    // a cloud brain pointed at a dead port → every send fails fast (ECONNREFUSED). The bug
+    // was: a failed send showed NOTHING. It must now show an honest error + re-enable send.
+    env: { ...process.env, DESKHAND_API_URL: server.url, DESKHAND_OPENROUTER_BASE_URL: "http://127.0.0.1:1" },
+  });
+  try {
+    const page = await app.firstWindow();
+    await signIn(page, "fail@shop.test");
+    await page.getByRole("button", { name: "Settings" }).click();
+    await page.getByLabel("Your key").fill(FAKE_KEY);
+    await page.getByRole("button", { name: "Save brain" }).click();
+    await expect(page.getByText("Brain saved.")).toBeVisible();
+
+    await page.getByRole("button", { name: "Chat" }).click();
+    await page.getByRole("button", { name: "New chat" }).click();
+    await page.getByLabel("Message your brain").fill("are you there?");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+
+    // the failure is visible (an alert), not swallowed into a blank chat
+    await expect(page.getByRole("alert")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("alert")).toContainText(/didn't answer|nothing|went wrong/i);
+    // and the composer is usable again for a retry
+    await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible();
+  } finally {
+    await app.close();
+    rmSync(userDataDir, { recursive: true, force: true });
+  }
+});

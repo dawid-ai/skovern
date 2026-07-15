@@ -1389,3 +1389,7 @@ footer {
   flex-direction: column;
   gap: 8px;
 }
+
+.chat-error {
+  color: #a3341f;
+}
