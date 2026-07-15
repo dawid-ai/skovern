@@ -1,6 +1,6 @@
 import { app } from "electron";
-import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync } from "node:fs";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { OllamaLaunch } from "../shared/settings.js";
 
@@ -59,15 +59,92 @@ export function ollamaInstalled(): boolean {
 
 let ollamaChild: ChildProcess | null = null;
 
-/** Kill any Ollama we started (called on app quit). We never kill an Ollama the user was
- *  already running — only a child we spawned ourselves. */
-export function disposeOllama(): void {
+// We record the pid of the `ollama serve` WE spawn to a small file, so if a hard kill (Task
+// Manager / taskkill /F) skips our quit handlers and orphans it, the NEXT launch can reap it
+// before it starves the GPU. Only ever OUR spawned pid — never an Ollama the user runs.
+function pidFile(): string {
+  return path.join(app.getPath("userData"), "ollama-managed.pid");
+}
+function recordOllamaPid(pid: number | undefined): void {
+  if (!pid) return;
   try {
-    ollamaChild?.kill();
+    writeFileSync(pidFile(), String(pid));
+  } catch {
+    /* best-effort */
+  }
+}
+function clearOllamaPid(): void {
+  try {
+    rmSync(pidFile(), { force: true });
+  } catch {
+    /* best-effort */
+  }
+}
+
+// Kill the WHOLE Ollama process tree — `ollama serve` spawns `ollama runner` children that
+// hold the model in VRAM, and killing only the parent orphans them (the VRAM leak). On
+// Windows `taskkill /T` reaps the descendant tree; elsewhere fall back to killing the process.
+function killOllamaTree(pid: number): void {
+  if (process.platform === "win32") {
+    try {
+      spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { timeout: 5000 });
+      return;
+    } catch {
+      /* fall through to a plain kill */
+    }
+  }
+  try {
+    process.kill(pid);
   } catch {
     /* already gone */
   }
+}
+
+/** Kill any Ollama we started (app quit / signal). We never kill an Ollama the user was
+ *  already running — only the child we spawned ourselves — and we reap its whole tree so no
+ *  runner is left holding VRAM. */
+export function disposeOllama(): void {
+  const pid = ollamaChild?.pid;
+  if (pid) killOllamaTree(pid);
   ollamaChild = null;
+  clearOllamaPid();
+}
+
+/** Startup reaper: if a previous session's hard kill orphaned the `ollama serve` WE spawned,
+ *  it's still holding VRAM. Identify it by the recorded pid, VERIFY the image is really ollama
+ *  (so a reused pid can't hit an unrelated process), then kill its tree. Best-effort. */
+export function sweepOrphanedOllama(): void {
+  let pid: number;
+  try {
+    pid = parseInt(readFileSync(pidFile(), "utf8").trim(), 10);
+  } catch {
+    return; // no pidfile → nothing to reap
+  }
+  if (!Number.isInteger(pid) || pid <= 0) {
+    clearOllamaPid();
+    return;
+  }
+  try {
+    process.kill(pid, 0); // liveness probe — throws if the pid is gone
+  } catch {
+    clearOllamaPid();
+    return;
+  }
+  // Verify identity before killing (guard against pid reuse hitting an unrelated process).
+  if (process.platform === "win32") {
+    try {
+      const out = spawnSync("tasklist", ["/FI", `PID eq ${pid}`, "/NH", "/FO", "CSV"], { encoding: "utf8", timeout: 4000 });
+      if (!/ollama/i.test(out.stdout ?? "")) {
+        clearOllamaPid();
+        return;
+      }
+    } catch {
+      return; // couldn't verify → don't risk killing the wrong process
+    }
+  }
+  killOllamaTree(pid);
+  ollamaLog(`reaped orphaned \`ollama serve\` (pid ${pid}) left by a previous session`);
+  clearOllamaPid();
 }
 
 // Spawn `ollama serve` shell-free. The fake seam records the attempt without a real process
@@ -133,6 +210,7 @@ function startOllamaProcess(): boolean {
     // spawned Ollama uses the GPU; not detached so it dies with us.
     ollamaChild = spawn(bin, ["serve"], { stdio: ["ignore", "ignore", app.isPackaged ? "ignore" : "pipe"] });
     ollamaChild.on("error", () => {}); // a failed spawn must never crash main
+    recordOllamaPid(ollamaChild.pid); // so a hard-kill orphan is reaped next launch
     pipeOllamaDiagnostics(ollamaChild);
     ollamaLog(`spawned \`ollama serve\` from ${bin}`);
     logGpuEnv();

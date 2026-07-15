@@ -29,7 +29,7 @@ import { runPlugin, sandboxCheck } from "./plugin-host.js";
 import { claudeCliProvider } from "./claude-cli.js";
 import { disposeLocal, downloadedEmbeddedModelId, embeddedFilenames, engineForModel, isEmbeddedModel, localModels, localStatus, makeEngine, pullModel } from "./local.js";
 import { appendMessage, createTokenCoalescer, deleteChat, getChat, listChats, newChat, renameChat, sendChatStatus, sendChatToken } from "./chat-store.js";
-import { disposeOllama, ensureOllamaRunning, fakeLaunchCount, ollamaInstalled, pickOllamaAction } from "./ollama-launch.js";
+import { disposeOllama, ensureOllamaRunning, fakeLaunchCount, ollamaInstalled, pickOllamaAction, sweepOrphanedOllama } from "./ollama-launch.js";
 import { getSettings, setOllamaLaunch, type OllamaLaunch } from "./settings-store.js";
 import { sweepOrphanParts } from "./download.js";
 import { initialNewness, observeThread } from "./dm-newness.js";
@@ -460,6 +460,17 @@ app.on("before-quit", () => {
   disposeOllama(); // kill an Ollama we started (never one the user was already running)
 });
 
+// A terminal Ctrl+C (dev) or a SIGTERM skips `before-quit`, so our managed children — and,
+// worse, the Ollama runner processes holding VRAM — would leak. Reap them, then exit. (A hard
+// SIGKILL / Task-Manager kill can't be trapped; the startup reaper below covers that case.)
+for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+  process.on(sig, () => {
+    disposeLocal();
+    disposeOllama();
+    process.exit(0);
+  });
+}
+
 app.on("window-all-closed", () => {
   // tray app: stay alive — unless there is no tray to reopen from
   if (tray === null) app.quit();
@@ -878,6 +889,10 @@ app
     // Wasteful, never corrupt; the snapshot is the shipped baseline. Widen to the live
     // catalog here if snapshot/live gguf filenames ever diverge meaningfully.
     void sweepOrphanParts(embeddedFilenames());
+
+    // Reap an `ollama serve` WE spawned that a previous hard-kill orphaned — it's still holding
+    // VRAM and would starve a fresh model onto the CPU. Verified by pid + image before killing.
+    sweepOrphanedOllama();
 
     createWindow();
     try {
