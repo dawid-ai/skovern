@@ -81,33 +81,68 @@ function clearOllamaPid(): void {
   }
 }
 
-// Kill the WHOLE Ollama process tree — `ollama serve` spawns `ollama runner` children that
-// hold the model in VRAM, and killing only the parent orphans them (the VRAM leak). On
-// Windows `taskkill /T` reaps the descendant tree; elsewhere fall back to killing the process.
-function killOllamaTree(pid: number): void {
-  if (process.platform === "win32") {
-    try {
-      spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { timeout: 5000 });
-      return;
-    } catch {
-      /* fall through to a plain kill */
-    }
-  }
+// Enumerate every ollama.exe with its parent pid (Windows). We use this to find the `ollama
+// runner` children of OUR `ollama serve` — those hold the model in VRAM and can OUTLIVE serve
+// (a dead serve leaves an orphaned runner still pinning VRAM), so a serve-only kill leaks.
+function listOllamaProcesses(): { pid: number; ppid: number }[] {
+  if (process.platform !== "win32") return [];
   try {
-    process.kill(pid);
+    const out = spawnSync(
+      "powershell",
+      ["-NoProfile", "-Command", "Get-CimInstance Win32_Process -Filter \"Name='ollama.exe'\" | ForEach-Object { \"$($_.ProcessId) $($_.ParentProcessId)\" }"],
+      { encoding: "utf8", timeout: 6000 },
+    );
+    return (out.stdout ?? "")
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .map((l) => {
+        const [pid, ppid] = l.split(/\s+/).map((n) => parseInt(n, 10));
+        return { pid: pid ?? NaN, ppid: ppid ?? NaN };
+      })
+      .filter((p) => Number.isInteger(p.pid) && Number.isInteger(p.ppid));
   } catch {
-    /* already gone */
+    return [];
   }
 }
 
+/** Reap OUR Ollama family: the `ollama serve` at `servePid` PLUS every ollama.exe parented to
+ *  it (its `runner` children — the VRAM holders). Works even when serve already died: the
+ *  orphaned runners still carry `ppid === servePid`. Only ever kills processes that ARE our
+ *  serve or are parented to it — never an Ollama the user runs themselves. Returns how many
+ *  it killed. */
+function reapOllamaFamily(servePid: number): number {
+  if (process.platform !== "win32") {
+    try {
+      process.kill(servePid);
+      return 1;
+    } catch {
+      return 0;
+    }
+  }
+  const procs = listOllamaProcesses();
+  const alive = new Set(procs.map((p) => p.pid));
+  const targets = new Set<number>();
+  if (alive.has(servePid)) targets.add(servePid); // serve itself, only if still an ollama.exe (pid-reuse guard)
+  for (const p of procs) if (p.ppid === servePid) targets.add(p.pid); // its runners (live or orphaned)
+  for (const pid of targets) {
+    try {
+      spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { timeout: 5000 });
+    } catch {
+      /* best-effort */
+    }
+  }
+  return targets.size;
+}
+
 /** Kill any Ollama we started (app quit / signal). We never kill an Ollama the user was
- *  already running — only the child we spawned ourselves — and we reap its whole tree so no
- *  runner is left holding VRAM. */
+ *  already running — only the serve we spawned AND its runner children, so no runner is left
+ *  holding VRAM. */
 export function disposeOllama(): void {
   const pid = ollamaChild?.pid;
   if (pid) {
-    ollamaLog(`app exiting → killing our ollama tree (pid ${pid})`);
-    killOllamaTree(pid);
+    const n = reapOllamaFamily(pid);
+    ollamaLog(`app exiting → reaped ${n} ollama process(es) (serve ${pid} + runners)`);
   }
   ollamaChild = null;
   clearOllamaPid();
@@ -125,35 +160,18 @@ export function sweepOrphanedOllama(): void {
     ollamaLog("startup reaper: no pid file → nothing we spawned to reap");
     return;
   }
-  const pid = parseInt(raw, 10);
-  if (!Number.isInteger(pid) || pid <= 0) {
+  const servePid = parseInt(raw, 10);
+  if (!Number.isInteger(servePid) || servePid <= 0) {
     ollamaLog(`startup reaper: pid file has a bad value (${raw}) → clearing`);
     clearOllamaPid();
     return;
   }
-  try {
-    process.kill(pid, 0); // liveness probe — throws if the pid is gone
-  } catch {
-    ollamaLog(`startup reaper: our previous ollama (pid ${pid}) already exited → clearing`);
-    clearOllamaPid();
-    return;
-  }
-  // Verify identity before killing (guard against pid reuse hitting an unrelated process).
-  if (process.platform === "win32") {
-    try {
-      const out = spawnSync("tasklist", ["/FI", `PID eq ${pid}`, "/NH", "/FO", "CSV"], { encoding: "utf8", timeout: 4000 });
-      if (!/ollama/i.test(out.stdout ?? "")) {
-        ollamaLog(`startup reaper: pid ${pid} is no longer ollama (reused) → clearing, not killing`);
-        clearOllamaPid();
-        return;
-      }
-    } catch {
-      ollamaLog(`startup reaper: couldn't verify pid ${pid} via tasklist → leaving it alone`);
-      return; // couldn't verify → don't risk killing the wrong process
-    }
-  }
-  killOllamaTree(pid);
-  ollamaLog(`startup reaper: REAPED orphaned ollama tree (pid ${pid}) from a previous session → VRAM freed`);
+  // Reap OUR serve (if still alive) AND any runner still parented to it — the runner is the VRAM
+  // holder and survives a Ctrl+C / hard kill that took serve down. reapOllamaFamily matches by
+  // parent pid, so it's precise: never an Ollama the user runs themselves.
+  const n = reapOllamaFamily(servePid);
+  if (n > 0) ollamaLog(`startup reaper: REAPED ${n} orphaned ollama process(es) (serve ${servePid} + runners) → VRAM freed`);
+  else ollamaLog(`startup reaper: nothing left from our previous session (serve ${servePid} + runners already gone)`);
   clearOllamaPid();
 }
 
