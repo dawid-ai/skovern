@@ -198,3 +198,43 @@ test("O2: an unreachable Ollama brain falls back to the built-in in BOTH chat an
     rmSync(userDataDir, { recursive: true, force: true });
   }
 });
+
+test("O3: Ollama consent — the auto-launch preference persists, and a down Ollama still answers", async () => {
+  test.setTimeout(180_000);
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const app = await electron.launch({
+    args: [".", `--user-data-dir=${userDataDir}`],
+    env: {
+      ...launchOpts(userDataDir).env,
+      DESKHAND_OLLAMA_INSTALLED: "1", // Ollama "installed" (seam) but the URL is dead → not running
+      DESKHAND_OLLAMA_SPAWN_FAKE: "1", // a fake `ollama serve` (records the attempt, won't serve)
+    },
+  });
+  try {
+    const page = await app.firstWindow();
+    await signIn(page, "ollama@shop.test");
+    await setUpBuiltInBrain(page); // a downloaded built-in exists to fall back to
+
+    // The Settings Ollama section appears (installed) and the auto-launch choice persists.
+    await page.getByRole("button", { name: "Settings" }).click();
+    await expect(page.getByText("Ollama (optional helper)")).toBeVisible();
+    await page.getByLabel(/If you pick an Ollama brain/i).selectOption("always");
+    // navigate away + back → the preference stuck
+    await page.getByRole("button", { name: "What's new" }).click();
+    await page.getByRole("button", { name: "Settings" }).click();
+    await expect(page.getByLabel(/If you pick an Ollama brain/i)).toHaveValue("always");
+
+    // Pin the brain to an Ollama model. With "always" + installed + down, the app attempts a
+    // (fake) launch; the fake can't serve, so it gracefully falls back to the built-in.
+    await page.evaluate(() => window.deskhand.brain.save({ provider: "local", key: "", model: "mistral-small:latest" }));
+    await page.getByRole("button", { name: "Chat" }).click();
+    await page.getByRole("button", { name: "New chat" }).click();
+    await page.getByLabel("Message your brain").fill("hi");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(page.locator(".chat-thread .from-brain p").last()).toHaveText(FAKE_REPLY, { timeout: 30_000 });
+    await expect(page.locator(".chat-fallback-note")).toContainText(/built-in one/i);
+  } finally {
+    await app.close();
+    rmSync(userDataDir, { recursive: true, force: true });
+  }
+});

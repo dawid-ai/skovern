@@ -7,6 +7,7 @@ import type { LocalActionResult, LocalModelsView, LocalStatusView, PullProgressV
 import type { RunSkillResult, SandboxCheckResult, SkillView } from "../shared/plugin.js";
 import type { ActivitySummary, DateRange, ReceiptView } from "../shared/receipts.js";
 import type { ChatMeta, ChatSendResult, ChatTokenEvent, ChatView } from "../shared/chat.js";
+import type { OllamaLaunch, OllamaStatusView, SettingsView } from "../shared/settings.js";
 
 const api = {
   getAppInfo: (): Promise<AppInfo> => ipcRenderer.invoke("app:info") as Promise<AppInfo>,
@@ -113,6 +114,12 @@ const api = {
       ipcRenderer.on("chat:token", handler);
       return () => ipcRenderer.removeListener("chat:token", handler);
     },
+  },
+  settings: {
+    get: (): Promise<SettingsView> => ipcRenderer.invoke("settings:get") as Promise<SettingsView>,
+    setOllamaLaunch: (value: OllamaLaunch): Promise<SettingsView> =>
+      ipcRenderer.invoke("settings:setOllamaLaunch", value) as Promise<SettingsView>,
+    ollamaStatus: (): Promise<OllamaStatusView> => ipcRenderer.invoke("ollama:status") as Promise<OllamaStatusView>,
   },
   receipts: {
     // No range → the recent window; a range → the full retained history for those dates.

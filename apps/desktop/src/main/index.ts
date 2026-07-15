@@ -29,7 +29,8 @@ import { runPlugin, sandboxCheck } from "./plugin-host.js";
 import { claudeCliProvider } from "./claude-cli.js";
 import { disposeLocal, downloadedEmbeddedModelId, embeddedFilenames, engineForModel, isEmbeddedModel, localModels, localStatus, makeEngine, pullModel } from "./local.js";
 import { appendMessage, createTokenCoalescer, deleteChat, getChat, listChats, newChat, renameChat, sendChatToken } from "./chat-store.js";
-import { pickSelfReliantFallback } from "./brain-fallback.js";
+import { disposeOllama, ensureOllamaRunning, ollamaInstalled, pickOllamaAction } from "./ollama-launch.js";
+import { getSettings, setOllamaLaunch, type OllamaLaunch } from "./settings-store.js";
 import { sweepOrphanParts } from "./download.js";
 import { initialNewness, observeThread } from "./dm-newness.js";
 import { helloManifest } from "../plugins/hello/manifest.js";
@@ -41,6 +42,7 @@ import type { LocalActionResult, LocalModelsView, LocalStatusView, PullProgressV
 import type { RunSkillResult, SandboxCheckResult, SkillView } from "../shared/plugin.js";
 import type { ActivitySummary, ReceiptView } from "../shared/receipts.js";
 import type { ChatMessage, ChatMeta, ChatSendResult, ChatView } from "../shared/chat.js";
+import type { OllamaStatusView, SettingsView } from "../shared/settings.js";
 
 const { autoUpdater } = electronUpdater;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -187,10 +189,18 @@ async function routerWithSelfReliantFallback(): Promise<{ router: Router | null;
   if (!brain || brain.provider !== "local" || isEmbeddedModel(brain.model ?? "")) {
     return { router: normal, note: "" };
   }
-  const ollamaReady = await makeEngine().detect();
-  const fallbackId = pickSelfReliantFallback(brain, false, ollamaReady, downloadedEmbeddedModelId());
-  if (!fallbackId) return { router: normal, note: "" }; // Ollama up, or nothing to fall back to
-  devlog(`Ollama unreachable → falling back to built-in embedded model ${fallbackId}`);
+  const running = await makeEngine().detect();
+  const action = pickOllamaAction(ollamaInstalled(), running, getSettings().ollamaLaunch);
+  if (action === "use-ollama") return { router: normal, note: "" };
+  if (action === "launch-then-use") {
+    devlog("Ollama installed + auto-launch on → starting it…");
+    if (await ensureOllamaRunning(() => makeEngine().detect())) return { router: normal, note: "" };
+    devlog("Ollama didn't come up → falling back to built-in");
+  }
+  // use-builtin (or a launch that didn't come up): fall back to a downloaded built-in model.
+  const fallbackId = downloadedEmbeddedModelId();
+  if (!fallbackId) return { router: normal, note: "" }; // nothing to fall back to → fails honestly
+  devlog(`falling back to built-in embedded model ${fallbackId}`);
   return {
     router: buildLocalEmbeddedRouter(fallbackId),
     note: "Your usual brain wasn't available, so I used your built-in one on this computer.",
@@ -383,6 +393,7 @@ function checkForUpdatesSafely(): void {
 app.on("before-quit", () => {
   quitting = true;
   disposeLocal(); // kill the embedded runtime child, if one is warm
+  disposeOllama(); // kill an Ollama we started (never one the user was already running)
 });
 
 app.on("window-all-closed", () => {
@@ -712,6 +723,19 @@ app
       const text = typeof o.text === "string" ? o.text.trim() : "";
       return chatSend(chatId, text);
     });
+
+    // App settings (no secrets) + Ollama status. Ollama is an optional upgrade: the app
+    // may auto-start it only when the user opts in (`ollamaLaunch: "always"`).
+    registerTrusted(TRUST, "settings:get", (): SettingsView => getSettings());
+    registerTrusted(TRUST, "settings:setOllamaLaunch", (raw: unknown): SettingsView => {
+      const v = raw === "always" || raw === "never" || raw === "ask" ? (raw as OllamaLaunch) : "ask";
+      setOllamaLaunch(v);
+      return getSettings();
+    });
+    registerTrusted(TRUST, "ollama:status", async (): Promise<OllamaStatusView> => ({
+      installed: ollamaInstalled(),
+      running: await makeEngine().detect(),
+    }));
 
     // Skills. `list` shows each skill's permission card (exactly what the broker
     // enforces); `run` executes it in the sandboxed host; `sandboxCheck` proves the
