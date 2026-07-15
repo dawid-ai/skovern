@@ -6,6 +6,7 @@ import type { LocalActionResult, LocalModelsView, LocalStatusView, PullProgressV
 import type { RunSkillResult, SandboxCheckResult, SkillView } from "./plugin.js";
 import type { ActivitySummary, DateRange, ReceiptView } from "./receipts.js";
 import type { ChatMeta, ChatSendResult, ChatTokenEvent, ChatView } from "./chat.js";
+import type { OllamaLaunch, OllamaStatusView, SettingsView } from "./settings.js";
 
 declare global {
   interface Window {
@@ -52,6 +53,11 @@ declare global {
         list(range?: DateRange): Promise<ReceiptView[]>;
         activity(): Promise<ActivitySummary>;
         exportCsv(rows: ReceiptView[]): Promise<string | null>;
+      };
+      settings: {
+        get(): Promise<SettingsView>;
+        setOllamaLaunch(value: OllamaLaunch): Promise<SettingsView>;
+        ollamaStatus(): Promise<OllamaStatusView>;
       };
       chat: {
         list(): Promise<ChatMeta[]>;

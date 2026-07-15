@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { BrainStatusView, ProviderId, Receipt } from "../../../shared/brain.js";
 import { providerName } from "../../../shared/brain.js";
+import type { OllamaLaunch, OllamaStatusView, SettingsView } from "../../../shared/settings.js";
 import { LocalBrainSetup } from "./LocalBrainSetup.js";
 
 // "Settings" — for now, the brain picker: choose where your assistant thinks,
@@ -46,6 +47,8 @@ export function SettingsPage({ onBrainChanged }: { onBrainChanged?: () => void }
   const [reply, setReply] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [localOpen, setLocalOpen] = useState(false);
+  const [settings, setSettings] = useState<SettingsView | null>(null);
+  const [ollama, setOllama] = useState<OllamaStatusView | null>(null);
 
   // Refetch our own status AND tell the shell so the sidebar readout stays in step.
   const refreshStatus = () =>
@@ -59,7 +62,13 @@ export function SettingsPage({ onBrainChanged }: { onBrainChanged?: () => void }
       setStatus(s);
       if (s.provider) setProvider(s.provider);
     });
+    void window.deskhand.settings.get().then(setSettings);
+    void window.deskhand.settings.ollamaStatus().then(setOllama);
   }, []);
+
+  async function changeOllamaLaunch(v: OllamaLaunch) {
+    setSettings(await window.deskhand.settings.setOllamaLaunch(v));
+  }
 
   // The local brain has its own dedicated setup view (its own place, per the IA rule).
   if (localOpen) {
@@ -224,6 +233,51 @@ export function SettingsPage({ onBrainChanged }: { onBrainChanged?: () => void }
         )}
         {receipt !== null && <p className="receipt">{receiptLine(receipt)}</p>}
       </div>
+
+      {ollama !== null && (
+        <div className="form ollama-settings">
+          <h2>Ollama (optional helper)</h2>
+          <p className="hint">
+            Ollama is a free helper that can run bigger brains on your computer. Deskhand doesn&apos;t
+            need it — your built-in brain works on its own.{" "}
+            {ollama.installed
+              ? ollama.running
+                ? "It's installed and running."
+                : "It's installed, but not running right now."
+              : "It's not installed on this computer — that's perfectly fine."}
+          </p>
+          {ollama.installed && settings !== null && settings.ollamaLaunch === "ask" && (
+            // The consent OFFER (default state): ask before ever starting Ollama for the user.
+            <div className="ollama-consent" role="group" aria-label="Use Ollama?">
+              <p>
+                We found Ollama on your computer. Want Deskhand to start it automatically when you
+                use an Ollama brain? You can change this anytime.
+              </p>
+              <div className="row">
+                <button className="primary" onClick={() => void changeOllamaLaunch("always")}>
+                  Yes, start it automatically
+                </button>
+                <button className="link" onClick={() => void changeOllamaLaunch("never")}>
+                  No, use my built-in brain
+                </button>
+              </div>
+            </div>
+          )}
+          {ollama.installed && settings !== null && settings.ollamaLaunch !== "ask" && (
+            <>
+              <label htmlFor="ollama-launch">If you pick an Ollama brain and Ollama isn&apos;t running:</label>
+              <select
+                id="ollama-launch"
+                value={settings.ollamaLaunch}
+                onChange={(e) => void changeOllamaLaunch(e.target.value as OllamaLaunch)}
+              >
+                <option value="always">Start Ollama for me automatically</option>
+                <option value="never">Just use my built-in brain</option>
+              </select>
+            </>
+          )}
+        </div>
+      )}
     </section>
   );
 }

@@ -1398,3 +1398,44 @@ footer {
   color: var(--muted);
   font-style: italic;
 }
+
+.onboarding-card {
+  max-width: 520px;
+}
+
+.brain-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 18px;
+  border-radius: 12px;
+  background: #f4ece0;
+  border: 1px solid #e5ddd3;
+  font-size: 14px;
+}
+
+.brain-banner .primary {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.ollama-settings {
+  border-top: 1px solid #ece3d7;
+  padding-top: 20px;
+}
+
+.ollama-settings h2 {
+  font-size: 18px;
+  margin-bottom: 4px;
+}
+
+.ollama-consent {
+  background: #f4ece0;
+  border: 1px solid #e5ddd3;
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
