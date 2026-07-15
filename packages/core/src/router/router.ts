@@ -3,6 +3,7 @@ import type {
   GenerateResult,
   Provider,
   ProviderId,
+  ProviderOutput,
   Receipt,
   ReceiptSink,
   Router,
@@ -44,69 +45,88 @@ export function createRouter(config: RouterConfig): Router {
   }
   const clock = config.now ?? (() => new Date());
 
+  // The one call path — streaming or not. `onDelta` receives each chunk (a no-op for the
+  // plain `generate`); `signal` can abort a streamed call. Behaviour shared so the receipt
+  // rules (one "sent" before egress, one "done" after) are IDENTICAL on both paths.
+  async function run(input: GenerateInput, onDelta: (delta: string) => void, signal?: AbortSignal): Promise<GenerateResult> {
+    const id = input.provider ?? defaultProvider;
+    const provider = providers[id];
+    if (!provider) throw new Error(`provider "${id}" is not configured`);
+
+    const bytesSent = bytes(input.prompt);
+    // A local provider runs ON the machine — mark every receipt for it `local`
+    // so it's recorded as on-machine, never as egress.
+    const onMachine = provider.onMachine === true;
+    // Only tag `local` when true, so cloud receipts keep their exact prior shape.
+    const base = { provider: id, model: provider.model, task: input.task, bytesSent, ...(onMachine ? { local: true } : {}) };
+
+    // Record the egress BEFORE it happens. This append is awaited and NOT
+    // swallowed: if it throws, we reject here and the provider is never
+    // called — so a byte cannot leave the machine without a durable receipt.
+    await sink.append({ ...base, ts: clock().toISOString(), bytesReceived: 0, ok: false, phase: "sent" });
+
+    // The text the USER actually saw is the concatenation of the deltas — the source of
+    // truth for the receipt + return value, so an abort yields exactly the partial shown.
+    let assembled = "";
+    const collect = (delta: string): void => {
+      assembled += delta;
+      onDelta(delta);
+    };
+
+    let out: string | ProviderOutput | undefined;
+    let failed = false;
+    try {
+      if (provider.generateStream) {
+        out = await provider.generateStream(input.prompt, collect, signal);
+      } else {
+        // Non-streaming provider: get the whole reply, emit it as a single delta.
+        out = await provider.generate(input.prompt);
+        collect(typeof out === "string" ? out : out.text);
+      }
+    } catch {
+      // The provider/network error detail stays here — never surfaced to the UI (could
+      // carry a key or prompt). A user-initiated abort is NOT a failure: the bytes that
+      // streamed are a legitimate partial answer, so only a real error flips `failed`.
+      if (!signal?.aborted) failed = true;
+    }
+
+    let tokensIn: number | undefined;
+    let tokensOut: number | undefined;
+    // Only an on-machine brain's token counts belong on the receipt — a cloud provider
+    // returning this shape would still be egress, told in bytes. Re-validate at the trust
+    // boundary (countOf) — never stamp a non-integer count.
+    if (out !== undefined && typeof out !== "string" && onMachine) {
+      tokensIn = countOf(out.tokensIn);
+      tokensOut = countOf(out.tokensOut);
+    }
+
+    // Finalize with the outcome. Best-effort: the "sent" receipt already made the egress
+    // non-repudiable, so a failed finalize write must not deny the user their answer.
+    const receipt: Receipt = {
+      ...base,
+      ts: clock().toISOString(),
+      bytesReceived: bytes(assembled),
+      ok: !failed,
+      phase: "done",
+      ...(tokensIn !== undefined ? { tokensIn } : {}),
+      ...(tokensOut !== undefined ? { tokensOut } : {}),
+    };
+    try {
+      await sink.append(receipt);
+    } catch {
+      // egress already receipted by the "sent" line
+    }
+
+    if (failed) throw new Error(`brain "${id}" failed`);
+    return { text: assembled, provider: id, model: provider.model, receipt };
+  }
+
   return {
-    async generate(input: GenerateInput): Promise<GenerateResult> {
-      const id = input.provider ?? defaultProvider;
-      const provider = providers[id];
-      if (!provider) throw new Error(`provider "${id}" is not configured`);
-
-      const bytesSent = bytes(input.prompt);
-      // A local provider runs ON the machine — mark every receipt for it `local`
-      // so it's recorded as on-machine, never as egress.
-      const onMachine = provider.onMachine === true;
-      // Only tag `local` when true, so cloud receipts keep their exact prior shape.
-      const base = { provider: id, model: provider.model, task: input.task, bytesSent, ...(onMachine ? { local: true } : {}) };
-
-      // Record the egress BEFORE it happens. This append is awaited and NOT
-      // swallowed: if it throws, we reject here and the provider is never
-      // called — so a byte cannot leave the machine without a durable receipt.
-      await sink.append({ ...base, ts: clock().toISOString(), bytesReceived: 0, ok: false, phase: "sent" });
-
-      let text: string | null = null;
-      let tokensIn: number | undefined;
-      let tokensOut: number | undefined;
-      let failed = false;
-      try {
-        const out = await provider.generate(input.prompt);
-        if (typeof out === "string") {
-          text = out;
-        } else {
-          text = out.text;
-          // Only an on-machine brain's token counts belong on the receipt — a cloud
-          // provider returning this shape would still be egress, told in bytes.
-          if (onMachine) {
-            // Re-validate at the trust boundary — never stamp a non-integer count.
-            tokensIn = countOf(out.tokensIn);
-            tokensOut = countOf(out.tokensOut);
-          }
-        }
-      } catch {
-        // The provider/network error detail stays here — never surfaced to the
-        // UI (could carry a key or prompt). Callers get a generic failure.
-        failed = true;
-      }
-
-      // Finalize with the outcome. Best-effort: the "sent" receipt already made
-      // the egress non-repudiable, so a failed finalize write must not deny the
-      // user their answer. Token fields are added only when present, so cloud
-      // receipts keep their exact prior shape.
-      const receipt: Receipt = {
-        ...base,
-        ts: clock().toISOString(),
-        bytesReceived: bytes(text ?? ""),
-        ok: !failed,
-        phase: "done",
-        ...(tokensIn !== undefined ? { tokensIn } : {}),
-        ...(tokensOut !== undefined ? { tokensOut } : {}),
-      };
-      try {
-        await sink.append(receipt);
-      } catch {
-        // egress already receipted by the "sent" line
-      }
-
-      if (failed || text === null) throw new Error(`brain "${id}" failed`);
-      return { text, provider: id, model: provider.model, receipt };
+    generate(input: GenerateInput): Promise<GenerateResult> {
+      return run(input, () => {}, undefined);
+    },
+    generateStream(input: GenerateInput, onDelta: (delta: string) => void, signal?: AbortSignal): Promise<GenerateResult> {
+      return run(input, onDelta, signal);
     },
   };
 }

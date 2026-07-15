@@ -99,7 +99,10 @@ const HELLO_URL = (!app.isPackaged && process.env["DESKHAND_HELLO_URL"]) || "htt
 
 // The Hello fixture uses only `fetch`, so it runs with a stub brain that refuses.
 // A skill can't reach it anyway unless its manifest declared `brain`.
-const noBrain: Router = { generate: () => Promise.reject(new Error("no brain configured")) };
+const noBrain: Router = {
+  generate: () => Promise.reject(new Error("no brain configured")),
+  generateStream: () => Promise.reject(new Error("no brain configured")),
+};
 
 // The user's configured brain as a router, or null if none is set up. One place
 // both "Test my brain" and a brain-using skill get their brain — the key stays in

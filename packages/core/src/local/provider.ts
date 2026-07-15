@@ -8,7 +8,7 @@ import type { LocalEngine } from "./types.js";
 // descriptive rejection, so this never crashes the host.
 
 export function localProvider(engine: LocalEngine, modelId: string): Provider {
-  return {
+  const provider: Provider = {
     id: "local",
     model: modelId,
     // The whole point: this call never leaves the machine.
@@ -19,4 +19,11 @@ export function localProvider(engine: LocalEngine, modelId: string): Provider {
       return engine.generate(modelId, prompt);
     },
   };
+  // Expose streaming only when the engine backs it (the embedded llama runtime does;
+  // Ollama doesn't yet, so it falls back to the router's one-delta path). Same token
+  // counts, same on-machine receipt — just delivered incrementally.
+  if (engine.generateStream) {
+    provider.generateStream = (prompt, onDelta, signal) => engine.generateStream!(modelId, prompt, onDelta, signal);
+  }
+  return provider;
 }

@@ -13,16 +13,21 @@ function manifest(caps: PluginManifest["capabilities"]): PluginManifest {
 // A router stub — the real one (loop 011) already receipts model egress, so the
 // broker just forwards to it.
 function fakeRouter(reply: string): Router {
+  const result = (input: GenerateInput): GenerateResult => ({
+    text: reply,
+    provider: "openrouter",
+    model: "m",
+    receipt: {
+      ts: "x", provider: "openrouter", model: "m", task: input.task,
+      bytesSent: 0, bytesReceived: 0, ok: true, phase: "done",
+    },
+  });
   return {
-    generate: vi.fn(async (input: GenerateInput): Promise<GenerateResult> => ({
-      text: reply,
-      provider: "openrouter",
-      model: "m",
-      receipt: {
-        ts: "x", provider: "openrouter", model: "m", task: input.task,
-        bytesSent: 0, bytesReceived: 0, ok: true, phase: "done",
-      },
-    })),
+    generate: vi.fn(async (input: GenerateInput) => result(input)),
+    generateStream: vi.fn(async (input: GenerateInput, onDelta: (d: string) => void) => {
+      onDelta(reply);
+      return result(input);
+    }),
   };
 }
 
@@ -196,7 +201,8 @@ describe("permission broker", () => {
   });
 
   it("surfaces a generic error when the brain fails (no provider detail leaks)", async () => {
-    const brain: Router = { generate: vi.fn(async () => { throw new Error("sk-key-boom"); }) };
+    const boom = async (): Promise<never> => { throw new Error("sk-key-boom"); };
+    const brain: Router = { generate: vi.fn(boom), generateStream: vi.fn(boom) };
     const broker = createBroker({
       manifest: manifest(["brain"]),
       brain,

@@ -50,6 +50,11 @@ export interface LocalEngine {
   /** Run a prompt on one model. Returns the reply text plus optional token counts.
    *  Rejects (never crashes) on failure. */
   generate(modelId: string, prompt: string): Promise<LocalGenerateResult>;
+  /** Streaming variant: emit the reply as ordered deltas via `onDelta`, resolving with
+   *  the final text + token counts. `signal` aborts an in-flight run — the engine stops
+   *  and resolves with the partial. Optional: an engine without it (Ollama, for now) is
+   *  driven through `generate`, and the router emits the whole reply as one delta. */
+  generateStream?(modelId: string, prompt: string, onDelta: (delta: string) => void, signal?: AbortSignal): Promise<LocalGenerateResult>;
   /** Fetch a model the engine doesn't have yet, reporting progress. Rejects on failure. */
   pull(modelId: string, onProgress?: (p: PullProgress) => void): Promise<void>;
 }
