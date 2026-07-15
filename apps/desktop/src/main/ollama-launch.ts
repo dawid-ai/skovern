@@ -78,6 +78,30 @@ export function fakeLaunchCount(): number {
   return fakeLaunchAttempts;
 }
 
+// Dev-only: surface the GPU-relevant lines from OUR spawned Ollama's own log (it prints
+// whether it offloaded model layers to the GPU or fell back to CPU). Inert when packaged.
+function ollamaLog(line: string): void {
+  if (!app.isPackaged) console.log("[ollama]", line);
+}
+
+// Forward the spawned Ollama's stderr, keeping only the lines that reveal GPU vs CPU / model
+// load (Ollama's stderr is very chatty; this is a debug seam for the CPU-vs-GPU investigation).
+function pipeOllamaDiagnostics(child: ChildProcess): void {
+  if (app.isPackaged || !child.stderr) return;
+  child.stderr.setEncoding("utf8");
+  let buf = "";
+  const KEEP = /gpu|vram|cuda|rocm|metal|offload|layers|library=|no compatible|inference compute|compute capab|memory available|total memory/i;
+  child.stderr.on("data", (chunk: string) => {
+    buf += chunk;
+    let nl: number;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (line && KEEP.test(line)) ollamaLog(line);
+    }
+  });
+}
+
 function startOllamaProcess(): boolean {
   if (!app.isPackaged && process.env["DESKHAND_OLLAMA_SPAWN_FAKE"] === "1") {
     fakeLaunchAttempts++;
@@ -90,9 +114,12 @@ function startOllamaProcess(): boolean {
   const bin = resolveOllamaBin();
   if (!bin) return false;
   try {
-    // Shell-free, fixed args, no user input. stdio ignored; not detached so it dies with us.
-    ollamaChild = spawn(bin, ["serve"], { stdio: "ignore" });
+    // Shell-free, fixed args, no user input. Pipe stderr (dev only) so we can SEE whether our
+    // spawned Ollama uses the GPU; not detached so it dies with us.
+    ollamaChild = spawn(bin, ["serve"], { stdio: ["ignore", "ignore", app.isPackaged ? "ignore" : "pipe"] });
     ollamaChild.on("error", () => {}); // a failed spawn must never crash main
+    pipeOllamaDiagnostics(ollamaChild);
+    ollamaLog(`spawned \`ollama serve\` from ${bin}`);
     return true;
   } catch {
     return false;
