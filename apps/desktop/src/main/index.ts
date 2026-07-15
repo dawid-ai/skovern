@@ -28,7 +28,7 @@ import { toCsv } from "./csv.js";
 import { runPlugin, sandboxCheck } from "./plugin-host.js";
 import { claudeCliProvider } from "./claude-cli.js";
 import { disposeLocal, downloadedEmbeddedModelId, embeddedFilenames, engineForModel, isEmbeddedModel, localModels, localStatus, makeEngine, pullModel } from "./local.js";
-import { appendMessage, createTokenCoalescer, deleteChat, getChat, listChats, newChat, renameChat, sendChatToken } from "./chat-store.js";
+import { appendMessage, createTokenCoalescer, deleteChat, getChat, listChats, newChat, renameChat, sendChatStatus, sendChatToken } from "./chat-store.js";
 import { disposeOllama, ensureOllamaRunning, fakeLaunchCount, ollamaInstalled, pickOllamaAction } from "./ollama-launch.js";
 import { getSettings, setOllamaLaunch, type OllamaLaunch } from "./settings-store.js";
 import { sweepOrphanParts } from "./download.js";
@@ -182,28 +182,40 @@ function buildLocalEmbeddedRouter(modelId: string): Router {
 // with the embedded one instead of failing. Returns the router to use + an honest note
 // when it swapped. Only the local-Ollama case triggers a check; every other brain is
 // untouched (no added latency). Embedded/cloud/CLI brains return the normal router.
-async function routerWithSelfReliantFallback(): Promise<{ router: Router | null; note: string }> {
+// `onStatus` (loop 033 Issue 4) reports launch/prepare phases so the UI can show what's
+// happening instead of looking hung; `needsSetup` (Issue 1/3) is true when the user has no
+// runnable brain and setting one up would fix it (Ollama down + no built-in to fall back to).
+async function routerWithSelfReliantFallback(
+  onStatus?: (phase: string) => void,
+): Promise<{ router: Router | null; note: string; needsSetup: boolean }> {
   const brain = loadBrain();
   const normal = buildRouter();
   // Only a local Ollama brain can trigger a check (keeps every other brain latency-free).
   if (!brain || brain.provider !== "local" || isEmbeddedModel(brain.model ?? "")) {
-    return { router: normal, note: "" };
+    return { router: normal, note: "", needsSetup: false };
   }
   const running = await makeEngine().detect();
   const action = pickOllamaAction(ollamaInstalled(), running, getSettings().ollamaLaunch);
-  if (action === "use-ollama") return { router: normal, note: "" };
+  if (action === "use-ollama") return { router: normal, note: "", needsSetup: false };
   if (action === "launch-then-use") {
     devlog("Ollama installed + auto-launch on → starting it…");
-    if (await ensureOllamaRunning(() => makeEngine().detect())) return { router: normal, note: "" };
+    onStatus?.("Starting Ollama…");
+    if (await ensureOllamaRunning(() => makeEngine().detect())) return { router: normal, note: "", needsSetup: false };
     devlog("Ollama didn't come up → falling back to built-in");
   }
   // use-builtin (or a launch that didn't come up): fall back to a downloaded built-in model.
   const fallbackId = downloadedEmbeddedModelId();
-  if (!fallbackId) return { router: normal, note: "" }; // nothing to fall back to → fails honestly
+  if (!fallbackId) {
+    // Ollama's down and there's no built-in on disk → the send will fail honestly; tell the
+    // caller so it can offer an in-chat "Set up a brain" instead of a dead end.
+    return { router: normal, note: "", needsSetup: true };
+  }
   devlog(`falling back to built-in embedded model ${fallbackId}`);
+  onStatus?.("Loading your built-in brain…");
   return {
     router: buildLocalEmbeddedRouter(fallbackId),
     note: "Your usual brain wasn't available, so I used your built-in one on this computer.",
+    needsSetup: false,
   };
 }
 
@@ -252,11 +264,13 @@ async function chatSend(chatId: string, text: string): Promise<ChatSendResult> {
   const chat = getChat(chatId); // getChat throws only on an unsafe id; a bad id → null below
   if (!chat) return { ok: false, message: "That chat isn't here anymore." };
   const brain = loadBrain();
-  // Self-reliant fallback: an unreachable Ollama brain falls back to a downloaded built-in.
-  const { router, note: fallbackNote } = await routerWithSelfReliantFallback();
+  const sendStatus = (phase: string): void => sendChatStatus(mainWindow, { chatId, phase });
+  // Self-reliant fallback: an unreachable Ollama brain falls back to a downloaded built-in,
+  // reporting launch/prepare phases so the wait never looks hung (Issue 4).
+  const { router, note: fallbackNote, needsSetup } = await routerWithSelfReliantFallback(sendStatus);
   if (!router) {
     devlog("no brain configured — refusing send");
-    return { ok: false, message: "Connect a brain in Settings first, then try again." };
+    return { ok: false, message: "Connect a brain in Settings first, then try again.", offerSetup: true };
   }
   devlog(`brain = ${brain?.provider ?? "?"}${brain?.model ? `:${brain.model}` : ""}${fallbackNote ? " (falling back to built-in)" : ""}`);
 
@@ -277,11 +291,20 @@ async function chatSend(chatId: string, text: string): Promise<ChatSendResult> {
   const coalescer = createTokenCoalescer(
     (delta) => {
       tokenCount++;
-      if (tokenCount === 1) devlog("first token received — streaming to the screen");
+      if (tokenCount === 1) {
+        devlog("first token received — streaming to the screen");
+        sendStatus(""); // the reply is arriving → clear the "preparing" indicator
+      }
       sendChatToken(mainWindow, { chatId, messageId, delta });
     },
     { flushMs: TOKEN_FLUSH_MS, flushBytes: TOKEN_FLUSH_BYTES },
   );
+
+  // Keep a "preparing" status on screen until the first token (Issue 4): a big embedded model
+  // takes seconds to load and a cold Ollama call has connect latency — either way the user
+  // sees progress, not a frozen screen. The fallback path already sent its own phase.
+  const embedded = brain?.provider === "local" && isEmbeddedModel(brain.model ?? "");
+  sendStatus(fallbackNote ? "Loading your built-in brain…" : embedded ? "Loading the model…" : "Thinking…");
 
   try {
     const res = await router.generateStream({ task: "Chat", prompt }, (d) => coalescer.push(d), controller.signal);
@@ -301,8 +324,10 @@ async function chatSend(chatId: string, text: string): Promise<ChatSendResult> {
     // out to the user; the real reason is on the terminal (see withDevErrorLog) in dev.
     devlog("generation failed:", err instanceof Error ? scrubSecrets(err.message) : err);
     // Actionable, provider-aware hint (e.g. "Is Ollama running?") — same as "Test my brain".
-    return { ok: false, messageId, message: brainFailureMessage() };
+    // If the failure is "no usable brain + no built-in to fall back to", also offer setup.
+    return { ok: false, messageId, message: brainFailureMessage(), offerSetup: needsSetup };
   } finally {
+    sendStatus(""); // clear any lingering "preparing" status, whatever the outcome
     chatAborts.delete(chatId);
   }
 }
@@ -613,7 +638,18 @@ app
 
     // Brain (model router). The key lives in the keychain (keys.ts) and never
     // leaves main; the renderer only picks a brain and sees the result + receipt.
-    registerTrusted(TRUST, "brain:status", (): BrainStatusView => brainStatus());
+    registerTrusted(
+      TRUST,
+      "brain:status",
+      (): BrainStatusView => ({
+        ...brainStatus(),
+        // Renderer-facing self-reliance signals (loop 033): is the built-in floor real (a
+        // model on disk), and is the optional Ollama helper present? Both computed here so
+        // keys.ts stays purely about the keychain.
+        builtinReady: downloadedEmbeddedModelId() !== null,
+        ollamaInstalled: ollamaInstalled(),
+      }),
+    );
 
     registerTrusted(TRUST, "brain:save", (raw: unknown): SaveBrainResult => {
       const input = (raw ?? {}) as { provider?: unknown; key?: unknown; model?: unknown };
@@ -738,6 +774,15 @@ app
       // Only surfaced under the unpackaged fake-spawn seam, so an e2e can prove a launch fired.
       ...(!app.isPackaged && process.env["DESKHAND_OLLAMA_SPAWN_FAKE"] === "1" ? { launchAttempts: fakeLaunchCount() } : {}),
     }));
+
+    // Start Ollama once, on the user's explicit request (the in-chat "Start Ollama" CTA is the
+    // consent — loop 033 Issue 1). Ephemeral: it does NOT change the persisted `ollamaLaunch`
+    // pref. Only starts it if it's actually installed; returns whether it came up. Shell-free
+    // spawn + readiness poll live in ensureOllamaRunning (same path as auto-launch).
+    registerTrusted(TRUST, "ollama:start", async (): Promise<{ running: boolean }> => {
+      if (!ollamaInstalled()) return { running: false };
+      return { running: await ensureOllamaRunning(() => makeEngine().detect()) };
+    });
 
     // Skills. `list` shows each skill's permission card (exactly what the broker
     // enforces); `run` executes it in the sandboxed host; `sandboxCheck` proves the

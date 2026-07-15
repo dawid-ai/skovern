@@ -18,6 +18,7 @@ import {
   newChat,
   renameChat,
   sendChatToken,
+  sendChatStatus,
   type WindowLike,
 } from "./chat-store.js";
 
@@ -114,6 +115,32 @@ describe("chat-store", () => {
       webContents: { send: (_c, p) => sent.push(p) },
     };
     sendChatToken(live, evt);
+    expect(sent).toEqual([evt]);
+  });
+
+  // U4b (security, loop 033) — the status sender shares the same guard: a launch/prepare
+  // status update can't crash main on a torn-down window either.
+  it("U4b: sendChatStatus tolerates a null / destroyed / throwing window", () => {
+    const evt = { chatId: "c", phase: "Starting Ollama…" };
+    expect(() => sendChatStatus(null, evt)).not.toThrow();
+
+    const sent: unknown[] = [];
+    const destroyed: WindowLike = { isDestroyed: () => true, webContents: { send: (_c, p) => sent.push(p) } };
+    expect(() => sendChatStatus(destroyed, evt)).not.toThrow();
+    expect(sent).toHaveLength(0);
+
+    const throwing: WindowLike = {
+      isDestroyed: () => false,
+      webContents: {
+        send: () => {
+          throw new Error("window gone");
+        },
+      },
+    };
+    expect(() => sendChatStatus(throwing, evt)).not.toThrow();
+
+    const live: WindowLike = { isDestroyed: () => false, webContents: { send: (_c, p) => sent.push(p) } };
+    sendChatStatus(live, evt);
     expect(sent).toEqual([evt]);
   });
 

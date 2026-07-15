@@ -5,7 +5,7 @@ import type { BrainStatusView } from "../../../shared/brain.js";
 // "Chat" — talk to your brain, one conversation at a time, replies streaming in
 // token-by-token. Separate chats persist across restarts. The renderer never touches
 // disk or the brain: it drives everything by IPC and listens for tokens on `chat:token`.
-export function ChatPage({ brain }: { brain: BrainStatusView | null }) {
+export function ChatPage({ brain, onSetup }: { brain: BrainStatusView | null; onSetup: () => void }) {
   const [chats, setChats] = useState<ChatMeta[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -14,6 +14,9 @@ export function ChatPage({ brain }: { brain: BrainStatusView | null }) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState(""); // last send failure, shown so it's never silent
   const [note, setNote] = useState(""); // transparency note (e.g. fell back to the built-in brain)
+  const [prepare, setPrepare] = useState(""); // launch/prepare phase while waiting (Issue 4), "" = none
+  const [offerSetup, setOfferSetup] = useState(false); // last send had no usable brain (Issue 1/3)
+  const [startingOllama, setStartingOllama] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameText, setRenameText] = useState("");
 
@@ -55,6 +58,15 @@ export function ChatPage({ brain }: { brain: BrainStatusView | null }) {
     });
   }, []);
 
+  // Show launch/prepare status ("Starting Ollama…", "Loading the model…") while waiting for
+  // the first token (Issue 4). Main clears it (empty phase) when the reply starts arriving.
+  useEffect(() => {
+    return window.deskhand.chat.onStatus((e) => {
+      if (e.chatId !== activeIdRef.current) return;
+      setPrepare(e.phase);
+    });
+  }, []);
+
   async function newChat(): Promise<void> {
     const meta = await window.deskhand.chat.new();
     await loadList();
@@ -70,6 +82,7 @@ export function ChatPage({ brain }: { brain: BrainStatusView | null }) {
     if (!id || !text || sending || !configured) return;
     setError("");
     setNote("");
+    setOfferSetup(false);
     setDraft("");
     setMessages((m) => [...m, { role: "user", content: text, ts: new Date().toISOString() }]);
     setStreaming("");
@@ -77,15 +90,33 @@ export function ChatPage({ brain }: { brain: BrainStatusView | null }) {
     const res = await window.deskhand.chat.send(id, text);
     setSending(false);
     setStreaming(null);
+    setPrepare("");
     // Never leave a failure silent: show what went wrong (the reason is on the dev
     // terminal). Empty/error → the composer stays usable so the user can retry.
     if (!res.ok) setError(res.message ?? "Something went wrong. Try again.");
+    // A brainless send offers an in-chat way out (set up a brain / start Ollama).
+    setOfferSetup(res.offerSetup ?? false);
     if (res.note) setNote(res.note);
     // Re-read the authoritative messages (the assistant reply is now on disk) and refresh
     // the list so its newest-first order + derived title update.
     const view = await window.deskhand.chat.get(id);
     setMessages(view?.messages ?? []);
     await loadList();
+  }
+
+  // Start Ollama from within Chat (Issue 1) — the click is the consent; it's a one-off and
+  // doesn't change the saved pref. On success the composer's already usable — just retry.
+  async function startOllama(): Promise<void> {
+    setStartingOllama(true);
+    setError("");
+    const { running } = await window.deskhand.settings.startOllama();
+    setStartingOllama(false);
+    if (running) {
+      setOfferSetup(false);
+      setNote("Ollama is running now — send your message again.");
+    } else {
+      setError("We couldn't start Ollama. You can set up a built-in brain instead.");
+    }
   }
 
   function stop(): void {
@@ -177,6 +208,30 @@ export function ChatPage({ brain }: { brain: BrainStatusView | null }) {
           </p>
         )}
 
+        {/* No brain to run this chat → offer a way out from within Chat itself (Issue 1/3):
+            set up a built-in brain, or (if it's installed) start Ollama. Never a dead end. */}
+        {(!configured || offerSetup) && (
+          <div className="notice chat-setup-cta" role="note">
+            <p>
+              {!configured
+                ? "You don’t have a brain set up yet. Set one up to start chatting — the easiest runs free, right here on your computer."
+                : "No brain is available right now. Start your helper, or set up a built-in brain that always works."}
+            </p>
+            <div className="row">
+              <button className="primary" onClick={onSetup}>
+                Set up a brain →
+              </button>
+              {/* "Start Ollama" only helps when a brain IS configured but its Ollama is down
+                  (offerSetup) — not in the pure no-brain state, where there's nothing to run. */}
+              {offerSetup && brain?.ollamaInstalled && (
+                <button className="link" onClick={() => void startOllama()} disabled={startingOllama}>
+                  {startingOllama ? "Starting Ollama…" : "Start Ollama"}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {activeId === null ? (
           <p className="hint">Start a new chat to begin.</p>
         ) : (
@@ -195,7 +250,11 @@ export function ChatPage({ brain }: { brain: BrainStatusView | null }) {
               {sending && streaming !== null && (
                 <div className="bubble from-brain">
                   <span className="who">Your brain</span>
-                  <p>{streaming.length > 0 ? streaming : "…"}</p>
+                  {/* Until the first token, show the launch/prepare phase (Issue 4) so the
+                      wait for a starting brain or a loading model never looks frozen. */}
+                  <p className={streaming.length === 0 && prepare.length > 0 ? "chat-status" : undefined}>
+                    {streaming.length > 0 ? streaming : prepare.length > 0 ? prepare : "…"}
+                  </p>
                 </div>
               )}
             </div>
@@ -224,7 +283,6 @@ export function ChatPage({ brain }: { brain: BrainStatusView | null }) {
                   Send
                 </button>
               )}
-              {!configured && <p className="notice">Connect a brain in Settings first, then come back to chat.</p>}
               {error.length > 0 && (
                 <p className="notice chat-error" role="alert">
                   {error}

@@ -40,6 +40,8 @@ export function SettingsPage({ onBrainChanged }: { onBrainChanged?: () => void }
     configured: false,
     provider: null,
     model: null,
+    builtinReady: false,
+    ollamaInstalled: false,
   });
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -68,6 +70,14 @@ export function SettingsPage({ onBrainChanged }: { onBrainChanged?: () => void }
 
   async function changeOllamaLaunch(v: OllamaLaunch) {
     setSettings(await window.deskhand.settings.setOllamaLaunch(v));
+  }
+
+  // "Use my built-in brain" (loop 033 Issue 3): record the choice, but if there's no built-in
+  // model on disk yet, ROUTE to the setup/download flow instead of silently doing nothing —
+  // the built-in floor isn't real until a model is downloaded.
+  async function useBuiltin() {
+    await changeOllamaLaunch("never");
+    if (!status.builtinReady) setLocalOpen(true);
   }
 
   // The local brain has its own dedicated setup view (its own place, per the IA rule).
@@ -257,7 +267,7 @@ export function SettingsPage({ onBrainChanged }: { onBrainChanged?: () => void }
                 <button className="primary" onClick={() => void changeOllamaLaunch("always")}>
                   Yes, start it automatically
                 </button>
-                <button className="link" onClick={() => void changeOllamaLaunch("never")}>
+                <button className="link" onClick={() => void useBuiltin()}>
                   No, use my built-in brain
                 </button>
               </div>
@@ -269,7 +279,12 @@ export function SettingsPage({ onBrainChanged }: { onBrainChanged?: () => void }
               <select
                 id="ollama-launch"
                 value={settings.ollamaLaunch}
-                onChange={(e) => void changeOllamaLaunch(e.target.value as OllamaLaunch)}
+                onChange={(e) => {
+                  const v = e.target.value as OllamaLaunch;
+                  // Picking "just use my built-in" with no model on disk → route to download it.
+                  if (v === "never") void useBuiltin();
+                  else void changeOllamaLaunch(v);
+                }}
               >
                 <option value="always">Start Ollama for me automatically</option>
                 <option value="never">Just use my built-in brain</option>

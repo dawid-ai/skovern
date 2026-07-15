@@ -294,7 +294,121 @@ test("chat streams a local reply, persists it, stops mid-stream, and writes one 
   }
 });
 
-test("C6: with NO brain, the composer is disabled with honest copy — no dead Send", async () => {
+// Loop 033 Issue 2 (streaming) + Issue 4 (prepare status) + Issue 3b (no-builtin → offer setup).
+// The reply is a distinct string so the mid-stream partial assertion is unambiguous.
+const OLLAMA_REPLY = "Hello from Ollama streaming one token at a time now.";
+
+// A fake Ollama that STREAMS /api/generate as NDJSON (stream:true), one object per token
+// with a gap between them — the real thing Issue 2 was missing. The first chunk is delayed
+// so the "Thinking…" prepare status (Issue 4) is observable before any token lands.
+function startStreamingOllama(): { server: Server; ready: Promise<string> } {
+  let resolveUrl!: (u: string) => void;
+  const ready = new Promise<string>((r) => (resolveUrl = r));
+  const srv = createServer((req, res) => {
+    const url = req.url ?? "";
+    if (req.method === "GET" && url === "/api/tags") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ models: [{ name: "mistral:7b", size: 4_700_000_000, details: { parameter_size: "7B", quantization_level: "Q4_K_M" } }] }));
+      return;
+    }
+    if (req.method === "POST" && url === "/api/generate") {
+      req.resume();
+      req.on("end", () => {
+        res.writeHead(200, { "content-type": "application/x-ndjson" });
+        const words = OLLAMA_REPLY.split(" ");
+        let i = 0;
+        const step = (): void => {
+          if (res.writableEnded) return;
+          if (i >= words.length) {
+            res.write(JSON.stringify({ response: "", done: true, prompt_eval_count: 8, eval_count: words.length }) + "\n");
+            res.end();
+            return;
+          }
+          res.write(JSON.stringify({ response: (i === 0 ? "" : " ") + words[i], done: false }) + "\n");
+          i++;
+          setTimeout(step, 120);
+        };
+        setTimeout(step, 600); // first token delayed → the "Thinking…" prepare status is observable
+      });
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  srv.listen(0, "127.0.0.1", () => resolveUrl(`http://127.0.0.1:${(srv.address() as AddressInfo).port}`));
+  return { server: srv, ready };
+}
+
+test("Issue 2/4/3b: an Ollama brain STREAMS token-by-token with a prepare status; when it goes down, Chat offers setup", async () => {
+  test.setTimeout(240_000);
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const ollama = startStreamingOllama();
+  const ollamaUrl = await ollama.ready;
+
+  const app = await electron.launch({
+    args: [".", `--user-data-dir=${userDataDir}`],
+    env: {
+      ...process.env,
+      DESKHAND_API_URL: server.url,
+      DESKHAND_OLLAMA_URL: ollamaUrl, // a REAL (fixture) Ollama, up and streaming
+      DESKHAND_CATALOG_URL: catalogUrl, // no embedded model downloaded → no built-in fallback
+      DESKHAND_HARDWARE: GPU_HARDWARE, // mistral:7b is usable → "Use this one"
+    },
+  });
+  try {
+    const page = await app.firstWindow();
+    await signIn(page, "ollama-stream@shop.test");
+
+    // Activate the pulled Ollama brain (mistral:7b, an Ollama-only id → routes to the Ollama engine).
+    await page.getByRole("button", { name: "Settings" }).click();
+    await page.getByLabel("Your brain").selectOption("local");
+    await page.getByRole("button", { name: "Set up the local brain →" }).click();
+    await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible();
+    await page.locator("tr.receipt-row", { hasText: "mistral:7b" }).getByRole("button", { name: "Use this one" }).click();
+    await expect(page.getByText("Local: mistral:7b")).toBeVisible({ timeout: 30_000 });
+
+    // ── Issue 4: a prepare status shows BEFORE the first token ──────────────────────────
+    await page.getByRole("button", { name: "Chat" }).click();
+    await page.getByRole("button", { name: "New chat" }).click();
+    await page.getByLabel("Message your brain").fill("hello ollama");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    // the "Thinking…" prepare status is visible during the 600ms before the first token
+    await expect(page.locator(".chat-status")).toBeVisible({ timeout: 5_000 });
+
+    // ── Issue 2: the reply renders INCREMENTALLY (mid-stream partial before the full text) ─
+    await expect(lastBrainP(page)).toContainText("Hello", { timeout: 15_000 });
+    const partial = (await lastBrainP(page).innerText()).trim();
+    expect(partial.length).toBeGreaterThan(0);
+    expect(partial.length).toBeLessThan(OLLAMA_REPLY.length); // NOT one whole-reply lump
+    await expect(lastBrainP(page)).toHaveText(OLLAMA_REPLY, { timeout: 30_000 });
+
+    // exactly one on-machine receipt pair for the streamed Ollama message
+    const receiptsPath = path.join(userDataDir, "receipts.jsonl");
+    const lines = readFileSync(receiptsPath, "utf8").trim().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
+    const localModel = lines.filter((r) => r["provider"] === "local");
+    expect(localModel.filter((r) => r["phase"] === "sent")).toHaveLength(1);
+    expect(localModel.filter((r) => r["phase"] === "done")).toHaveLength(1);
+    expect(localModel.every((r) => r["local"] === true)).toBe(true);
+    expect(readFileSync(receiptsPath, "utf8")).not.toContain(OLLAMA_REPLY);
+
+    // ── Issue 3b: Ollama goes DOWN and there's no built-in on disk → Chat offers setup ──
+    ollama.server.closeAllConnections?.();
+    await new Promise<void>((r) => ollama.server.close(() => r()));
+    await page.getByRole("button", { name: "New chat" }).click();
+    await page.getByLabel("Message your brain").fill("are you still there?");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    // an honest error AND an actionable in-chat way out (not a dead end)
+    await expect(page.getByRole("alert")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("button", { name: "Set up a brain →" })).toBeVisible();
+  } finally {
+    ollama.server.closeAllConnections?.();
+    ollama.server.close();
+    await app.close();
+    rmSync(userDataDir, { recursive: true, force: true });
+  }
+});
+
+test("Issue 1 (C6): with NO brain, Chat offers a 'Set up a brain' CTA into onboarding — no dead disabled box", async () => {
   test.setTimeout(120_000);
   const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
   const app = await electron.launch({
@@ -306,9 +420,15 @@ test("C6: with NO brain, the composer is disabled with honest copy — no dead S
     await signIn(page, "nobrain@shop.test");
     await page.getByRole("button", { name: "Chat" }).click();
     await page.getByRole("button", { name: "New chat" }).click();
+    // still no dead Send (the composer is disabled without a brain)…
     await expect(page.getByLabel("Message your brain")).toBeDisabled();
     await expect(page.getByRole("button", { name: "Send", exact: true })).toBeDisabled();
-    await expect(page.getByText(/Connect a brain in Settings first/i)).toBeVisible();
+    // …but now there's an actionable way out from within Chat itself (Issue 1)
+    const cta = page.getByRole("button", { name: "Set up a brain →" });
+    await expect(cta).toBeVisible();
+    await cta.click();
+    // it lands on the onboarding setup, not a dead end
+    await expect(page.getByRole("heading", { name: /set up your (private )?brain/i })).toBeVisible({ timeout: 15_000 });
   } finally {
     await app.close();
     rmSync(userDataDir, { recursive: true, force: true });

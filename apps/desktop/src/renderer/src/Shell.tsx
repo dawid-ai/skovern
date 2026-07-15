@@ -148,7 +148,7 @@ export function Shell({ ogNumber, onSignOut }: { ogNumber: number | null; onSign
           </div>
         )}
         {page === "news" && <NewsPage />}
-        {page === "chat" && <ChatPage brain={brain} />}
+        {page === "chat" && <ChatPage brain={brain} onSetup={() => setPage("onboarding")} />}
         {page === "messages" && <MessagesPage messages={thread.messages} onChanged={onChanged} />}
         {page === "skills" && <SkillsPage />}
         {page === "receipts" && <ReceiptsPage />}

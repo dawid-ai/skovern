@@ -6,7 +6,7 @@ import type { BrainStatusView, SaveBrainInput, SaveBrainResult, TestBrainResult 
 import type { LocalActionResult, LocalModelsView, LocalStatusView, PullProgressView } from "../shared/local.js";
 import type { RunSkillResult, SandboxCheckResult, SkillView } from "../shared/plugin.js";
 import type { ActivitySummary, DateRange, ReceiptView } from "../shared/receipts.js";
-import type { ChatMeta, ChatSendResult, ChatTokenEvent, ChatView } from "../shared/chat.js";
+import type { ChatMeta, ChatSendResult, ChatStatusEvent, ChatTokenEvent, ChatView } from "../shared/chat.js";
 import type { OllamaLaunch, OllamaStatusView, SettingsView } from "../shared/settings.js";
 
 const api = {
@@ -114,12 +114,27 @@ const api = {
       ipcRenderer.on("chat:token", handler);
       return () => ipcRenderer.removeListener("chat:token", handler);
     },
+    // Listen-only: launch/prepare status lines (loop 033 Issue 4). Shape re-validated at the
+    // boundary; an empty `phase` clears the indicator. Returns an unsubscribe.
+    onStatus: (cb: (e: ChatStatusEvent) => void): (() => void) => {
+      const handler = (_event: unknown, payload: unknown): void => {
+        const p = (payload ?? {}) as Record<string, unknown>;
+        if (typeof p["chatId"] === "string" && typeof p["phase"] === "string") {
+          cb({ chatId: p["chatId"], phase: p["phase"] });
+        }
+      };
+      ipcRenderer.on("chat:status", handler);
+      return () => ipcRenderer.removeListener("chat:status", handler);
+    },
   },
   settings: {
     get: (): Promise<SettingsView> => ipcRenderer.invoke("settings:get") as Promise<SettingsView>,
     setOllamaLaunch: (value: OllamaLaunch): Promise<SettingsView> =>
       ipcRenderer.invoke("settings:setOllamaLaunch", value) as Promise<SettingsView>,
     ollamaStatus: (): Promise<OllamaStatusView> => ipcRenderer.invoke("ollama:status") as Promise<OllamaStatusView>,
+    // Start Ollama once, on the user's explicit request (the in-chat CTA). Ephemeral — does
+    // not change the persisted launch pref. Resolves with whether it came up.
+    startOllama: (): Promise<{ running: boolean }> => ipcRenderer.invoke("ollama:start") as Promise<{ running: boolean }>,
   },
   receipts: {
     // No range → the recent window; a range → the full retained history for those dates.

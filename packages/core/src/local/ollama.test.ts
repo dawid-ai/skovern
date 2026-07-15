@@ -129,6 +129,120 @@ describe("ollamaEngine — happy paths (fixture server)", () => {
   });
 });
 
+describe("ollamaEngine — generateStream (NDJSON, Issue 2)", () => {
+  it("streams the reply as ordered deltas and returns final token counts", async () => {
+    const base = await startFixture((_m, url) =>
+      url === "/api/generate"
+        ? {
+            status: 200,
+            body: "",
+            // Ollama's stream:true emits one NDJSON object per token, then a final
+            // done:true line carrying the usage counts.
+            ndjson: [
+              JSON.stringify({ response: "Hello", done: false }),
+              JSON.stringify({ response: " from", done: false }),
+              JSON.stringify({ response: " Ollama.", done: false }),
+              JSON.stringify({ response: "", done: true, prompt_eval_count: 7, eval_count: 3 }),
+            ],
+          }
+        : { status: 404, body: "{}" },
+    );
+    const engine = ollamaEngine({ baseUrl: base });
+    const deltas: string[] = [];
+    const out = await engine.generateStream!("qwen2.5:3b", "hi", (d) => deltas.push(d));
+    // more than one delta = it actually streamed (vs one lump)
+    expect(deltas).toEqual(["Hello", " from", " Ollama."]);
+    expect(out.text).toBe("Hello from Ollama.");
+    expect(out.tokensIn).toBe(7);
+    expect(out.tokensOut).toBe(3);
+  });
+
+  it("omits token counts when the stream doesn't report them (undefined, not 0)", async () => {
+    const base = await startFixture((_m, url) =>
+      url === "/api/generate"
+        ? { status: 200, body: "", ndjson: [JSON.stringify({ response: "Hi.", done: true })] }
+        : { status: 404, body: "{}" },
+    );
+    const out = await ollamaEngine({ baseUrl: base }).generateStream!("m", "hi", () => {});
+    expect(out.text).toBe("Hi.");
+    expect(out.tokensIn).toBeUndefined();
+    expect(out.tokensOut).toBeUndefined();
+  });
+
+  it("captures counts from a single non-streamed object (response + counts, no done flag)", async () => {
+    // The core router funnels generate() through generateStream when the engine exposes it,
+    // so a non-NDJSON reply (one object with response + prompt_eval_count/eval_count) must
+    // still report tokens — otherwise a plain "Test my brain" loses its on-machine token line.
+    const base = await startFixture((_m, url) =>
+      url === "/api/generate"
+        ? { status: 200, body: "", ndjson: [JSON.stringify({ response: "One-shot reply.", prompt_eval_count: 7, eval_count: 42 })] }
+        : { status: 404, body: "{}" },
+    );
+    const deltas: string[] = [];
+    const out = await ollamaEngine({ baseUrl: base }).generateStream!("m", "hi", (d) => deltas.push(d));
+    expect(out.text).toBe("One-shot reply.");
+    expect(out.tokensIn).toBe(7);
+    expect(out.tokensOut).toBe(42);
+  });
+
+  it("aborts mid-stream and resolves with the partial (no throw)", async () => {
+    // A raw server that emits a chunk every ~60ms so we can abort after the first.
+    const base = await startRawServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/x-ndjson" });
+      let i = 0;
+      const chunks = ["Alpha", " Beta", " Gamma", " Delta"];
+      const tick = (): void => {
+        if (i >= chunks.length) {
+          res.write(JSON.stringify({ response: "", done: true }) + "\n");
+          res.end();
+          return;
+        }
+        res.write(JSON.stringify({ response: chunks[i], done: false }) + "\n");
+        i++;
+        setTimeout(tick, 60);
+      };
+      tick();
+    });
+    const engine = ollamaEngine({ baseUrl: base });
+    const controller = new AbortController();
+    const deltas: string[] = [];
+    const out = await engine.generateStream!(
+      "m",
+      "hi",
+      (d) => {
+        deltas.push(d);
+        if (deltas.length === 1) controller.abort(); // stop right after the first token
+      },
+      controller.signal,
+    );
+    // resolved (not rejected) with the partial captured before the abort
+    expect(deltas.length).toBeGreaterThanOrEqual(1);
+    expect(out.text).toBe(deltas.join(""));
+    expect(out.text.startsWith("Alpha")).toBe(true);
+    // it did NOT run to completion (abort really stopped it)
+    expect(out.text).not.toContain("Delta");
+  });
+
+  it("surfaces an error line during a stream (never a silent empty)", async () => {
+    const base = await startFixture((_m, url) =>
+      url === "/api/generate"
+        ? {
+            status: 200,
+            body: "",
+            ndjson: [JSON.stringify({ response: "part", done: false }), JSON.stringify({ error: "out of memory" })],
+          }
+        : { status: 404, body: "{}" },
+    );
+    const engine = ollamaEngine({ baseUrl: base });
+    await expect(engine.generateStream!("m", "hi", () => {})).rejects.toThrow(/error.*out of memory/i);
+  });
+
+  it("reports Ollama-not-running when the stream can't connect", async () => {
+    const engine = ollamaEngine({ baseUrl: "http://127.0.0.1:1" });
+    await expect(engine.generateStream!("m", "hi", () => {})).rejects.toThrow(/Ollama isn't running/i);
+  });
+});
+
 describe("ollamaEngine — descriptive failures", () => {
   it("names Ollama-not-running when the server is unreachable", async () => {
     // A loopback port with nothing listening → connection refused.

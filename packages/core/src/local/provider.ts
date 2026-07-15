@@ -19,9 +19,9 @@ export function localProvider(engine: LocalEngine, modelId: string): Provider {
       return engine.generate(modelId, prompt);
     },
   };
-  // Expose streaming only when the engine backs it (the embedded llama runtime does;
-  // Ollama doesn't yet, so it falls back to the router's one-delta path). Same token
-  // counts, same on-machine receipt — just delivered incrementally.
+  // Expose streaming only when the engine backs it (both the embedded llama runtime and
+  // Ollama do now; a future engine without it falls back to the router's one-delta path).
+  // Same token counts, same on-machine receipt — just delivered incrementally.
   if (engine.generateStream) {
     provider.generateStream = (prompt, onDelta, signal) => engine.generateStream!(modelId, prompt, onDelta, signal);
   }
