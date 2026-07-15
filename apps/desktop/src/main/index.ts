@@ -28,7 +28,7 @@ import { toCsv } from "./csv.js";
 import { runPlugin, sandboxCheck } from "./plugin-host.js";
 import { claudeCliProvider } from "./claude-cli.js";
 import { disposeLocal, embeddedFilenames, engineForModel, isEmbeddedModel, localModels, localStatus, pullModel } from "./local.js";
-import { appendMessage, deleteChat, getChat, listChats, newChat, renameChat, sendChatToken } from "./chat-store.js";
+import { appendMessage, createTokenCoalescer, deleteChat, getChat, listChats, newChat, renameChat, sendChatToken } from "./chat-store.js";
 import { sweepOrphanParts } from "./download.js";
 import { initialNewness, observeThread } from "./dm-newness.js";
 import { helloManifest } from "../plugins/hello/manifest.js";
@@ -162,40 +162,30 @@ async function chatSend(chatId: string, text: string): Promise<ChatSendResult> {
 
   const messageId = randomUUID();
   const controller = new AbortController();
+  // ponytail: one in-flight generation per chat — a second concurrent send to the same
+  // chat would overwrite this controller (Stop would then only abort the newer). The UI's
+  // `sending` guard already blocks that; per-send controllers only if a caller ever sends
+  // concurrently to one chat.
   chatAborts.set(chatId, controller);
 
-  let buf = "";
-  let flushTimer: ReturnType<typeof setTimeout> | null = null;
-  const flush = (): void => {
-    if (flushTimer) {
-      clearTimeout(flushTimer);
-      flushTimer = null;
-    }
-    if (buf.length === 0) return;
-    const delta = buf;
-    buf = "";
-    sendChatToken(mainWindow, { chatId, messageId, delta });
-  };
-  const onDelta = (d: string): void => {
-    buf += d;
-    if (buf.length >= TOKEN_FLUSH_BYTES) flush();
-    else if (!flushTimer) flushTimer = setTimeout(flush, TOKEN_FLUSH_MS);
-  };
+  const coalescer = createTokenCoalescer((delta) => sendChatToken(mainWindow, { chatId, messageId, delta }), {
+    flushMs: TOKEN_FLUSH_MS,
+    flushBytes: TOKEN_FLUSH_BYTES,
+  });
 
   try {
-    const res = await router.generateStream({ task: "Chat", prompt }, onDelta, controller.signal);
-    flush(); // any buffered tail before we finalize
+    const res = await router.generateStream({ task: "Chat", prompt }, (d) => coalescer.push(d), controller.signal);
+    coalescer.flush(); // any buffered tail before we finalize
     // The partial (on stop) is a real answer — save it, never discard (contract C3).
     if (res.text.length > 0) {
       await appendMessage(chatId, { role: "assistant", content: res.text, ts: new Date().toISOString() });
     }
     return { ok: true, messageId, text: res.text };
   } catch {
-    flush();
+    coalescer.flush();
     // The raw brain/network error stays in main (could carry a key/prompt) — warm copy out.
     return { ok: false, messageId, message: "Your brain didn't answer. Try again in a moment." };
   } finally {
-    if (flushTimer) clearTimeout(flushTimer);
     chatAborts.delete(chatId);
   }
 }

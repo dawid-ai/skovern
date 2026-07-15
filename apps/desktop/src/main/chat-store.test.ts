@@ -11,6 +11,7 @@ import {
   appendMessage,
   chatPath,
   chatsDir,
+  createTokenCoalescer,
   deleteChat,
   getChat,
   listChats,
@@ -119,5 +120,44 @@ describe("chat-store", () => {
   // getChat on an unknown id → null (never a throw across IPC).
   it("getChat returns null for an unknown chat", () => {
     expect(getChat("11111111-2222-4333-8444-555555555555")).toBeNull();
+  });
+});
+
+// The pulled-in ledger items (progress-notification-throttle + chat-chunk-flood-cap): the
+// coalescer must batch fast bursts but flush a big burst immediately (flood cap).
+describe("createTokenCoalescer", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("batches rapid deltas into one send after the flush window", () => {
+    const sent: string[] = [];
+    const c = createTokenCoalescer((d) => sent.push(d), { flushMs: 33, flushBytes: 4096 });
+    c.push("a");
+    c.push("b");
+    c.push("c");
+    expect(sent).toEqual([]); // nothing yet — still buffering within the window
+    vi.advanceTimersByTime(33);
+    expect(sent).toEqual(["abc"]); // one coalesced send, not three
+  });
+
+  it("flushes immediately once the buffer passes the flood cap", () => {
+    const sent: string[] = [];
+    const c = createTokenCoalescer((d) => sent.push(d), { flushMs: 1000, flushBytes: 8 });
+    c.push("1234");
+    expect(sent).toEqual([]); // under the cap → still buffering
+    c.push("5678"); // now 8 bytes ≥ cap → flush now, without waiting for the 1000ms timer
+    expect(sent).toEqual(["12345678"]);
+  });
+
+  it("flush() emits the tail and an empty flush sends nothing", () => {
+    const sent: string[] = [];
+    const c = createTokenCoalescer((d) => sent.push(d), { flushMs: 33, flushBytes: 4096 });
+    c.flush();
+    expect(sent).toEqual([]); // nothing buffered
+    c.push("tail");
+    c.flush();
+    expect(sent).toEqual(["tail"]);
+    vi.advanceTimersByTime(100); // the pending timer was cleared by flush → no double send
+    expect(sent).toEqual(["tail"]);
   });
 });

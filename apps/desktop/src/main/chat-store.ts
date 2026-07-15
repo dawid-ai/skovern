@@ -173,3 +173,43 @@ export function sendChatToken(win: WindowLike | null, event: ChatTokenEvent): vo
     // window gone between the guard and the send — a dropped token is harmless
   }
 }
+
+// ── token coalescer (ledger: progress-notification-throttle + chat-chunk-flood-cap) ──
+export interface TokenCoalescer {
+  /** Buffer a delta; flushes on a short timer, or immediately once it passes the cap. */
+  push(delta: string): void;
+  /** Emit any buffered tail now (call once the stream ends). */
+  flush(): void;
+}
+
+/** Coalesce streamed deltas before the renderer send so a fast local stream can't churn
+ *  React: batch at ≈`flushMs`, but flush sooner once the buffer passes `flushBytes` (the
+ *  flood cap). `emit` receives each coalesced delta. Pure (only `setTimeout`), so it's
+ *  unit-testable with fake timers — the two pulled-in ledger items get a real check. */
+export function createTokenCoalescer(
+  emit: (delta: string) => void,
+  opts: { flushMs?: number; flushBytes?: number } = {},
+): TokenCoalescer {
+  const flushMs = opts.flushMs ?? 33;
+  const flushBytes = opts.flushBytes ?? 4096;
+  let buf = "";
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const flush = (): void => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    if (buf.length === 0) return;
+    const delta = buf;
+    buf = "";
+    emit(delta);
+  };
+  return {
+    push(delta: string): void {
+      buf += delta;
+      if (buf.length >= flushBytes) flush();
+      else if (!timer) timer = setTimeout(flush, flushMs);
+    },
+    flush,
+  };
+}
