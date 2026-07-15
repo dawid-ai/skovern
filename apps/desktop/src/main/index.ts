@@ -167,6 +167,24 @@ function buildRouter(): Router | null {
   return createRouter({ providers, defaultProvider: brain.provider, sink: fileReceiptSink() });
 }
 
+// A warm, provider-aware failure message for when a brain call throws — so the user gets
+// an ACTIONABLE hint ("Is Ollama running?") instead of a vague "didn't answer". Shared by
+// "Test my brain" and chat so both stay honest and consistent. Never surfaces the raw
+// error (which could carry a key/prompt) — that stays in main / the dev terminal.
+function brainFailureMessage(): string {
+  const brain = loadBrain();
+  const p = brain?.provider;
+  if (p === "claude-cli") return "We couldn't reach Claude Code on this computer. Is it installed and signed in?";
+  if (p === "local") {
+    // An embedded (on-device) model has nothing to do with Ollama — say so honestly,
+    // rather than telling a no-Ollama florist to "start Ollama".
+    return isEmbeddedModel(brain?.model ?? "")
+      ? "We couldn't start the private brain on this computer. It may not be supported here yet, or the download didn't finish — try getting it again."
+      : "We couldn't reach the local brain. Is Ollama running, and have you picked a model that's downloaded?";
+  }
+  return "Your brain didn't answer. Check the key and try again.";
+}
+
 // ── Chat send (loop 031) ─────────────────────────────────────────────────────────────
 const CHAT_MAX_INPUT = 32 * 1024; // bound untrusted renderer text before it reaches a brain
 const TOKEN_FLUSH_MS = 33; // coalesce tokens at ≈30fps so a fast stream can't churn the renderer
@@ -241,7 +259,8 @@ async function chatSend(chatId: string, text: string): Promise<ChatSendResult> {
     // The raw brain/network error stays in main (could carry a key/prompt) — warm copy
     // out to the user; the real reason is on the terminal (see withDevErrorLog) in dev.
     devlog("generation failed:", err instanceof Error ? scrubSecrets(err.message) : err);
-    return { ok: false, messageId, message: "Your brain didn't answer. Try again in a moment." };
+    // Actionable, provider-aware hint (e.g. "Is Ollama running?") — same as "Test my brain".
+    return { ok: false, messageId, message: brainFailureMessage() };
   } finally {
     chatAborts.delete(chatId);
   }
@@ -594,20 +613,7 @@ app
       } catch {
         // The subscription/local brains have no key — a failure means the CLI or
         // Ollama isn't there, so say that instead of "check the key".
-        const brain = loadBrain();
-        const p = brain?.provider;
-        // An embedded (on-device) model has nothing to do with Ollama — say so honestly,
-        // rather than telling a no-Ollama florist to "start Ollama".
-        const localMsg = isEmbeddedModel(brain?.model ?? "")
-          ? "We couldn't start the private brain on this computer. It may not be supported here yet, or the download didn't finish — try getting it again."
-          : "We couldn't reach the local brain. Is Ollama running, and have you picked a model that's downloaded?";
-        const msg =
-          p === "claude-cli"
-            ? "We couldn't reach Claude Code on this computer. Is it installed and signed in?"
-            : p === "local"
-              ? localMsg
-              : "Your brain didn't answer. Check the key and try again.";
-        return { ok: false, message: msg };
+        return { ok: false, message: brainFailureMessage() };
       }
     });
 
