@@ -333,7 +333,9 @@ async function chatSend(chatId: string, text: string): Promise<ChatSendResult> {
   // takes seconds to load and a cold Ollama call has connect latency — either way the user
   // sees progress, not a frozen screen. The fallback path already sent its own phase.
   const embedded = brain?.provider === "local" && isEmbeddedModel(brain.model ?? "");
-  sendStatus(fallbackNote ? "Loading your built-in brain…" : embedded ? "Loading the model…" : "Thinking…");
+  // "Working on it…" (not "Thinking…") so it's never mistaken for a reasoning-model trace — it's
+  // just the pre-first-token wait (a cold model load can take several seconds).
+  sendStatus(fallbackNote ? "Loading your built-in brain…" : embedded ? "Loading the model…" : "Working on it…");
 
   try {
     const res = await router.generateStream({ task: "Chat", prompt }, (d) => coalescer.push(d), controller.signal);
