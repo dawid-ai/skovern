@@ -190,27 +190,52 @@ async function routerWithSelfReliantFallback(
 ): Promise<{ router: Router | null; note: string; needsSetup: boolean }> {
   const brain = loadBrain();
   const normal = buildRouter();
-  // Only a local Ollama brain can trigger a check (keeps every other brain latency-free).
-  if (!brain || brain.provider !== "local" || isEmbeddedModel(brain.model ?? "")) {
+  if (!brain) {
+    devlog("resolve: no brain configured");
     return { router: normal, note: "", needsSetup: false };
   }
+  // Cloud/CLI brains and already-embedded local brains never touch Ollama.
+  if (brain.provider !== "local") {
+    devlog(`resolve: ENGINE = ${brain.provider.toUpperCase()} (cloud/CLI) "${brain.model ?? "default"}" — no local runtime`);
+    return { router: normal, note: "", needsSetup: false };
+  }
+  if (isEmbeddedModel(brain.model ?? "")) {
+    devlog(`resolve: ENGINE = EMBEDDED built-in "${brain.model}" (node-llama-cpp on this computer) — Ollama not involved`);
+    return { router: normal, note: "", needsSetup: false };
+  }
+  // A local Ollama brain: probe whether Ollama is actually reachable.
+  devlog(`resolve: local OLLAMA brain "${brain.model}" — probing Ollama (GET /api/tags)…`);
+  const t0 = Date.now();
   const running = await makeEngine().detect();
-  const action = pickOllamaAction(ollamaInstalled(), running, getSettings().ollamaLaunch);
-  if (action === "use-ollama") return { router: normal, note: "", needsSetup: false };
+  devlog(`  ↳ probe: ${running ? "REACHABLE" : "UNREACHABLE"} in ${Date.now() - t0}ms`);
+  const pref = getSettings().ollamaLaunch;
+  const inst = ollamaInstalled();
+  const action = pickOllamaAction(inst, running, pref);
+  devlog(`  ↳ decision: ${action}  (installed=${inst}, running=${running}, launchPref=${pref})`);
+  if (action === "use-ollama") {
+    devlog(`  ↳ ENGINE = OLLAMA "${brain.model}" (Ollama's own runtime — usually GPU-accelerated)`);
+    return { router: normal, note: "", needsSetup: false };
+  }
   if (action === "launch-then-use") {
-    devlog("Ollama installed + auto-launch on → starting it…");
+    devlog("  ↳ launching Ollama (spawn `ollama serve`) + waiting for readiness…");
     onStatus?.("Starting Ollama…");
-    if (await ensureOllamaRunning(() => makeEngine().detect())) return { router: normal, note: "", needsSetup: false };
-    devlog("Ollama didn't come up → falling back to built-in");
+    const tl = Date.now();
+    if (await ensureOllamaRunning(() => makeEngine().detect())) {
+      devlog(`  ↳ Ollama came up in ${Date.now() - tl}ms → ENGINE = OLLAMA "${brain.model}"`);
+      return { router: normal, note: "", needsSetup: false };
+    }
+    devlog(`  ↳ Ollama did NOT come up after ${Date.now() - tl}ms → falling back to built-in`);
   }
   // use-builtin (or a launch that didn't come up): fall back to a downloaded built-in model.
   const fallbackId = downloadedEmbeddedModelId();
   if (!fallbackId) {
-    // Ollama's down and there's no built-in on disk → the send will fail honestly; tell the
-    // caller so it can offer an in-chat "Set up a brain" instead of a dead end.
+    devlog("  ↳ no built-in model on disk → send will fail honestly + offer setup");
     return { router: normal, note: "", needsSetup: true };
   }
-  devlog(`falling back to built-in embedded model ${fallbackId}`);
+  // THIS is the slow path Dawid is chasing: Ollama isn't reachable, so chat runs the built-in
+  // node-llama-cpp model instead — typically much slower than Ollama (different runtime,
+  // possibly CPU-bound / a heavier quant). The log makes that switch visible.
+  devlog(`  ↳ ⚠ FALLBACK → ENGINE = EMBEDDED "${fallbackId}" (node-llama-cpp) because Ollama is UNREACHABLE. This is usually SLOWER than Ollama — start Ollama to use "${brain.model}" instead.`);
   onStatus?.("Loading your built-in brain…");
   return {
     router: buildLocalEmbeddedRouter(fallbackId),
@@ -267,17 +292,18 @@ async function chatSend(chatId: string, text: string): Promise<ChatSendResult> {
   const sendStatus = (phase: string): void => sendChatStatus(mainWindow, { chatId, phase });
   // Self-reliant fallback: an unreachable Ollama brain falls back to a downloaded built-in,
   // reporting launch/prepare phases so the wait never looks hung (Issue 4).
+  const tResolve = Date.now();
   const { router, note: fallbackNote, needsSetup } = await routerWithSelfReliantFallback(sendStatus);
+  devlog(`brain resolved in ${Date.now() - tResolve}ms`);
   if (!router) {
     devlog("no brain configured — refusing send");
     return { ok: false, message: "Connect a brain in Settings first, then try again.", offerSetup: true };
   }
-  devlog(`brain = ${brain?.provider ?? "?"}${brain?.model ? `:${brain.model}` : ""}${fallbackNote ? " (falling back to built-in)" : ""}`);
 
   const now = new Date().toISOString();
   await appendMessage(chatId, { role: "user", content: text, ts: now });
   const prompt = buildChatPrompt(getChat(chatId)?.messages ?? []);
-  devlog(`prompt built (${prompt.length} chars); starting generation…`);
+  devlog(`prompt built (${prompt.length} chars, ${getChat(chatId)?.messages.length ?? 0} msgs of history); starting generation…`);
 
   const messageId = randomUUID();
   const controller = new AbortController();
@@ -288,11 +314,14 @@ async function chatSend(chatId: string, text: string): Promise<ChatSendResult> {
   chatAborts.set(chatId, controller);
 
   let tokenCount = 0;
+  const tGen = Date.now(); // generation clock: measure time-to-first-token + total
+  let tFirst = 0;
   const coalescer = createTokenCoalescer(
     (delta) => {
       tokenCount++;
       if (tokenCount === 1) {
-        devlog("first token received — streaming to the screen");
+        tFirst = Date.now();
+        devlog(`first token after ${tFirst - tGen}ms — streaming to the screen`);
         sendStatus(""); // the reply is arriving → clear the "preparing" indicator
       }
       sendChatToken(mainWindow, { chatId, messageId, delta });
@@ -309,7 +338,17 @@ async function chatSend(chatId: string, text: string): Promise<ChatSendResult> {
   try {
     const res = await router.generateStream({ task: "Chat", prompt }, (d) => coalescer.push(d), controller.signal);
     coalescer.flush(); // any buffered tail before we finalize
-    devlog(`done — ${res.text.length} chars, ${tokenCount} flushes`);
+    // The telemetry that answers "what actually ran + why slow": the REAL model the router
+    // used (res.model — Ollama's id, or the embedded fallback's), time-to-first-token, total
+    // time, output tokens, and derived tokens/sec. `res.provider:res.model` is authoritative.
+    const genMs = Date.now() - tGen;
+    const outTok = res.receipt.tokensOut;
+    const firstMs = tFirst > 0 ? tFirst - tGen : genMs;
+    const tps = outTok && genMs > 0 ? (outTok / (genMs / 1000)).toFixed(1) : "?";
+    devlog(
+      `done: engine=${res.provider}:${res.model}  first-token=${firstMs}ms  total=${genMs}ms  ` +
+        `out=${outTok ?? "?"} tokens  ~${tps} tok/s  (${res.text.length} chars, ${tokenCount} render-flushes)`,
+    );
     // The partial (on stop) is a real answer — save it, never discard (contract C3).
     if (res.text.length > 0) {
       await appendMessage(chatId, { role: "assistant", content: res.text, ts: new Date().toISOString() });
