@@ -83,6 +83,10 @@ function startOllamaProcess(): boolean {
     fakeLaunchAttempts++;
     return true; // attempted (fake) — but it won't actually serve, so readiness will fail
   }
+  // Already started one that's still alive? Don't spawn a second (two concurrent
+  // local-Ollama-down calls, e.g. a chat send racing a brain test, would otherwise each
+  // fork `ollama serve` and orphan the first — SECURE hardening note).
+  if (ollamaChild && ollamaChild.exitCode === null && !ollamaChild.killed) return true;
   const bin = resolveOllamaBin();
   if (!bin) return false;
   try {
