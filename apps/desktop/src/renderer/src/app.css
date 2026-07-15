@@ -1393,3 +1393,8 @@ footer {
 .chat-error {
   color: #a3341f;
 }
+
+.chat-fallback-note {
+  color: var(--muted);
+  font-style: italic;
+}

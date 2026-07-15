@@ -27,8 +27,9 @@ import { fileFetchSink, fileReceiptSink, readActivityIndex, readReceipts, readRe
 import { toCsv } from "./csv.js";
 import { runPlugin, sandboxCheck } from "./plugin-host.js";
 import { claudeCliProvider } from "./claude-cli.js";
-import { disposeLocal, embeddedFilenames, engineForModel, isEmbeddedModel, localModels, localStatus, pullModel } from "./local.js";
+import { disposeLocal, downloadedEmbeddedModelId, embeddedFilenames, engineForModel, isEmbeddedModel, localModels, localStatus, makeEngine, pullModel } from "./local.js";
 import { appendMessage, createTokenCoalescer, deleteChat, getChat, listChats, newChat, renameChat, sendChatToken } from "./chat-store.js";
+import { pickSelfReliantFallback } from "./brain-fallback.js";
 import { sweepOrphanParts } from "./download.js";
 import { initialNewness, observeThread } from "./dm-newness.js";
 import { helloManifest } from "../plugins/hello/manifest.js";
@@ -167,6 +168,35 @@ function buildRouter(): Router | null {
   return createRouter({ providers, defaultProvider: brain.provider, sink: fileReceiptSink() });
 }
 
+// A one-off router that runs a specific EMBEDDED model on the built-in runtime (no Ollama).
+// The self-reliant fallback target — used when the configured Ollama brain is unreachable.
+function buildLocalEmbeddedRouter(modelId: string): Router {
+  const provider = withDevErrorLog(localProvider(engineForModel(modelId), modelId));
+  return createRouter({ providers: { local: provider }, defaultProvider: "local", sink: fileReceiptSink() });
+}
+
+// STOPGAP self-reliance (full version → loop 032): if the active brain is a local OLLAMA
+// model and Ollama isn't reachable, but a built-in embedded model is downloaded, answer
+// with the embedded one instead of failing. Returns the router to use + an honest note
+// when it swapped. Only the local-Ollama case triggers a check; every other brain is
+// untouched (no added latency). Embedded/cloud/CLI brains return the normal router.
+async function routerWithSelfReliantFallback(): Promise<{ router: Router | null; note: string }> {
+  const brain = loadBrain();
+  const normal = buildRouter();
+  // Only a local Ollama brain can trigger a check (keeps every other brain latency-free).
+  if (!brain || brain.provider !== "local" || isEmbeddedModel(brain.model ?? "")) {
+    return { router: normal, note: "" };
+  }
+  const ollamaReady = await makeEngine().detect();
+  const fallbackId = pickSelfReliantFallback(brain, false, ollamaReady, downloadedEmbeddedModelId());
+  if (!fallbackId) return { router: normal, note: "" }; // Ollama up, or nothing to fall back to
+  devlog(`Ollama unreachable → falling back to built-in embedded model ${fallbackId}`);
+  return {
+    router: buildLocalEmbeddedRouter(fallbackId),
+    note: "Your usual brain wasn't available, so I used your built-in one on this computer.",
+  };
+}
+
 // A warm, provider-aware failure message for when a brain call throws — so the user gets
 // an ACTIONABLE hint ("Is Ollama running?") instead of a vague "didn't answer". Shared by
 // "Test my brain" and chat so both stay honest and consistent. Never surfaces the raw
@@ -212,12 +242,13 @@ async function chatSend(chatId: string, text: string): Promise<ChatSendResult> {
   const chat = getChat(chatId); // getChat throws only on an unsafe id; a bad id → null below
   if (!chat) return { ok: false, message: "That chat isn't here anymore." };
   const brain = loadBrain();
-  const router = buildRouter();
+  // Self-reliant fallback: an unreachable Ollama brain falls back to a downloaded built-in.
+  const { router, note: fallbackNote } = await routerWithSelfReliantFallback();
   if (!router) {
     devlog("no brain configured — refusing send");
     return { ok: false, message: "Connect a brain in Settings first, then try again." };
   }
-  devlog(`brain = ${brain?.provider ?? "?"}${brain?.model ? `:${brain.model}` : ""}`);
+  devlog(`brain = ${brain?.provider ?? "?"}${brain?.model ? `:${brain.model}` : ""}${fallbackNote ? " (falling back to built-in)" : ""}`);
 
   const now = new Date().toISOString();
   await appendMessage(chatId, { role: "user", content: text, ts: now });
@@ -253,7 +284,7 @@ async function chatSend(chatId: string, text: string): Promise<ChatSendResult> {
     // A reply with zero text isn't a crash, but it IS "nothing happened" to the user —
     // tell them honestly instead of leaving a blank bubble.
     if (res.text.length === 0) return { ok: false, messageId, message: "Your brain replied with nothing. Check it in Settings and try again." };
-    return { ok: true, messageId, text: res.text };
+    return { ok: true, messageId, text: res.text, note: fallbackNote || undefined };
   } catch (err) {
     coalescer.flush();
     // The raw brain/network error stays in main (could carry a key/prompt) — warm copy

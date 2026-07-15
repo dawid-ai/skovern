@@ -92,6 +92,17 @@ export function embeddedFilenames(): string[] {
   return latestEmbedded.map((m) => m.gguf.filename);
 }
 
+/** The id of a downloaded, ready-to-run embedded model (the built-in, no-Ollama brain),
+ *  preferring the largest by size, or null if none is on disk yet. The self-reliant
+ *  fallback target: when the configured Ollama brain is unreachable, this can answer with
+ *  zero external tools. */
+export function downloadedEmbeddedModelId(): string | null {
+  const ready = latestEmbedded.filter((m) => modelDownloaded(m.gguf.filename));
+  if (ready.length === 0) return null;
+  ready.sort((a, b) => b.gguf.sizeBytes - a.gguf.sizeBytes); // biggest downloaded = best
+  return ready[0]!.id;
+}
+
 // A dev/test seam (unpackaged only, mirror of DESKHAND_OLLAMA_URL / DESKHAND_CLAUDE_BIN):
 // when set, the embedded engine uses a FAKE in-process child that answers with canned
 // text — so the app e2e can drive the real UI + real downloader without the native

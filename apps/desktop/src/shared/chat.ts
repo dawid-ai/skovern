@@ -40,4 +40,6 @@ export interface ChatSendResult {
   text?: string;
   /** Warm, florist-facing note on failure (never the raw brain error). */
   message?: string;
+  /** A transparency note on success (e.g. a self-reliant fallback to the built-in brain). */
+  note?: string;
 }
