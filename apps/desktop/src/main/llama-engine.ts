@@ -211,37 +211,50 @@ export function llamaEngine(opts: LlamaEngineOptions): LocalEngine & { dispose()
       const gguf = lookup(modelId);
       if (!gguf) throw new Error(NO_MODEL);
       if (!modelDownloaded(gguf.filename)) throw new Error(NOT_DOWNLOADED);
+      // Already stopped before we started → don't spawn a doomed multi-second generation;
+      // return an empty partial (nothing was produced).
+      if (signal?.aborted) return { text: "" };
       await ensureReady();
       const c = child;
       if (!c) throw new Error(RUNTIME_DOWN);
       const id = nextId++;
       return new Promise<LocalGenerateResult>((resolve, reject) => {
+        let onAbort: (() => void) | null = null;
+        const cleanup = (): void => {
+          if (onAbort && signal) signal.removeEventListener("abort", onAbort);
+        };
         const timer = setTimeout(() => {
           pending.delete(id);
+          cleanup();
           reject(new Error(TOO_SLOW));
         }, genTimeoutMs);
         // onChunk forwards each streamed token; the terminal `result` (partial on abort)
-        // resolves this promise (handled in the shared message loop above).
-        pending.set(id, { resolve, reject, timer, onChunk: onDelta });
+        // resolves this promise via the shared message loop. Wrap settle to drop the abort
+        // listener, so it never accumulates across calls sharing a signal.
+        pending.set(id, {
+          resolve: (r) => { cleanup(); resolve(r); },
+          reject: (e) => { cleanup(); reject(e); },
+          timer,
+          onChunk: onDelta,
+        });
         // Aborting tells the child to stop; the child then sends its `result` with the
-        // partial text, which resolves us. One-shot listener — a late abort for a
-        // finished id is harmlessly ignored by the child.
+        // partial text, which resolves us.
         if (signal) {
-          const onAbort = (): void => {
+          onAbort = (): void => {
             try {
               c.send({ type: "abort", id });
             } catch {
               /* child already gone — teardown will settle the pending request */
             }
           };
-          if (signal.aborted) onAbort();
-          else signal.addEventListener("abort", onAbort, { once: true });
+          signal.addEventListener("abort", onAbort, { once: true });
         }
         try {
           c.send({ type: "generate", id, modelPath: modelPath(gguf.filename), prompt, contextSize: gguf.contextSize });
         } catch {
           pending.delete(id);
           clearTimeout(timer);
+          cleanup();
           reject(new Error(CRASHED));
         }
       });

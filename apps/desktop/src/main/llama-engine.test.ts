@@ -186,4 +186,16 @@ describe("llamaEngine over a fake child", () => {
     expect(got).toEqual(["keep"]);
     expect(fake.sent.some((m) => m.type === "abort")).toBe(true); // the engine forwarded the abort
   });
+
+  // E3 — an ALREADY-aborted signal short-circuits: no generation is spawned (no doomed
+  // multi-second run), resolves an empty partial.
+  it("E3: a pre-aborted signal never spawns a generation", async () => {
+    downloaded.add("qwen.gguf");
+    const fake = new Fake();
+    const engine = llamaEngine({ models, fetchSink: noopSink, spawn: () => fake });
+    const controller = new AbortController();
+    controller.abort(); // stopped before we even ask
+    await expect(engine.generateStream!("qwen", "hi", () => {}, controller.signal)).resolves.toEqual({ text: "" });
+    expect(fake.sent.some((m) => m.type === "generate")).toBe(false); // nothing sent to the child
+  });
 });
