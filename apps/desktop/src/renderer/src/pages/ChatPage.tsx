@@ -12,6 +12,7 @@ export function ChatPage({ brain }: { brain: BrainStatusView | null }) {
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState<string | null>(null); // in-progress reply, or null
   const [sending, setSending] = useState(false);
+  const [error, setError] = useState(""); // last send failure, shown so it's never silent
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameText, setRenameText] = useState("");
 
@@ -31,6 +32,7 @@ export function ChatPage({ brain }: { brain: BrainStatusView | null }) {
   const openChat = useCallback(async (id: string): Promise<void> => {
     setActiveId(id);
     setStreaming(null);
+    setError("");
     const view = await window.deskhand.chat.get(id);
     setMessages(view?.messages ?? []);
   }, []);
@@ -64,13 +66,17 @@ export function ChatPage({ brain }: { brain: BrainStatusView | null }) {
     const id = activeId;
     const text = draft.trim();
     if (!id || !text || sending || !configured) return;
+    setError("");
     setDraft("");
     setMessages((m) => [...m, { role: "user", content: text, ts: new Date().toISOString() }]);
     setStreaming("");
     setSending(true);
-    await window.deskhand.chat.send(id, text);
+    const res = await window.deskhand.chat.send(id, text);
     setSending(false);
     setStreaming(null);
+    // Never leave a failure silent: show what went wrong (the reason is on the dev
+    // terminal). Empty/error → the composer stays usable so the user can retry.
+    if (!res.ok) setError(res.message ?? "Something went wrong. Try again.");
     // Re-read the authoritative messages (the assistant reply is now on disk) and refresh
     // the list so its newest-first order + derived title update.
     const view = await window.deskhand.chat.get(id);
@@ -215,6 +221,11 @@ export function ChatPage({ brain }: { brain: BrainStatusView | null }) {
                 </button>
               )}
               {!configured && <p className="notice">Connect a brain in Settings first, then come back to chat.</p>}
+              {error.length > 0 && (
+                <p className="notice chat-error" role="alert">
+                  {error}
+                </p>
+              )}
             </div>
           </>
         )}

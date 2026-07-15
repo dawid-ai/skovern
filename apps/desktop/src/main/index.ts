@@ -107,6 +107,45 @@ const noBrain: Router = {
   generateStream: () => Promise.reject(new Error("no brain configured")),
 };
 
+// Development visibility: log the chat/brain lifecycle to the terminal so a dev running
+// `pnpm dev` can SEE what's happening (inputs, which brain, stream start, result/error).
+// Inert (no-op) in a packaged app — a florist never sees a console. (Dawid asked for
+// terminal visibility while debugging; a persistent in-app "live log" window is a
+// possible follow-up.)
+function devlog(...args: unknown[]): void {
+  if (!app.isPackaged) console.log("[chat]", ...args);
+}
+
+// Redact anything that looks like a secret before it can reach a dev log — the "never a
+// key in a log" invariant holds even in dev, even on Dawid's own machine.
+function scrubSecrets(s: string): string {
+  return s.replace(/\b(sk-[A-Za-z0-9_-]{6,}|Bearer\s+[A-Za-z0-9._-]+)/g, "***");
+}
+
+// Wrap a provider so the REAL failure reason is visible in dev — the router deliberately
+// swallows the provider error (it can carry a key/prompt) and rethrows a generic "brain X
+// failed", so without this the actual cause (Ollama down, native crash, timeout) is lost.
+// On-machine providers have no key → log the full message; a cloud error is logged by
+// class only (its message could carry request detail), and every line is scrubbed.
+function withDevErrorLog(provider: Provider): Provider {
+  if (app.isPackaged) return provider;
+  const onErr = (label: string, e: unknown): never => {
+    const detail =
+      provider.onMachine === true
+        ? scrubSecrets(e instanceof Error ? `${e.name}: ${e.message}` : String(e))
+        : `${e instanceof Error ? e.name : "Error"} (cloud brain — detail hidden)`;
+    console.error(`[chat] provider.${label} failed:`, detail);
+    throw e;
+  };
+  return {
+    ...provider,
+    generate: (prompt) => provider.generate(prompt).catch((e) => onErr("generate", e)),
+    generateStream: provider.generateStream
+      ? (prompt, onDelta, signal) => provider.generateStream!(prompt, onDelta, signal).catch((e) => onErr("generateStream", e))
+      : undefined,
+  };
+}
+
 // The user's configured brain as a router, or null if none is set up. One place
 // both "Test my brain" and a brain-using skill get their brain — the key stays in
 // safeStorage (loadBrain), never the renderer, and every call is receipted.
@@ -124,7 +163,7 @@ function buildRouter(): Router | null {
           ? anthropicProvider({ apiKey: brain.key, model: brain.model, baseURL: BRAIN_BASE.anthropic })
           : openRouterProvider({ apiKey: brain.key, model: brain.model, baseURL: BRAIN_BASE.openrouter });
   const providers: Partial<Record<ProviderId, Provider>> = {};
-  providers[brain.provider] = provider;
+  providers[brain.provider] = withDevErrorLog(provider);
   return createRouter({ providers, defaultProvider: brain.provider, sink: fileReceiptSink() });
 }
 
@@ -149,16 +188,23 @@ function buildChatPrompt(messages: ChatMessage[]): string {
 // one-way `chat:token` channel), then save the assistant reply (the partial, on stop).
 // One receipt pair per message rides the router — chat adds no new egress path.
 async function chatSend(chatId: string, text: string): Promise<ChatSendResult> {
+  devlog(`send received — chat ${chatId}, ${text.length} chars`);
   if (!chatId || !text) return { ok: false, message: "Type a message first." };
   if (text.length > CHAT_MAX_INPUT) return { ok: false, message: "That message is a bit long — try shortening it." };
   const chat = getChat(chatId); // getChat throws only on an unsafe id; a bad id → null below
   if (!chat) return { ok: false, message: "That chat isn't here anymore." };
+  const brain = loadBrain();
   const router = buildRouter();
-  if (!router) return { ok: false, message: "Connect a brain in Settings first, then try again." };
+  if (!router) {
+    devlog("no brain configured — refusing send");
+    return { ok: false, message: "Connect a brain in Settings first, then try again." };
+  }
+  devlog(`brain = ${brain?.provider ?? "?"}${brain?.model ? `:${brain.model}` : ""}`);
 
   const now = new Date().toISOString();
   await appendMessage(chatId, { role: "user", content: text, ts: now });
   const prompt = buildChatPrompt(getChat(chatId)?.messages ?? []);
+  devlog(`prompt built (${prompt.length} chars); starting generation…`);
 
   const messageId = randomUUID();
   const controller = new AbortController();
@@ -168,22 +214,33 @@ async function chatSend(chatId: string, text: string): Promise<ChatSendResult> {
   // concurrently to one chat.
   chatAborts.set(chatId, controller);
 
-  const coalescer = createTokenCoalescer((delta) => sendChatToken(mainWindow, { chatId, messageId, delta }), {
-    flushMs: TOKEN_FLUSH_MS,
-    flushBytes: TOKEN_FLUSH_BYTES,
-  });
+  let tokenCount = 0;
+  const coalescer = createTokenCoalescer(
+    (delta) => {
+      tokenCount++;
+      if (tokenCount === 1) devlog("first token received — streaming to the screen");
+      sendChatToken(mainWindow, { chatId, messageId, delta });
+    },
+    { flushMs: TOKEN_FLUSH_MS, flushBytes: TOKEN_FLUSH_BYTES },
+  );
 
   try {
     const res = await router.generateStream({ task: "Chat", prompt }, (d) => coalescer.push(d), controller.signal);
     coalescer.flush(); // any buffered tail before we finalize
+    devlog(`done — ${res.text.length} chars, ${tokenCount} flushes`);
     // The partial (on stop) is a real answer — save it, never discard (contract C3).
     if (res.text.length > 0) {
       await appendMessage(chatId, { role: "assistant", content: res.text, ts: new Date().toISOString() });
     }
+    // A reply with zero text isn't a crash, but it IS "nothing happened" to the user —
+    // tell them honestly instead of leaving a blank bubble.
+    if (res.text.length === 0) return { ok: false, messageId, message: "Your brain replied with nothing. Check it in Settings and try again." };
     return { ok: true, messageId, text: res.text };
-  } catch {
+  } catch (err) {
     coalescer.flush();
-    // The raw brain/network error stays in main (could carry a key/prompt) — warm copy out.
+    // The raw brain/network error stays in main (could carry a key/prompt) — warm copy
+    // out to the user; the real reason is on the terminal (see withDevErrorLog) in dev.
+    devlog("generation failed:", err instanceof Error ? scrubSecrets(err.message) : err);
     return { ok: false, messageId, message: "Your brain didn't answer. Try again in a moment." };
   } finally {
     chatAborts.delete(chatId);
