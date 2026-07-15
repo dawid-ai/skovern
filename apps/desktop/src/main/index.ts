@@ -407,6 +407,12 @@ function createWindow(): void {
     if (!quitting && tray !== null) {
       event.preventDefault();
       mainWindow?.hide();
+      // Free the brain's VRAM/memory when the window closes: the tray app only does background
+      // message checks (no brain needed), so there's no reason to keep a model resident. It
+      // respawns on the next chat (with the "Starting…/Loading…" status). Fixes "closing the
+      // app didn't free my GPU" — closing the window is how most people "close" it.
+      disposeOllama(); // our spawned Ollama serve + its runners (never the user's own)
+      disposeLocal(); // the embedded node-llama-cpp child, if one is warm
     }
   });
   mainWindow.on("closed", () => {
