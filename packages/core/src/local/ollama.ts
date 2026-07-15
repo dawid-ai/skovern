@@ -158,6 +158,82 @@ export function ollamaEngine(opts: OllamaOptions): LocalEngine {
       return { text, tokensIn: countOf(obj["prompt_eval_count"]), tokensOut: countOf(obj["eval_count"]) };
     },
 
+    // Streaming variant of `generate` (Issue 2). Ollama streams `/api/generate` with
+    // `stream:true` as NDJSON — one object per token, then a final `done:true` line
+    // with the usage counts. We forward each `response` chunk to `onDelta` as it
+    // arrives, so the reply appears token-by-token instead of one lump. `signal` (the
+    // user's Stop) resolves with the partial, never throws. The idle timer (reset on
+    // every chunk) bounds a stalled stream without killing a long, healthy one.
+    async generateStream(
+      modelId: string,
+      prompt: string,
+      onDelta: (delta: string) => void,
+      signal?: AbortSignal,
+    ): Promise<LocalGenerateResult> {
+      const controller = new AbortController();
+      let userAborted = false;
+      let stalled = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const arm = (): void => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          stalled = true;
+          controller.abort();
+        }, timeoutMs);
+      };
+      const onExternalAbort = (): void => {
+        userAborted = true;
+        controller.abort();
+      };
+      let text = "";
+      let rawIn: unknown;
+      let rawOut: unknown;
+      if (signal?.aborted) return { text: "" }; // already stopped → empty partial
+      signal?.addEventListener("abort", onExternalAbort, { once: true });
+      arm();
+      try {
+        let res: Response;
+        try {
+          res = await doFetch(`${origin}/api/generate`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ model: modelId, prompt, stream: true }),
+            signal: controller.signal,
+          });
+        } catch (cause) {
+          if (userAborted) return { text }; // aborted before any bytes → partial (empty)
+          throw stalled || isAbort(cause) ? new Error(TOO_SLOW) : notRunning(cause);
+        }
+        if (!res.ok) throw new Error(`Ollama answered with an error (${res.status}) while thinking.`);
+        if (!res.body) throw new Error("The local brain answered with nothing — try a different model.");
+        try {
+          await consumeGenerate(
+            res.body,
+            (chunk) => {
+              text += chunk;
+              onDelta(chunk);
+            },
+            (inV, outV) => {
+              rawIn = inV;
+              rawOut = outV;
+            },
+            arm,
+          );
+        } catch (cause) {
+          if (userAborted) return { text }; // user Stop mid-stream → keep the partial
+          if (stalled || isAbort(cause)) throw new Error(TOO_SLOW);
+          throw cause; // an error line is already descriptive
+        }
+        if (text.length === 0) {
+          throw new Error("The local brain answered with nothing — try a different model.");
+        }
+        return { text, tokensIn: countOf(rawIn), tokensOut: countOf(rawOut) };
+      } finally {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onExternalAbort);
+      }
+    },
+
     async pull(modelId: string, onProgress?: (p: PullProgress) => void): Promise<void> {
       // Idle timer: a healthy pull resets it on every chunk; total silence past
       // pullIdleMs aborts as "stalled" (a fixed total cap would wrongly kill a big,
@@ -276,4 +352,65 @@ function handlePullLine(line: string, onProgress?: (p: PullProgress) => void): v
       ? Math.max(0, Math.min(100, Math.round((completed / total) * 100)))
       : undefined;
   onProgress?.({ status, completed, total, percent });
+}
+
+// Ollama's /api/generate with stream:true emits newline-delimited JSON, one object
+// per token (`{response, done:false}`) then a final `{response:"", done:true, …}`
+// carrying the usage counts. Parse INCREMENTALLY (line-by-line, never buffering the
+// whole body — same shape as consumePull) so a delta reaches the caller the moment
+// it arrives. `onChunk` fires per received network chunk to reset the idle timer.
+async function consumeGenerate(
+  body: ReadableStream<Uint8Array>,
+  onDelta: (delta: string) => void,
+  onCounts: (tokensIn: unknown, tokensOut: unknown) => void,
+  onChunk?: () => void,
+): Promise<void> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (value) {
+        onChunk?.();
+        buffer += decoder.decode(value, { stream: true });
+      }
+      let nl: number;
+      while ((nl = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        if (line.length > 0) handleGenerateLine(line, onDelta, onCounts);
+      }
+      if (done) break;
+    }
+    const tail = buffer.trim();
+    if (tail.length > 0) handleGenerateLine(tail, onDelta, onCounts);
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function handleGenerateLine(
+  line: string,
+  onDelta: (delta: string) => void,
+  onCounts: (tokensIn: unknown, tokensOut: unknown) => void,
+): void {
+  let obj: Record<string, unknown>;
+  try {
+    obj = JSON.parse(line) as Record<string, unknown>;
+  } catch {
+    return; // skip a partial/garbled line rather than fail the whole stream
+  }
+  if (typeof obj["error"] === "string") {
+    throw new Error(`The local brain hit an error: ${(obj["error"] as string).slice(0, 160)}`);
+  }
+  const resp = obj["response"];
+  if (typeof resp === "string" && resp.length > 0) onDelta(resp);
+  // Usage rides the final `done:true` line in a real stream — but a non-streamed reply (some
+  // proxies, and our test fixtures) sends ONE object carrying `response` + the counts and no
+  // `done`. Capture counts from any line that has them (last wins) so both shapes report
+  // tokens; countOf validates them at the call site.
+  if (obj["done"] === true || typeof obj["prompt_eval_count"] === "number" || typeof obj["eval_count"] === "number") {
+    onCounts(obj["prompt_eval_count"], obj["eval_count"]);
+  }
 }

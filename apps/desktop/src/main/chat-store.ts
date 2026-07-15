@@ -2,7 +2,7 @@ import { app } from "electron";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import type { ChatMessage, ChatMeta, ChatTokenEvent, ChatView } from "../shared/chat.js";
+import type { ChatMessage, ChatMeta, ChatStatusEvent, ChatTokenEvent, ChatView } from "../shared/chat.js";
 
 // Main-owned chat storage (TRUSTED main only), patterned on receipts.ts: a small
 // `userData/chats/index.json` (the newest-first sidebar list) plus one append-only
@@ -171,6 +171,17 @@ export function sendChatToken(win: WindowLike | null, event: ChatTokenEvent): vo
     if (win && !win.isDestroyed()) win.webContents.send("chat:token", event);
   } catch {
     // window gone between the guard and the send — a dropped token is harmless
+  }
+}
+
+/** Send a prepare/launch status line to the renderer (loop 033 Issue 4), same
+ *  window-guard as sendChatToken — a status update can never crash main on a
+ *  torn-down window. Empty `phase` clears the indicator. */
+export function sendChatStatus(win: WindowLike | null, event: ChatStatusEvent): void {
+  try {
+    if (win && !win.isDestroyed()) win.webContents.send("chat:status", event);
+  } catch {
+    // window gone between the guard and the send — a dropped status line is harmless
   }
 }
 

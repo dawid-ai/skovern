@@ -253,6 +253,34 @@ test("O3: Ollama consent — the auto-launch preference persists, and a down Oll
   }
 });
 
+test("Issue 3a: 'use my built-in brain' with NO model downloaded routes to setup, not a silent no-op", async () => {
+  test.setTimeout(120_000);
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const app = await electron.launch({
+    args: [".", `--user-data-dir=${userDataDir}`],
+    env: {
+      ...launchOpts(userDataDir).env,
+      DESKHAND_OLLAMA_INSTALLED: "1", // installed (seam) so the consent offer appears; URL is dead → not running
+    },
+  });
+  try {
+    const page = await app.firstWindow();
+    await signIn(page, "builtin-route@shop.test");
+    // No brain, and NO embedded model on disk (we never download one here).
+    await expect(page.getByText(/Set up your brain to get started/i)).toBeVisible({ timeout: 30_000 });
+    await page.getByRole("button", { name: "Settings" }).click();
+    // The Ollama consent offer shows (installed + default 'ask').
+    await expect(page.getByText(/We found Ollama on your computer/i)).toBeVisible();
+    // Choosing the built-in when there's nothing on disk must ROUTE to the download/setup flow —
+    // the loop-032 bug was that it silently set a pref and did nothing (Issue 3).
+    await page.getByRole("button", { name: "No, use my built-in brain" }).click();
+    await expect(page.getByRole("heading", { name: "On this computer", exact: true })).toBeVisible({ timeout: 15_000 });
+  } finally {
+    await app.close();
+    rmSync(userDataDir, { recursive: true, force: true });
+  }
+});
+
 test("O4: onboarding always offers an escape to an online brain — never a dead end", async () => {
   test.setTimeout(120_000);
   // No embedded fixtures here: even if the built-in couldn't be set up, onboarding must never

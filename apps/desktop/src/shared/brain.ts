@@ -10,6 +10,12 @@ export interface BrainStatusView {
   provider: ProviderId | null;
   /** The active model id (e.g. "qwen2.5:3b"), when one is set. Never the key. */
   model: string | null;
+  /** A downloaded built-in (embedded) model exists on disk — the self-reliant floor is
+   *  real, so "use my built-in brain" can actually run something (loop 033 Issue 3). */
+  builtinReady: boolean;
+  /** The optional Ollama helper is installed (may or may not be running) — lets Chat offer
+   *  a "Start Ollama" shortcut when the configured Ollama brain is down (loop 033 Issue 1). */
+  ollamaInstalled: boolean;
 }
 
 /** Short, florist-facing name for a brain provider — for the Settings "currently

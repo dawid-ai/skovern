@@ -5,7 +5,7 @@ import type { BrainStatusView, SaveBrainInput, SaveBrainResult, TestBrainResult 
 import type { LocalActionResult, LocalModelsView, LocalStatusView, PullProgressView } from "./local.js";
 import type { RunSkillResult, SandboxCheckResult, SkillView } from "./plugin.js";
 import type { ActivitySummary, DateRange, ReceiptView } from "./receipts.js";
-import type { ChatMeta, ChatSendResult, ChatTokenEvent, ChatView } from "./chat.js";
+import type { ChatMeta, ChatSendResult, ChatStatusEvent, ChatTokenEvent, ChatView } from "./chat.js";
 import type { OllamaLaunch, OllamaStatusView, SettingsView } from "./settings.js";
 
 declare global {
@@ -58,6 +58,8 @@ declare global {
         get(): Promise<SettingsView>;
         setOllamaLaunch(value: OllamaLaunch): Promise<SettingsView>;
         ollamaStatus(): Promise<OllamaStatusView>;
+        /** Start Ollama once, on the user's explicit request (does not change the pref). */
+        startOllama(): Promise<{ running: boolean }>;
       };
       chat: {
         list(): Promise<ChatMeta[]>;
@@ -69,6 +71,8 @@ declare global {
         stop(chatId: string): Promise<void>;
         /** Listen for streamed reply tokens. Returns an unsubscribe. */
         onToken(cb: (e: ChatTokenEvent) => void): () => void;
+        /** Listen for launch/prepare status lines. Empty phase clears it. Returns an unsubscribe. */
+        onStatus(cb: (e: ChatStatusEvent) => void): () => void;
       };
     };
   }

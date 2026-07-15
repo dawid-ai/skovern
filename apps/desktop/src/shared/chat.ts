@@ -31,6 +31,15 @@ export interface ChatTokenEvent {
   delta: string;
 }
 
+/** A prepare/launch status line, main → renderer, on the one-way `chat:status`
+ *  channel (loop 033 Issue 4). Florist-language phase ("Starting Ollama…",
+ *  "Loading the model…", "Thinking…"); an empty `phase` clears it (the reply is
+ *  streaming or the send ended). */
+export interface ChatStatusEvent {
+  chatId: string;
+  phase: string;
+}
+
 /** The reply to `chat:send` once generation finishes (or is stopped). */
 export interface ChatSendResult {
   ok: boolean;
@@ -42,4 +51,8 @@ export interface ChatSendResult {
   message?: string;
   /** A transparency note on success (e.g. a self-reliant fallback to the built-in brain). */
   note?: string;
+  /** True when the send couldn't run for lack of a usable brain and setting one up would
+   *  fix it (no brain configured, or the Ollama brain is down with no built-in to fall back
+   *  to). The Chat page turns this into an in-chat "Set up a brain" CTA (loop 033 Issue 1/3). */
+  offerSetup?: boolean;
 }
