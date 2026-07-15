@@ -29,7 +29,7 @@ import { runPlugin, sandboxCheck } from "./plugin-host.js";
 import { claudeCliProvider } from "./claude-cli.js";
 import { disposeLocal, downloadedEmbeddedModelId, embeddedFilenames, engineForModel, isEmbeddedModel, localModels, localStatus, makeEngine, pullModel } from "./local.js";
 import { appendMessage, createTokenCoalescer, deleteChat, getChat, listChats, newChat, renameChat, sendChatToken } from "./chat-store.js";
-import { disposeOllama, ensureOllamaRunning, ollamaInstalled, pickOllamaAction } from "./ollama-launch.js";
+import { disposeOllama, ensureOllamaRunning, fakeLaunchCount, ollamaInstalled, pickOllamaAction } from "./ollama-launch.js";
 import { getSettings, setOllamaLaunch, type OllamaLaunch } from "./settings-store.js";
 import { sweepOrphanParts } from "./download.js";
 import { initialNewness, observeThread } from "./dm-newness.js";
@@ -735,6 +735,8 @@ app
     registerTrusted(TRUST, "ollama:status", async (): Promise<OllamaStatusView> => ({
       installed: ollamaInstalled(),
       running: await makeEngine().detect(),
+      // Only surfaced under the unpackaged fake-spawn seam, so an e2e can prove a launch fired.
+      ...(!app.isPackaged && process.env["DESKHAND_OLLAMA_SPAWN_FAKE"] === "1" ? { launchAttempts: fakeLaunchCount() } : {}),
     }));
 
     // Skills. `list` shows each skill's permission card (exactly what the broker

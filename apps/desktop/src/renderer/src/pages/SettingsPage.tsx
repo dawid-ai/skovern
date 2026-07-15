@@ -246,7 +246,24 @@ export function SettingsPage({ onBrainChanged }: { onBrainChanged?: () => void }
                 : "It's installed, but not running right now."
               : "It's not installed on this computer — that's perfectly fine."}
           </p>
-          {ollama.installed && settings !== null && (
+          {ollama.installed && settings !== null && settings.ollamaLaunch === "ask" && (
+            // The consent OFFER (default state): ask before ever starting Ollama for the user.
+            <div className="ollama-consent" role="group" aria-label="Use Ollama?">
+              <p>
+                We found Ollama on your computer. Want Deskhand to start it automatically when you
+                use an Ollama brain? You can change this anytime.
+              </p>
+              <div className="row">
+                <button className="primary" onClick={() => void changeOllamaLaunch("always")}>
+                  Yes, start it automatically
+                </button>
+                <button className="link" onClick={() => void changeOllamaLaunch("never")}>
+                  No, use my built-in brain
+                </button>
+              </div>
+            </div>
+          )}
+          {ollama.installed && settings !== null && settings.ollamaLaunch !== "ask" && (
             <>
               <label htmlFor="ollama-launch">If you pick an Ollama brain and Ollama isn&apos;t running:</label>
               <select
@@ -254,9 +271,6 @@ export function SettingsPage({ onBrainChanged }: { onBrainChanged?: () => void }
                 value={settings.ollamaLaunch}
                 onChange={(e) => void changeOllamaLaunch(e.target.value as OllamaLaunch)}
               >
-                <option value="ask" disabled>
-                  Choose what to do…
-                </option>
                 <option value="always">Start Ollama for me automatically</option>
                 <option value="never">Just use my built-in brain</option>
               </select>

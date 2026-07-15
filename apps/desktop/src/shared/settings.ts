@@ -10,4 +10,7 @@ export interface SettingsView {
 export interface OllamaStatusView {
   installed: boolean;
   running: boolean;
+  /** How many times we've attempted to auto-launch Ollama — present only under the dev/test
+   *  fake-spawn seam, so an e2e can prove the consent→launch wiring fired. */
+  launchAttempts?: number;
 }

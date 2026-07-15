@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { _electron as electron, expect, test, type Page } from "@playwright/test";
@@ -168,6 +168,7 @@ test("O1: a first-run user is onboarded to a working built-in brain, then chats"
 test("O2: an unreachable Ollama brain falls back to the built-in in BOTH chat and Test my brain", async () => {
   test.setTimeout(180_000);
   const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const receiptsPath = path.join(userDataDir, "receipts.jsonl");
   const app = await electron.launch(launchOpts(userDataDir));
   try {
     const page = await app.firstWindow();
@@ -187,6 +188,12 @@ test("O2: an unreachable Ollama brain falls back to the built-in in BOTH chat an
     await page.getByRole("button", { name: "Send", exact: true }).click();
     await expect(page.locator(".chat-thread .from-brain p").last()).toHaveText(FAKE_REPLY, { timeout: 30_000 });
     await expect(page.locator(".chat-fallback-note")).toContainText(/built-in one/i);
+
+    // the fallback call is still receipted as on-machine (one receipt, local:true — egress
+    // guarantee preserved on the swapped path)
+    const log = readFileSync(receiptsPath, "utf8");
+    expect(log).toContain('"provider":"local"');
+    expect(log).toContain('"local":true');
 
     // "Test my brain" also falls back, and says so in its result
     await page.getByRole("button", { name: "Settings" }).click();
@@ -215,16 +222,18 @@ test("O3: Ollama consent — the auto-launch preference persists, and a down Oll
     await signIn(page, "ollama@shop.test");
     await setUpBuiltInBrain(page); // a downloaded built-in exists to fall back to
 
-    // The Settings Ollama section appears (installed) and the auto-launch choice persists.
+    // Settings shows the Ollama CONSENT OFFER (default 'ask' + installed) — we ask before ever
+    // starting Ollama for the user.
     await page.getByRole("button", { name: "Settings" }).click();
     await expect(page.getByText("Ollama (optional helper)")).toBeVisible();
-    await page.getByLabel(/If you pick an Ollama brain/i).selectOption("always");
-    // navigate away + back → the preference stuck
+    await expect(page.getByText(/We found Ollama on your computer/i)).toBeVisible();
+    await page.getByRole("button", { name: "Yes, start it automatically" }).click();
+    // the choice persists across navigation (the offer is gone, the setting reads "always")
     await page.getByRole("button", { name: "What's new" }).click();
     await page.getByRole("button", { name: "Settings" }).click();
     await expect(page.getByLabel(/If you pick an Ollama brain/i)).toHaveValue("always");
 
-    // Pin the brain to an Ollama model. With "always" + installed + down, the app attempts a
+    // Pin the brain to an Ollama model. With "always" + installed + down, the app ATTEMPTS a
     // (fake) launch; the fake can't serve, so it gracefully falls back to the built-in.
     await page.evaluate(() => window.deskhand.brain.save({ provider: "local", key: "", model: "mistral-small:latest" }));
     await page.getByRole("button", { name: "Chat" }).click();
@@ -233,6 +242,36 @@ test("O3: Ollama consent — the auto-launch preference persists, and a down Oll
     await page.getByRole("button", { name: "Send", exact: true }).click();
     await expect(page.locator(".chat-thread .from-brain p").last()).toHaveText(FAKE_REPLY, { timeout: 30_000 });
     await expect(page.locator(".chat-fallback-note")).toContainText(/built-in one/i);
+
+    // prove the consent→launch WIRING fired (not just a silent built-in shortcut): "always" +
+    // installed + down actually attempted the (fake) `ollama serve`.
+    const attempts = await page.evaluate(() => window.deskhand.settings.ollamaStatus().then((s) => s.launchAttempts ?? 0));
+    expect(attempts).toBeGreaterThan(0);
+  } finally {
+    await app.close();
+    rmSync(userDataDir, { recursive: true, force: true });
+  }
+});
+
+test("O4: onboarding always offers an escape to an online brain — never a dead end", async () => {
+  test.setTimeout(120_000);
+  // No embedded fixtures here: even if the built-in couldn't be set up, onboarding must never
+  // trap the user — the online-brain escape is always offered and reaches the usable app.
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const app = await electron.launch({
+    args: [".", `--user-data-dir=${userDataDir}`],
+    env: { ...process.env, DESKHAND_API_URL: server.url },
+  });
+  try {
+    const page = await app.firstWindow();
+    await signIn(page, "online@shop.test");
+    await expect(page.getByText(/Set up your brain to get started/i)).toBeVisible({ timeout: 30_000 });
+    await page.getByRole("button", { name: "Set it up →" }).click();
+    await expect(page.getByRole("heading", { name: "Let's set up your brain." })).toBeVisible();
+    // choose the online escape → land in the usable app, not a dead end
+    await page.getByRole("button", { name: "I'd rather use an online brain" }).click();
+    await page.getByRole("button", { name: "Settings" }).click();
+    await expect(page.getByLabel("Your brain")).toBeVisible(); // the online-brain picker is reachable
   } finally {
     await app.close();
     rmSync(userDataDir, { recursive: true, force: true });
