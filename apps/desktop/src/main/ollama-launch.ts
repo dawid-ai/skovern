@@ -78,28 +78,43 @@ export function fakeLaunchCount(): number {
   return fakeLaunchAttempts;
 }
 
-// Dev-only: surface the GPU-relevant lines from OUR spawned Ollama's own log (it prints
-// whether it offloaded model layers to the GPU or fell back to CPU). Inert when packaged.
+// Dev-only: surface OUR spawned Ollama's own log (it prints GPU discovery + whether it
+// offloaded model layers to the GPU or fell back to CPU). Inert when packaged.
 function ollamaLog(line: string): void {
   if (!app.isPackaged) console.log("[ollama]", line);
 }
 
-// Forward the spawned Ollama's stderr, keeping only the lines that reveal GPU vs CPU / model
-// load (Ollama's stderr is very chatty; this is a debug seam for the CPU-vs-GPU investigation).
+// Forward the spawned Ollama's STARTUP stderr in full (GPU discovery happens in the first
+// seconds), then go quiet so per-request logs don't spam. A cap keeps it bounded. This is a
+// debug seam for the CPU-vs-GPU investigation — Ollama prints exactly why it picked CPU here.
 function pipeOllamaDiagnostics(child: ChildProcess): void {
   if (app.isPackaged || !child.stderr) return;
   child.stderr.setEncoding("utf8");
   let buf = "";
-  const KEEP = /gpu|vram|cuda|rocm|metal|offload|layers|library=|no compatible|inference compute|compute capab|memory available|total memory/i;
+  let logged = 0;
+  const MAX_LINES = 120; // enough for full startup + first model load
   child.stderr.on("data", (chunk: string) => {
+    if (logged >= MAX_LINES) return;
     buf += chunk;
     let nl: number;
     while ((nl = buf.indexOf("\n")) >= 0) {
       const line = buf.slice(0, nl).trim();
       buf = buf.slice(nl + 1);
-      if (line && KEEP.test(line)) ollamaLog(line);
+      if (line && logged < MAX_LINES) {
+        ollamaLog(line);
+        if (++logged === MAX_LINES) ollamaLog("… (further Ollama logs suppressed)");
+      }
     }
   });
+}
+
+// GPU selection is controlled by a handful of env vars; if one is set (e.g. by another tool
+// on this machine, or inherited oddly by Electron), it silently forces CPU. Log them at spawn.
+function logGpuEnv(): void {
+  for (const k of ["CUDA_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES", "GGML_VK_VISIBLE_DEVICES", "OLLAMA_NUM_GPU", "OLLAMA_LLM_LIBRARY", "OLLAMA_HOST", "OLLAMA_MODELS"]) {
+    const v = process.env[k];
+    if (v !== undefined) ollamaLog(`env ${k}=${v}`);
+  }
 }
 
 function startOllamaProcess(): boolean {
@@ -120,6 +135,7 @@ function startOllamaProcess(): boolean {
     ollamaChild.on("error", () => {}); // a failed spawn must never crash main
     pipeOllamaDiagnostics(ollamaChild);
     ollamaLog(`spawned \`ollama serve\` from ${bin}`);
+    logGpuEnv();
     return true;
   } catch {
     return false;
