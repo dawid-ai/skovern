@@ -53,8 +53,12 @@ export function Shell({ ogNumber, onSignOut }: { ogNumber: number | null; onSign
     return () => clearInterval(id);
   }, [refresh]);
 
+  // Poll brain status too, so the chip's green/gray tracks the model loading and idle-unloading
+  // (the model frees itself after 5 min unused). Same cheap interval as the DM poll.
   useEffect(() => {
     void refreshBrain();
+    const id = setInterval(() => void refreshBrain(), POLL_MS);
+    return () => clearInterval(id);
   }, [refreshBrain]);
 
   // First-run onboarding is a non-blocking PROMPT, not a gate: the shell stays usable (News,
@@ -111,12 +115,21 @@ export function Shell({ ogNumber, onSignOut }: { ogNumber: number | null; onSign
             <div
               className={`brain-chip ${
                 brain.provider === "local"
-                  ? "brain-chip-local"
+                  ? // Local brain: green when the model is loaded, gray when it's asleep (unloaded).
+                    brain.modelLoaded
+                    ? "brain-chip-local"
+                    : "brain-chip-asleep"
                   : brain.configured
                     ? "brain-chip-online"
                     : "brain-chip-none"
               }`}
-              title={brain.provider === "local" ? "Your private brain — nothing leaves" : "Your active brain"}
+              title={
+                brain.provider === "local"
+                  ? brain.modelLoaded
+                    ? "Your private brain is awake — nothing leaves this computer"
+                    : "Your private brain is asleep — it wakes up when you chat"
+                  : "Your active brain"
+              }
             >
               <span className="brain-dot" aria-hidden="true" />
               {brain.configured && brain.provider ? (

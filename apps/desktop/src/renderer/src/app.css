@@ -393,6 +393,17 @@ button.page-back:focus-visible {
   border: 1px solid #e3d9cb;
 }
 
+/* A local brain that's configured but not resident (idle-unloaded): gray, "asleep". */
+.brain-chip-asleep {
+  color: var(--muted);
+  background: #eceaea;
+  border: 1px solid #ddd9d9;
+}
+
+.brain-chip-asleep .brain-dot {
+  background: #9a9490;
+}
+
 .brain-dot {
   width: 8px;
   height: 8px;
@@ -1371,10 +1382,53 @@ footer {
   margin: 0;
 }
 
+/* Wrap the scrolling thread so the jump buttons can float over its corner. */
+.chat-thread-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .chat-thread {
   flex: 1;
   overflow-y: auto;
   min-height: 200px;
+}
+
+/* Floating navigation for long conversations: top · previous reply · next reply · newest. */
+.chat-jump {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chat-jump-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 1px solid #e0d7ca;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.chat-jump-btn:hover:not(:disabled) {
+  background: #fff;
+  border-color: var(--accent);
+}
+
+.chat-jump-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+  box-shadow: none;
 }
 
 .from-brain {

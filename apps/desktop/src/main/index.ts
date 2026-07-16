@@ -27,7 +27,7 @@ import { fileFetchSink, fileReceiptSink, readActivityIndex, readReceipts, readRe
 import { toCsv } from "./csv.js";
 import { runPlugin, sandboxCheck } from "./plugin-host.js";
 import { claudeCliProvider } from "./claude-cli.js";
-import { disposeLocal, downloadedEmbeddedModelId, embeddedFilenames, engineForModel, isEmbeddedModel, localModels, localStatus, makeEngine, pullModel } from "./local.js";
+import { disposeLocal, downloadedEmbeddedModelId, embeddedFilenames, engineForModel, isEmbeddedModel, localModels, localStatus, makeEngine, modelLoaded, pullModel } from "./local.js";
 import { appendMessage, createTokenCoalescer, deleteChat, getChat, listChats, newChat, renameChat, sendChatStatus, sendChatToken } from "./chat-store.js";
 import { disposeOllama, ensureOllamaRunning, fakeLaunchCount, ollamaInstalled, pickOllamaAction, sweepOrphanedOllama } from "./ollama-launch.js";
 import { getSettings, setOllamaLaunch, type OllamaLaunch } from "./settings-store.js";
@@ -402,17 +402,15 @@ function createWindow(): void {
   mainWindow.webContents.on("will-navigate", (event) => event.preventDefault());
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 
-  // closing the window keeps Deskhand in the tray — but only if the tray exists
+  // closing the window keeps Deskhand in the tray — but only if the tray exists.
+  // The brain STAYS LOADED across a hide-to-tray: a background job may still be using it,
+  // and this is global lifecycle that future plugins inherit. The 5-min idle-unload
+  // (embedded) / Ollama's own keep-alive frees an unused model instead; a real close
+  // (app quit, below) still disposes it. Do NOT reap the brain here.
   mainWindow.on("close", (event) => {
     if (!quitting && tray !== null) {
       event.preventDefault();
       mainWindow?.hide();
-      // Free the brain's VRAM/memory when the window closes: the tray app only does background
-      // message checks (no brain needed), so there's no reason to keep a model resident. It
-      // respawns on the next chat (with the "Starting…/Loading…" status). Fixes "closing the
-      // app didn't free my GPU" — closing the window is how most people "close" it.
-      disposeOllama(); // our spawned Ollama serve + its runners (never the user's own)
-      disposeLocal(); // the embedded node-llama-cpp child, if one is warm
     }
   });
   mainWindow.on("closed", () => {
@@ -699,14 +697,20 @@ app
     registerTrusted(
       TRUST,
       "brain:status",
-      (): BrainStatusView => ({
-        ...brainStatus(),
-        // Renderer-facing self-reliance signals (loop 033): is the built-in floor real (a
-        // model on disk), and is the optional Ollama helper present? Both computed here so
-        // keys.ts stays purely about the keychain.
-        builtinReady: downloadedEmbeddedModelId() !== null,
-        ollamaInstalled: ollamaInstalled(),
-      }),
+      async (): Promise<BrainStatusView> => {
+        const base = brainStatus();
+        return {
+          ...base,
+          // Renderer-facing self-reliance signals (loop 033): is the built-in floor real (a
+          // model on disk), and is the optional Ollama helper present? Both computed here so
+          // keys.ts stays purely about the keychain.
+          builtinReady: downloadedEmbeddedModelId() !== null,
+          ollamaInstalled: ollamaInstalled(),
+          // Green-vs-gray chip (loop 034): only a LOCAL brain has a resident/unloaded
+          // distinction — an online brain is neither loaded nor unloaded here.
+          modelLoaded: base.provider === "local" ? await modelLoaded(base.model) : false,
+        };
+      },
     );
 
     registerTrusted(TRUST, "brain:save", (raw: unknown): SaveBrainResult => {
