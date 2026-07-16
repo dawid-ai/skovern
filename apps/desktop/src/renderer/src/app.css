@@ -921,6 +921,19 @@ footer {
   color: var(--ink);
 }
 
+.answer hr {
+  border: none;
+  border-top: 1px solid #e5ddd3;
+  margin: 12px 0;
+}
+
+.answer blockquote {
+  margin: 8px 0;
+  padding-left: 12px;
+  border-left: 3px solid #e5ddd3;
+  color: var(--muted);
+}
+
 /* Local Brain setup view */
 .local-verdict {
   align-items: flex-start;
@@ -1382,10 +1395,13 @@ footer {
   margin: 0;
 }
 
-/* Wrap the scrolling thread so the jump buttons can float over its corner. */
+/* Wrap the scrolling thread so the jump buttons can float over its corner. The wrap IS the
+   box the thread used to be (flex:1 = basis 0 so it can shrink and let the child scroll,
+   min-height 0 so a short window never makes it grow to fit content and spill over the
+   composer); the thread fills it and does the actual scrolling. */
 .chat-thread-wrap {
   position: relative;
-  flex: 1 1 auto;
+  flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -1394,7 +1410,7 @@ footer {
 .chat-thread {
   flex: 1;
   overflow-y: auto;
-  min-height: 200px;
+  min-height: 0;
 }
 
 /* Floating navigation for long conversations: top · previous reply · next reply · newest. */

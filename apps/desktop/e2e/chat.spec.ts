@@ -536,12 +536,31 @@ test("chat scroll: opens at the bottom, the jump buttons navigate, and they disa
   });
   try {
     const page = await app.firstWindow();
+    // A SHORT window so the thread is squeezed — this is the regression condition Dawid hit:
+    // the wrapper must let the thread SCROLL, not grow to fit content and spill over the composer.
+    await app.evaluate(async ({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setBounds({ width: 900, height: 520 }));
     await signIn(page, "scroll-nav@shop.test");
     await page.getByRole("button", { name: "Chat" }).click();
     await page.locator(".chat-list").getByRole("button", { name: "Long chat" }).click();
 
     // precondition: the thread overflows (there's something to scroll)
     await expect.poll(async () => { const m = await threadMetrics(page); return m.sh - m.ch; }).toBeGreaterThan(20);
+
+    // Regression guard (loop-034 wrapper): the thread is a real scroll container and its content
+    // does NOT overlap the composer — the reply text can't render over the text field.
+    const overlap = await page.evaluate(() => {
+      const thread = document.querySelector(".chat-thread");
+      const composer = document.querySelector(".chat-composer");
+      if (!thread || !composer) return { bad: true, reason: "missing" as const };
+      const t = thread.getBoundingClientRect();
+      const c = composer.getBoundingClientRect();
+      return { bad: t.bottom > c.top + 1, threadBottom: t.bottom, composerTop: c.top };
+    });
+    expect(overlap.bad).toBe(false); // thread ends at or above the composer — no overlap
+
+    // Back to a normal height for the nav assertions: at 520px even the one-line empty-chat
+    // hint can scroll, which would (correctly) enable "Jump to top" — not the E12 case we mean.
+    await app.evaluate(async ({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setBounds({ width: 900, height: 820 }));
 
     // E10: an opened chat starts scrolled to the bottom (newest message in view)
     await expect.poll(async () => isAtBottom(await threadMetrics(page))).toBe(true);
@@ -571,6 +590,61 @@ test("chat scroll: opens at the bottom, the jump buttons navigate, and they disa
     await expect(page.getByRole("button", { name: "Jump to newest" })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Previous reply" })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Next reply" })).toBeDisabled();
+  } finally {
+    await app.close();
+    rmSync(userDataDir, { recursive: true, force: true });
+  }
+});
+
+// ── Markdown: the brain's reply renders bold / lists / links / HR; the user's text stays literal ──
+test("chat renders the brain's reply as safe markdown, and keeps the user's message literal", async () => {
+  test.setTimeout(120_000);
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const chatsDir = path.join(userDataDir, "chats");
+  mkdirSync(chatsDir, { recursive: true });
+  writeFileSync(
+    path.join(chatsDir, "index.json"),
+    JSON.stringify([{ id: "md-chat", title: "Markdown chat", createdAt: "2026-07-14T08:00:00.000Z", updatedAt: "2026-07-14T08:00:00.000Z" }]),
+  );
+  const assistantMd = [
+    "Here is **bold text** and a [link](https://example.com).",
+    "",
+    "- first point",
+    "- second point",
+    "",
+    "---",
+    "",
+    "> a quote",
+    "",
+    "And a raw tag that must NOT become live: <script>alert(1)</script>",
+  ].join("\n");
+  writeFileSync(
+    path.join(chatsDir, "md-chat.jsonl"),
+    JSON.stringify({ role: "user", content: "show me **stars** literally", ts: "2026-07-14T08:00:01.000Z" }) + "\n" +
+      JSON.stringify({ role: "assistant", content: assistantMd, ts: "2026-07-14T08:00:02.000Z" }) + "\n",
+  );
+
+  const app = await electron.launch({ args: [".", `--user-data-dir=${userDataDir}`], env: { ...process.env, DESKHAND_API_URL: server.url } });
+  try {
+    const page = await app.firstWindow();
+    await signIn(page, "markdown@shop.test");
+    await page.getByRole("button", { name: "Chat" }).click();
+    await page.locator(".chat-list").getByRole("button", { name: "Markdown chat" }).click();
+
+    const brain = page.locator(".chat-thread .from-brain");
+    await expect(brain.locator("strong")).toHaveText("bold text"); // **bold** → <strong>
+    await expect(brain.locator("a")).toHaveAttribute("href", "https://example.com"); // [link] → <a href>
+    await expect(brain.locator("li")).toHaveCount(2); // bullet list → two <li>
+    await expect(brain.locator("hr")).toHaveCount(1); // --- → <hr>
+    await expect(brain.locator("blockquote")).toHaveCount(1); // > quote → <blockquote>
+    // SECURITY: raw HTML in model output is NOT parsed into live elements (no rehype-raw).
+    await expect(brain.locator("script")).toHaveCount(0);
+    await expect(brain).toContainText("<script>alert(1)</script>"); // shown as literal text
+
+    // The USER's own message is literal — "**stars**" is NOT turned into bold.
+    const you = page.locator(".chat-thread .from-you");
+    await expect(you.locator("strong")).toHaveCount(0);
+    await expect(you).toContainText("**stars**");
   } finally {
     await app.close();
     rmSync(userDataDir, { recursive: true, force: true });
@@ -634,6 +708,15 @@ test("chat auto-follows the stream (pausing when scrolled up) and the chip stays
     await expect(chip).not.toHaveClass(/brain-chip-asleep/);
 
     // E6: over a chip-poll cycle, the load-state probe writes NO non-routine receipts.
+    // First wait for all THREE send receipts (E7/E8/E9) to be flushed, so a send's "done" that
+    // lags its on-screen reply can't land inside the snapshot window and read as poll noise.
+    await expect
+      .poll(
+        () =>
+          readFileSync(receiptsPath, "utf8").trim().split("\n").filter((l) => l.length).map((l) => JSON.parse(l) as Record<string, unknown>).filter((r) => r["provider"] === "local" && r["phase"] === "done").length,
+        { timeout: 15_000 },
+      )
+      .toBe(3);
     const before = readFileSync(receiptsPath, "utf8").trim().split("\n").filter((l) => l.length);
     await page.waitForTimeout(6_000); // > POLL_MS (5s): at least one chip poll fires
     const added = readFileSync(receiptsPath, "utf8").trim().split("\n").filter((l) => l.length).slice(before.length).map((l) => JSON.parse(l) as Record<string, unknown>);

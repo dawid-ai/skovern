@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import type { ChatMessage, ChatMeta } from "../../../shared/chat.js";
 import type { BrainStatusView } from "../../../shared/brain.js";
 import { atBottom, nextOffset, prevOffset, BOTTOM_EPS } from "./chat-scroll.js";
+import { Answer } from "../components/Answer.js";
 
 // "Chat" — talk to your brain, one conversation at a time, replies streaming in
 // token-by-token. Separate chats persist across restarts. The renderer never touches
@@ -46,10 +47,18 @@ export function ChatPage({ brain, onSetup }: { brain: BrainStatusView | null; on
   }, [measure]);
 
   // Follow new messages / streamed tokens only while pinned. Runs before paint so the jump
-  // is invisible. Opening a chat sets pinnedRef true (below), so it lands at the bottom.
+  // is invisible.
+  const lastActiveId = useRef<string | null>(null);
   useLayoutEffect(() => {
     const el = threadRef.current;
-    if (el && pinnedRef.current) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    // Entering a chat (new OR switched) always lands at the newest message and re-pins — so a
+    // stale scroll offset from the previous chat never lingers on the reused thread element.
+    if (lastActiveId.current !== activeId) {
+      lastActiveId.current = activeId;
+      pinnedRef.current = true;
+    }
+    if (pinnedRef.current) el.scrollTop = el.scrollHeight;
     measure();
   }, [messages, streaming, prepare, activeId, measure]);
 
@@ -293,18 +302,23 @@ export function ChatPage({ brain, onSetup }: { brain: BrainStatusView | null; on
                 messages.map((m, i) => (
                   <div key={i} className={m.role === "user" ? "bubble from-you" : "bubble from-brain"}>
                     <span className="who">{m.role === "user" ? "You" : "Your brain"}</span>
-                    <p>{m.content}</p>
+                    {/* The brain's reply is (safe) markdown — bold, lists, links, HR, code. The
+                        user's own message stays literal text (never re-interpreted as markdown). */}
+                    {m.role === "user" ? <p>{m.content}</p> : <Answer>{m.content}</Answer>}
                   </div>
                 ))
               )}
               {sending && streaming !== null && (
                 <div className="bubble from-brain">
                   <span className="who">Your brain</span>
-                  {/* Until the first token, show the launch/prepare phase (Issue 4) so the
-                      wait for a starting brain or a loading model never looks frozen. */}
-                  <p className={streaming.length === 0 && prepare.length > 0 ? "chat-status" : undefined}>
-                    {streaming.length > 0 ? streaming : prepare.length > 0 ? prepare : "…"}
-                  </p>
+                  {/* Once tokens arrive, render them as markdown (same safe config as a saved
+                      reply); before the first token show the launch/prepare phase (Issue 4) as
+                      plain text so the wait for a starting brain never looks frozen. */}
+                  {streaming.length > 0 ? (
+                    <Answer>{streaming}</Answer>
+                  ) : (
+                    <p className={prepare.length > 0 ? "chat-status" : undefined}>{prepare.length > 0 ? prepare : "…"}</p>
+                  )}
                 </div>
               )}
             </div>
