@@ -50,6 +50,9 @@ export interface LocalModelView {
 export interface LocalStatusView {
   /** Is Ollama running + reachable on loopback right now? */
   ollamaReady: boolean;
+  /** Is the Ollama helper INSTALLED (binary present), even if not running? Lets the setup
+   *  screen offer a one-click "Start Ollama to see your models" instead of a dead end. */
+  ollamaInstalled: boolean;
   hardware: HardwareView;
   verdict: Verdict;
   /** A friendly line when Ollama isn't running (else empty). */

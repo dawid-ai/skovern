@@ -223,9 +223,13 @@ function logGpuEnv(): void {
 }
 
 function startOllamaProcess(): boolean {
-  if (!app.isPackaged && process.env["SKOVERN_OLLAMA_SPAWN_FAKE"] === "1") {
+  // Test seam: "1" = a fake that attempts but never serves (proves the FAILURE path); "serve" =
+  // a fake that skips the real spawn and lets the readiness poll hit a fixture Ollama the test
+  // brings up (proves the SUCCESS path). Neither forks a real process.
+  const fake = !app.isPackaged ? process.env["SKOVERN_OLLAMA_SPAWN_FAKE"] : undefined;
+  if (fake === "1" || fake === "serve") {
     fakeLaunchAttempts++;
-    return true; // attempted (fake) — but it won't actually serve, so readiness will fail
+    return true;
   }
   // Already started one that's still alive? Don't spawn a second (two concurrent
   // local-Ollama-down calls, e.g. a chat send racing a brain test, would otherwise each
@@ -261,7 +265,9 @@ function startOllamaProcess(): boolean {
 export async function ensureOllamaRunning(detect: () => Promise<boolean>, timeoutMs = 8000): Promise<boolean> {
   const started = startOllamaProcess();
   if (!started) return false;
-  if (!app.isPackaged && process.env["SKOVERN_OLLAMA_SPAWN_FAKE"] === "1") return false; // fake doesn't serve
+  // The "1" fake never serves → readiness fails immediately. The "serve" fake DOES fall through
+  // to the readiness poll, so it succeeds once the fixture Ollama is reachable.
+  if (!app.isPackaged && process.env["SKOVERN_OLLAMA_SPAWN_FAKE"] === "1") return false;
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await detect()) return true;

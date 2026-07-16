@@ -71,8 +71,10 @@ export function Shell({ ogNumber, onSignOut }: { ogNumber: number | null; onSign
     return (
       <Onboarding
         onConfigured={() => {
+          // After onboarding sets up a brain, land in Chat — you just made a brain, so let
+          // people USE it (Issue 5). Dumping them on "What's new" made no sense.
           refreshBrain();
-          setPage("news");
+          setPage("chat");
         }}
         onSkip={() => setPage("news")}
       />
@@ -84,7 +86,7 @@ export function Shell({ ogNumber, onSignOut }: { ogNumber: number | null; onSign
       <nav className="sidebar" aria-label="Main">
         <div className="brand">
           <span className="mark" aria-hidden="true">
-            DH
+            S
           </span>
           <span className="brand-name">Skovern</span>
         </div>

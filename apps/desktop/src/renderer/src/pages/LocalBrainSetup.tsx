@@ -29,6 +29,8 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
   const [busy, setBusy] = useState(false);
   const [savedId, setSavedId] = useState<string | null>(null);
   const [pulling, setPulling] = useState<Record<string, PullProgressView>>({});
+  const [startingOllama, setStartingOllama] = useState(false); // "Start Ollama" in flight
+  const [pullName, setPullName] = useState(""); // the "pull by name" box (Advanced)
   const unsubPull = useRef<(() => void) | null>(null);
 
   const refresh = useCallback(async () => {
@@ -61,6 +63,26 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
     }
   }
 
+  // Ollama is installed but not running → start it (with the user's consent — this click),
+  // then re-scan so their already-pulled models (gemma, mixtral, …) appear as ready (Issue 2).
+  async function startOllamaAndRescan() {
+    setStartingOllama(true);
+    setNotice("");
+    const { running } = await window.skovern.settings.startOllama();
+    setStartingOllama(false);
+    if (running) await refresh();
+    else setNotice("We couldn't start Ollama. Make sure it's installed and try again.");
+  }
+
+  // "Pull by name" (Advanced): fetch any Ollama model the user names. Main validates the name
+  // and rejects a bad one with a reason; a valid one downloads AND becomes the active brain.
+  async function pullByName() {
+    const name = pullName.trim();
+    if (!name) return;
+    setPullName("");
+    await getModel(name);
+  }
+
   async function getModel(id: string) {
     setPulling((prev) => ({ ...prev, [id]: { modelId: id, percent: 0, status: "starting", done: false, ok: true } }));
     // Subscribe BEFORE the pull so we don't miss early ticks (016 pattern).
@@ -71,13 +93,14 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
     const res = await window.skovern.local.pull(id);
     unsubPull.current?.();
     unsubPull.current = null;
+    // Clear the progress entry whatever the outcome — a rejected pull-by-name must not leave a
+    // stuck bar. On success, download AND use in one click (you asked for this model).
+    setPulling((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
     if (res.ok) {
-      setPulling((prev) => {
-        const next = { ...prev };
-        delete next[id];
-        return next;
-      });
-      // Download AND use in one click: you asked for this model, so make it your brain.
       await useModel(id);
       await refresh();
     } else {
@@ -247,7 +270,10 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
       </header>
 
       {status === null ? (
-        <p className="hint">Checking your computer…</p>
+        <div className="card local-loading">
+          <span className="spinner" aria-hidden="true" />
+          <p>Checking your computer — finding the best private brain for it…</p>
+        </div>
       ) : (
         <>
           <div className="card local-verdict">
@@ -271,6 +297,17 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
           </div>
 
           {notice.length > 0 && <p className="notice">{notice}</p>}
+
+          {/* Ollama is installed but not running → offer a one-click start (Issue 2), so the
+              user's already-pulled models appear instead of being invisible. Consent = the click. */}
+          {status.ollamaInstalled && !status.ollamaReady && (
+            <div className="notice local-ollama-start" role="note">
+              <p>You have Ollama installed. Start it to see the models you’ve already downloaded.</p>
+              <button className="primary" onClick={() => void startOllamaAndRescan()} disabled={startingOllama}>
+                {startingOllama ? "Starting Ollama…" : "Start Ollama to see your models"}
+              </button>
+            </div>
+          )}
 
           {!canAct ? (
             // Nothing actionable: no Ollama AND no embedded model. Lead with the honest
@@ -313,14 +350,38 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
                 </div>
               )}
 
-              {advanced.length > 0 && (
+              {(advanced.length > 0 || status.ollamaReady) && (
                 <details className="local-advanced">
-                  <summary>Advanced — models that need Ollama ({advanced.length})</summary>
-                  <p className="hint">
-                    These run through Ollama, a separate free helper. If it&apos;s not installed and running, they
-                    can&apos;t download here — the ones above need nothing extra.
-                  </p>
-                  {modelTable(advanced)}
+                  <summary>Advanced — Ollama models{advanced.length > 0 ? ` (${advanced.length} need Ollama)` : ""}</summary>
+                  {advanced.length > 0 && (
+                    <>
+                      <p className="hint">
+                        These run through Ollama, a separate free helper. If it&apos;s not installed and running, they
+                        can&apos;t download here — the ones above need nothing extra.
+                      </p>
+                      {modelTable(advanced)}
+                    </>
+                  )}
+                  {/* Power user: pull ANY Ollama model by name (Issue 3). Only when Ollama is up
+                      — the button above starts it first if it isn't. Main validates the name. */}
+                  {status.ollamaReady && (
+                    <div className="local-pull-name">
+                      <p className="hint">Or run any other Ollama model — type its name (e.g. mixtral:8x7b):</p>
+                      <div className="row">
+                        <input
+                          aria-label="Ollama model name"
+                          className="local-pull-input"
+                          value={pullName}
+                          onChange={(e) => setPullName(e.target.value)}
+                          onKeyDown={(e) => e.key === "Enter" && void pullByName()}
+                          placeholder="model:tag"
+                        />
+                        <button className="primary" onClick={() => void pullByName()} disabled={pullName.trim().length === 0}>
+                          Get it
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </details>
               )}
             </>

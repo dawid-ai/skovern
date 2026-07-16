@@ -14,6 +14,7 @@ import { fileFetchSink } from "./receipts.js";
 import { scanHardware } from "./hardware.js";
 import { createCachedCatalogLoader, snapshotCatalog } from "./catalog.js";
 import { modelDownloaded } from "./download.js";
+import { ollamaInstalled } from "./ollama-launch.js";
 import { llamaEngine, type ChildLike, type EmbeddedModel, type FromChild, type LlamaEngine } from "./llama-engine.js";
 import type {
   HardwareView,
@@ -142,10 +143,18 @@ function fakeLlamaSpawn(): (() => ChildLike) | undefined {
           return;
         }
         const words = FAKE_REPLY.split(" ");
+        // Test seam: stream a few words then ERROR mid-generation (simulates the model filling
+        // its context window) — proves the streamed partial is kept, never dropped (Issue 6).
+        const errorAfter = !app.isPackaged && process.env["SKOVERN_LLAMA_FAKE_ERROR"] === "1" ? 3 : Infinity;
         const st = { timer: undefined as unknown as ReturnType<typeof setTimeout>, sent: "" };
         streams.set(msg.id, st);
         let i = 0;
         const step = (): void => {
+          if (i >= errorAfter) {
+            streams.delete(msg.id);
+            emit({ type: "error", id: msg.id, message: "The model ran out of room." });
+            return;
+          }
           if (i >= words.length) {
             streams.delete(msg.id);
             emit({ type: "result", id: msg.id, text: st.sent, tokensIn: 12, tokensOut: words.length });
@@ -310,14 +319,18 @@ export async function localStatus(): Promise<LocalStatusView> {
   ]);
   rememberEmbedded(catalog.models);
   const v = verdict(profile, candidateVerdictModels(catalog.models, det.have, det.ready));
+  const installed = ollamaInstalled();
   return {
     ollamaReady: det.ready,
+    ollamaInstalled: installed,
     hardware: hardwareView(profile),
     verdict: v,
-    // An embedded model runs WITHOUT Ollama, so don't nag about Ollama when one exists.
-    notice: det.ready || hasEmbedded()
-      ? ""
-      : "Ollama isn't running on this computer. It's the free helper that runs a private brain — start it, then choose \"Check my computer again\".",
+    // An embedded model runs WITHOUT Ollama, so don't nag about Ollama when one exists. If
+    // Ollama IS installed but not running, the screen offers a one-click start (no nag here).
+    notice:
+      det.ready || hasEmbedded() || installed
+        ? ""
+        : "Ollama isn't running on this computer. It's the free helper that runs a private brain — start it, then choose \"Check my computer again\".",
   };
 }
 

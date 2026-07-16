@@ -122,6 +122,7 @@ function launchOpts(userDataDir: string) {
       ...process.env,
       SKOVERN_API_URL: server.url,
       SKOVERN_OLLAMA_URL: "http://127.0.0.1:1", // Ollama down → embedded path
+      SKOVERN_OLLAMA_INSTALLED: "0", // deterministic default: not installed → no start-prompt (O3/Issue3a override to "1")
       SKOVERN_CATALOG_URL: catalogUrl,
       SKOVERN_HARDWARE: GPU_HARDWARE,
       SKOVERN_LLAMA_FAKE: "1",
@@ -154,11 +155,64 @@ test("O1: a first-run user is onboarded to a working built-in brain, then chats"
     await setUpBuiltInBrain(page);
 
     // once a brain is active, the app proper is reachable and chat works with zero external tools
-    await page.getByRole("button", { name: "Chat" }).click();
+    await page.getByRole("button", { name: "Chat", exact: true }).click();
     await page.getByRole("button", { name: "New chat" }).click();
     await page.getByLabel("Message your brain").fill("hello");
     await page.getByRole("button", { name: "Send", exact: true }).click();
     await expect(page.locator(".chat-thread .from-brain p").last()).toHaveText(FAKE_REPLY, { timeout: 30_000 });
+  } finally {
+    await app.close();
+    rmSync(userDataDir, { recursive: true, force: true });
+  }
+});
+
+test("Issue 5: after onboarding sets up a brain, the app lands in Chat — not What's new", async () => {
+  test.setTimeout(180_000);
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
+  const app = await electron.launch(launchOpts(userDataDir));
+  try {
+    const page = await app.firstWindow();
+    await signIn(page, "land@shop.test");
+    await setUpBuiltInBrain(page); // download + activate → onConfigured fires
+    // E6: we're on the CHAT page now (its heading + "New chat" + the no-chat empty state), NOT
+    // dumped on "What's new".
+    await expect(page.getByRole("heading", { name: "Chat", exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("button", { name: "New chat" })).toBeVisible();
+    await expect(page.getByText("Start a new chat to begin.")).toBeVisible();
+  } finally {
+    await app.close();
+    rmSync(userDataDir, { recursive: true, force: true });
+  }
+});
+
+test("Issue 1: the onboarding brain-setup is inside a scroll container — the bottom isn't clipped", async () => {
+  test.setTimeout(120_000);
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
+  const app = await electron.launch(launchOpts(userDataDir));
+  try {
+    const page = await app.firstWindow();
+    // a short window so the tall setup content MUST scroll, not clip off the bottom
+    await app.evaluate(async ({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setBounds({ width: 900, height: 520 }));
+    await signIn(page, "clip@shop.test");
+    // enter onboarding via the first-run banner, then the private-brain setup
+    await page.getByRole("button", { name: "Set it up →" }).click();
+    await page.getByRole("button", { name: "Set up my private brain →" }).click();
+    await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible({ timeout: 30_000 });
+
+    // The regression: onboarding rendered the setup with NO scroll container, so it clipped.
+    // The fix wraps it in `.content` (overflow-y: auto). Assert the wrapper exists AND the
+    // bottom is reachable by scrolling (not cut off the window).
+    const s = await page.evaluate(() => {
+      const c = document.querySelector(".content") as HTMLElement | null;
+      const wrapsPage = !!c?.querySelector(".page");
+      const overflowY = c ? getComputedStyle(c).overflowY : "";
+      if (c) c.scrollTop = c.scrollHeight; // try to reach the bottom
+      const bottomReachable = !c ? false : c.scrollHeight <= c.clientHeight || c.scrollTop > 0;
+      return { hasWrapper: !!c && wrapsPage, overflowY, bottomReachable };
+    });
+    expect(s.hasWrapper).toBe(true); // the setup is inside a scroll container
+    expect(s.overflowY).toBe("auto");
+    expect(s.bottomReachable).toBe(true); // nothing clipped past the window
   } finally {
     await app.close();
     rmSync(userDataDir, { recursive: true, force: true });
@@ -182,7 +236,7 @@ test("O2: an unreachable Ollama brain falls back to the built-in in BOTH chat an
     await page.evaluate(() => window.skovern.brain.save({ provider: "local", key: "", model: "mistral-small:latest" }));
 
     // chat falls back to the built-in, with the honest note
-    await page.getByRole("button", { name: "Chat" }).click();
+    await page.getByRole("button", { name: "Chat", exact: true }).click();
     await page.getByRole("button", { name: "New chat" }).click();
     await page.getByLabel("Message your brain").fill("are you there?");
     await page.getByRole("button", { name: "Send", exact: true }).click();
@@ -236,7 +290,7 @@ test("O3: Ollama consent — the auto-launch preference persists, and a down Oll
     // Pin the brain to an Ollama model. With "always" + installed + down, the app ATTEMPTS a
     // (fake) launch; the fake can't serve, so it gracefully falls back to the built-in.
     await page.evaluate(() => window.skovern.brain.save({ provider: "local", key: "", model: "mistral-small:latest" }));
-    await page.getByRole("button", { name: "Chat" }).click();
+    await page.getByRole("button", { name: "Chat", exact: true }).click();
     await page.getByRole("button", { name: "New chat" }).click();
     await page.getByLabel("Message your brain").fill("hi");
     await page.getByRole("button", { name: "Send", exact: true }).click();

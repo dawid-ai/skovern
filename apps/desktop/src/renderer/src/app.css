@@ -935,6 +935,48 @@ footer {
 }
 
 /* Local Brain setup view */
+
+/* Loading state — a real card with a spinner, not a lone line of text (Issue 1). */
+.local-loading {
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+  padding: 40px 18px;
+  color: var(--muted);
+}
+
+.local-loading .spinner {
+  width: 20px;
+  height: 20px;
+  border-width: 3px;
+}
+
+/* "Start Ollama to see your models" prompt (Issue 2). */
+.local-ollama-start {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+/* "Pull any Ollama model by name" (Issue 3). */
+.local-pull-name {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #ece3d7;
+}
+
+.local-pull-input {
+  flex: 1;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #e5ddd3;
+  background: #fff;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--ink);
+}
+
 .local-verdict {
   align-items: flex-start;
   text-align: left;

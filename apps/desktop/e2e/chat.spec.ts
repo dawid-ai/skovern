@@ -222,6 +222,7 @@ test("chat streams a local reply, persists it, stops mid-stream, and writes one 
       ...process.env,
       SKOVERN_API_URL: server.url,
       SKOVERN_OLLAMA_URL: "http://127.0.0.1:1", // Ollama down → embedded path
+      SKOVERN_OLLAMA_INSTALLED: "0", // deterministic: pretend Ollama isn't installed (Dawid's box has it) so no start-prompt
       SKOVERN_CATALOG_URL: catalogUrl,
       SKOVERN_HARDWARE: GPU_HARDWARE,
       SKOVERN_LLAMA_FAKE: "1", // fake native child, streams the canned reply
@@ -651,6 +652,47 @@ test("chat renders the brain's reply as safe markdown, and keeps the user's mess
   }
 });
 
+// ── Loop 035 Issue 6: a reply that fills the model's context is KEPT (cut off), never blank ──
+test("a context-filling reply is kept as a cut-off partial, never dropped to a blank turn", async () => {
+  test.setTimeout(240_000);
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
+  const app = await electron.launch({
+    args: [".", `--user-data-dir=${userDataDir}`],
+    env: {
+      ...process.env,
+      SKOVERN_API_URL: server.url,
+      SKOVERN_OLLAMA_URL: "http://127.0.0.1:1",
+      SKOVERN_OLLAMA_INSTALLED: "0",
+      SKOVERN_CATALOG_URL: catalogUrl,
+      SKOVERN_HARDWARE: GPU_HARDWARE,
+      SKOVERN_LLAMA_FAKE: "1",
+      SKOVERN_LLAMA_FAKE_DELAY_MS: "50",
+      SKOVERN_MODEL_DOWNLOAD_URL: downloadUrl,
+      SKOVERN_LLAMA_FAKE_ERROR: "1", // stream a few words, then error (model ran out of room)
+    },
+  });
+  try {
+    const page = await app.firstWindow();
+    await signIn(page, "overflow@shop.test");
+    await setupLocalEmbeddedBrain(page);
+    await page.getByRole("button", { name: "Chat" }).click();
+    await page.getByRole("button", { name: "New chat" }).click();
+    await page.getByLabel("Message your brain").fill("repeat this sentence forever");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+
+    // the streamed partial is KEPT as the reply (not blank), and it's shorter than the full text
+    await expect(lastBrainP(page)).toContainText("Hello", { timeout: 30_000 });
+    const kept = (await lastBrainP(page).innerText()).trim();
+    expect(kept.length).toBeGreaterThan(0);
+    expect(kept.length).toBeLessThan(FAKE_REPLY.length);
+    // …and an honest "cut off" note, never a silent blank
+    await expect(page.getByText(/got cut off/i)).toBeVisible({ timeout: 10_000 });
+  } finally {
+    await app.close();
+    rmSync(userDataDir, { recursive: true, force: true });
+  }
+});
+
 // ── Loop 034: auto-follow while streaming + the brain chip (green/hide/receipts) ─────────
 // E7 follow · E8 pause when scrolled up · E9 re-pin · E1 chip green when loaded · E5 hide to
 // tray keeps the model loaded (the 66bc60c regression) · E6 the chip poll writes no receipts.
@@ -665,6 +707,7 @@ test("chat auto-follows the stream (pausing when scrolled up) and the chip stays
       ...process.env,
       SKOVERN_API_URL: server.url,
       SKOVERN_OLLAMA_URL: "http://127.0.0.1:1", // Ollama down → embedded path
+      SKOVERN_OLLAMA_INSTALLED: "0", // deterministic: pretend Ollama isn't installed (Dawid's box has it) so no start-prompt
       SKOVERN_CATALOG_URL: catalogUrl,
       SKOVERN_HARDWARE: GPU_HARDWARE,
       SKOVERN_LLAMA_FAKE: "1",
@@ -751,6 +794,7 @@ test("brain chip goes gray when the model idle-unloads and green again on the ne
       ...process.env,
       SKOVERN_API_URL: server.url,
       SKOVERN_OLLAMA_URL: "http://127.0.0.1:1",
+      SKOVERN_OLLAMA_INSTALLED: "0", // deterministic: pretend Ollama isn't installed (Dawid's box has it) so no start-prompt
       SKOVERN_CATALOG_URL: catalogUrl,
       SKOVERN_HARDWARE: GPU_HARDWARE,
       SKOVERN_LLAMA_FAKE: "1",

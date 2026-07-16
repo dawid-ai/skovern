@@ -105,6 +105,30 @@
         "filename": "Qwen2.5-14B-Instruct-Q4_K_M.gguf",
         "contextSize": 4096
       }
+    },
+    {
+      "id": "gemma2:27b",
+      "label": "Gemma 2 27B",
+      "params": 27,
+      "sizeBytes": 16700000000,
+      "quant": "Q4_K_M",
+      "creator": "Google (Gemma team)",
+      "homepage": "https://ollama.com/library/gemma2",
+      "license": "Gemma Terms — free to use, with Google's use policy.",
+      "licenseUrl": "https://ai.google.dev/gemma/terms",
+      "tradeoff": "A big, capable brain for a strong graphics card. Runs through Ollama."
+    },
+    {
+      "id": "qwen2.5:32b",
+      "label": "Qwen2.5 32B",
+      "params": 32,
+      "sizeBytes": 19900000000,
+      "quant": "Q4_K_M",
+      "creator": "Alibaba (Qwen team)",
+      "homepage": "https://ollama.com/library/qwen2.5",
+      "license": "Apache 2.0 — free to use, even for your business.",
+      "licenseUrl": "https://www.apache.org/licenses/LICENSE-2.0",
+      "tradeoff": "The most capable pick here for a big graphics card. Runs through Ollama."
     }
   ]
 }
