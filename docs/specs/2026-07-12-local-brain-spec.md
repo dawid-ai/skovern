@@ -57,7 +57,7 @@ This reconciles the original "no Ollama" rule: we never *require* Ollama or a te
 Two clocks, only one slow:
 - **The model catalog is data** (a JSON list), and it's **live from day one.** It lives
   in a dedicated **`catalog/` folder in this public repo** and the app **fetches it at
-  use-time** from `https://raw.githubusercontent.com/dawid-ai/deskhand/main/catalog/models.json`
+  use-time** from `https://raw.githubusercontent.com/dawid-ai/skovern/main/catalog/models.json`
   (repo is public → unauthenticated). So we ship a new/updated model list by **merging a
   JSON change — no app update.** A **bundled snapshot** is the offline fallback; the
   catalog fetch is **egress → receipted** ("checked the model list · github.com"); a

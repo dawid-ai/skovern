@@ -9,7 +9,7 @@ import snapshotJson from "./catalog-snapshot.json";
 // fetched JSON is UNTRUSTED network input — we validate its shape and drop any
 // entry that isn't well-formed, and reject non-http links, before it reaches the UI.
 
-const LIVE_URL = "https://raw.githubusercontent.com/dawid-ai/deskhand/main/catalog/models.json";
+const LIVE_URL = "https://raw.githubusercontent.com/dawid-ai/skovern/main/catalog/models.json";
 
 export interface CatalogResult {
   models: CatalogModel[];

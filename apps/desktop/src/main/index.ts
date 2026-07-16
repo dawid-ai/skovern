@@ -1,5 +1,5 @@
 import { app, BrowserWindow, Menu, Tray, dialog, nativeImage } from "electron";
-import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -44,26 +44,9 @@ import type { ActivitySummary, ReceiptView } from "../shared/receipts.js";
 import type { ChatMessage, ChatMeta, ChatSendResult, ChatView } from "../shared/chat.js";
 import type { OllamaStatusView, SettingsView } from "../shared/settings.js";
 
-// Product identity (renamed Deskhand → Skovern). Set the app name BEFORE any userData path is
-// resolved, so both packaged and dev data live under a "Skovern" folder. Then migrate a
-// pre-rename "@deskhand/desktop" userData dir ONCE, so an existing user's chats, saved brain
-// key, downloaded models, and receipts carry over instead of being orphaned.
+// Product identity. Set the app name BEFORE any userData path is resolved, so both packaged
+// and dev data live under a "Skovern" folder.
 app.setName("Skovern");
-migrateLegacyUserData();
-function migrateLegacyUserData(): void {
-  try {
-    const current = app.getPath("userData"); // …/Skovern
-    if (existsSync(current)) return; // already migrated, or a fresh Skovern install
-    const legacy = path.join(app.getPath("appData"), "@deskhand", "desktop");
-    if (!existsSync(legacy)) return; // nothing to carry over
-    mkdirSync(path.dirname(current), { recursive: true });
-    renameSync(legacy, current); // same volume → instant; moves chats/keys/models/receipts
-    console.log("[migrate] moved legacy userData (@deskhand/desktop) → Skovern");
-  } catch (e) {
-    // Non-fatal: a fresh Skovern userData is created normally; the legacy dir stays untouched.
-    console.warn("[migrate] legacy userData migration skipped:", e);
-  }
-}
 
 const { autoUpdater } = electronUpdater;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
