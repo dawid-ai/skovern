@@ -44,6 +44,6 @@ const ROUTINE_LABELS: Record<string, string> = {
 // The grouping key + display label for a routine receipt. Group by the task so the
 // three poll kinds stay separate lines.
 export function routineGroup(r: FetchView): { key: string; label: string } {
-  const suffix = r.task.startsWith("Deskhand:") ? r.task.slice("Deskhand:".length).trim() : r.task;
+  const suffix = r.task.startsWith("Skovern:") ? r.task.slice("Skovern:".length).trim() : r.task;
   return { key: suffix, label: ROUTINE_LABELS[suffix] ?? `Checked: ${suffix}` };
 }

@@ -11,7 +11,7 @@ function sent(ts: string): ReceiptView {
 // A routine background poll (the 5s unread-message / news check) — a done FetchReceipt
 // tagged routine:true. Must NOT count toward the calendar.
 function routine(ts: string): ReceiptView {
-  return { ts, kind: "fetch", host: "app.test", task: "Deskhand: messages", bytesSent: 0, bytesReceived: 0, ok: true, phase: "done", routine: true };
+  return { ts, kind: "fetch", host: "app.test", task: "Skovern: messages", bytesSent: 0, bytesReceived: 0, ok: true, phase: "done", routine: true };
 }
 // A LEGACY poll: written before the `routine` flag existed, so it lacks the flag — must
 // still be excluded by its known task label (the real-log case that showed thousands).
@@ -59,10 +59,10 @@ describe("computeActivity", () => {
   });
   it("excludes LEGACY polls that predate the routine flag, by their task label", () => {
     const map = computeActivity([
-      legacyPoll("2026-07-14T10:00:00Z", "Deskhand: messages"), // no routine flag → label-excluded
-      legacyPoll("2026-07-14T10:00:05Z", "Deskhand: news"), // label-excluded
-      legacyPoll("2026-07-14T10:00:10Z", "Deskhand: model list"), // catalog fetch → label-excluded
-      legacyPoll("2026-07-14T11:00:00Z", "Deskhand: your message to Dawid"), // a REAL send → counted
+      legacyPoll("2026-07-14T10:00:00Z", "Skovern: messages"), // no routine flag → label-excluded
+      legacyPoll("2026-07-14T10:00:05Z", "Skovern: news"), // label-excluded
+      legacyPoll("2026-07-14T10:00:10Z", "Skovern: model list"), // catalog fetch → label-excluded
+      legacyPoll("2026-07-14T11:00:00Z", "Skovern: your message to Dawid"), // a REAL send → counted
       done("2026-07-14T12:00:00Z"), // a model call → counted
     ]);
     expect(map).toEqual({ "2026-07-14": 2 }); // only the real send + model call

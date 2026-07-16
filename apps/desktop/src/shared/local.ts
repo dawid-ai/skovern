@@ -2,7 +2,7 @@
 // UI-facing plain data. The renderer NEVER touches Ollama or the network — main
 // does every scan, fetch, and pull; the renderer only reads these views.
 
-import type { FitTier, Verdict } from "@deskhand/core";
+import type { FitTier, Verdict } from "@skovern/core";
 
 export type { FitTier, Verdict };
 

@@ -36,11 +36,11 @@ export function Shell({ ogNumber, onSignOut }: { ogNumber: number | null; onSign
   const [brain, setBrain] = useState<BrainStatusView | null>(null);
 
   const refresh = useCallback(async () => {
-    setThread(await window.deskhand.dm.thread());
+    setThread(await window.skovern.dm.thread());
   }, []);
   // The always-visible active-brain readout. Refetched when Settings changes it.
   const refreshBrain = useCallback(async () => {
-    setBrain(await window.deskhand.brain.status());
+    setBrain(await window.skovern.brain.status());
   }, []);
   // Stable identity: passed to MessagesPage's effect deps, so it must not change
   // per render or the effect (mark-read + refresh) would loop every render.
@@ -86,7 +86,7 @@ export function Shell({ ogNumber, onSignOut }: { ogNumber: number | null; onSign
           <span className="mark" aria-hidden="true">
             DH
           </span>
-          <span className="brand-name">Deskhand</span>
+          <span className="brand-name">Skovern</span>
         </div>
 
         <ul className="nav">

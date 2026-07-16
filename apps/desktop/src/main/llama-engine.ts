@@ -1,7 +1,7 @@
 import { fork } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { FetchSink, GgufSource, LocalEngine, LocalGenerateResult, LocalModelInfo, PullProgress } from "@deskhand/core";
+import type { FetchSink, GgufSource, LocalEngine, LocalGenerateResult, LocalModelInfo, PullProgress } from "@skovern/core";
 import { downloadModel, modelDownloaded, modelPath } from "./download.js";
 
 // The EMBEDDED Local Brain backend (Loop 2a): runs a downloaded GGUF via node-llama-cpp

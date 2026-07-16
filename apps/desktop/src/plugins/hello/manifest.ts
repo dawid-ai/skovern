@@ -1,4 +1,4 @@
-import type { PluginManifest } from "@deskhand/plugin-sdk";
+import type { PluginManifest } from "@skovern/plugin-sdk";
 
 // The bundled fixture skill's manifest. Lives on its own so the HOST (which builds
 // the broker + the permission card from it) and the sandboxed CHILD (which runs it)

@@ -89,7 +89,7 @@ export async function renderVisibilityCardPng(v: PublishedVisibility): Promise<B
         el(
           "div",
           { fontSize: 26, color: ACCENT, letterSpacing: 3, textTransform: "uppercase" },
-          "Deskhand · AI Visibility",
+          "Skovern · AI Visibility",
         ),
       ]),
       // middle: name + grade on the left, score badge on the right
@@ -129,7 +129,7 @@ export async function renderVisibilityCardPng(v: PublishedVisibility): Promise<B
         el(
           "div",
           { fontSize: 28, color: ACCENT, marginTop: 12 },
-          "deskhand — the friendly assistant for small shops",
+          "Skovern — the friendly assistant for small shops",
         ),
       ]),
     ],

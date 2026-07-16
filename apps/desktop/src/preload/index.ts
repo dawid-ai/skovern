@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AppInfo } from "@deskhand/core";
+import type { AppInfo } from "@skovern/core";
 import type { CurrentAccount, RequestResult, VerifyResult } from "../shared/account.js";
 import type { DmSendResult, DmThreadView, NewsPostView, PublishResultView, PublishVisibilityInput } from "../shared/cloud.js";
 import type { BrainStatusView, SaveBrainInput, SaveBrainResult, TestBrainResult } from "../shared/brain.js";
@@ -148,6 +148,6 @@ const api = {
   },
 };
 
-contextBridge.exposeInMainWorld("deskhand", api);
+contextBridge.exposeInMainWorld("skovern", api);
 
-export type DeskhandApi = typeof api;
+export type SkovernApi = typeof api;

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createBroker, createRouter, type Provider } from "@deskhand/core";
+import { createBroker, createRouter, type Provider } from "@skovern/core";
 import { computeScore, mentioned, normalizeName, type Finding } from "./score.js";
 import { parseCompetitors } from "./competitors.js";
 import { fixitsForScore } from "./fixits.js";

@@ -1,11 +1,11 @@
 # Packaging config (loop 029). Produces a real installer per OS so a FRESH machine can
-# install Deskhand and run the embedded local brain with no dev tools / no Ollama.
+# install Skovern and run the embedded local brain with no dev tools / no Ollama.
 #
 # Windows is built + proven this loop; mac/linux config is authored here but built +
 # validated on native runners in loop 030 (GitHub Actions release matrix) — native
 # modules (node-llama-cpp) can't cross-compile from one OS.
-appId: com.deskhand.app
-productName: Deskhand
+appId: com.skovern.app
+productName: Skovern
 directories:
   output: dist
   buildResources: build
@@ -16,11 +16,11 @@ directories:
 files:
   - out/**
   - package.json
-  # electron-vite already inlines @deskhand/core + plugin-sdk into out/main, so their raw
+  # electron-vite already inlines @skovern/core + plugin-sdk into out/main, so their raw
   # TS source (their package.json `main` points at ./src) would ride along redundantly —
   # first-party logic disclosure + bloat in a shipped installer. Drop it, plus test files
   # and dependency source maps (reverse-engineering aids, all upstream-public anyway).
-  - "!**/@deskhand/*/src/**"
+  - "!**/@skovern/*/src/**"
   - "!**/*.test.*"
   - "!**/*.map"
 

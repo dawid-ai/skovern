@@ -174,8 +174,8 @@ hand-validation, not the CI metric.** Everything else is fixtured and determinis
 Settings → "On this computer" → the embedded Qwen suggestion → "Get this one" shows a
 progress bar → completes → "Use this one" → run a skill → the **Receipts** page shows a
 **Hugging Face download (In ↓)** and a **"stayed on your computer"** generate. The native
-engine is swapped for a fake via a dev/test seam (mirror `DESKHAND_CLAUDE_BIN` /
-`DESKHAND_OLLAMA_URL`), and the download server is a fixture — so PASS/FAIL is a pure
+engine is swapped for a fake via a dev/test seam (mirror `SKOVERN_CLAUDE_BIN` /
+`SKOVERN_OLLAMA_URL`), and the download server is a fixture — so PASS/FAIL is a pure
 function of the diff, not the CI runner's hardware or network.
 
 ### Hand-validation (Dawid — this loop's METRICS row will be `OWED`)

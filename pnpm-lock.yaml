@@ -23,10 +23,10 @@ importers:
 
   apps/desktop:
     dependencies:
-      '@deskhand/core':
+      '@skovern/core':
         specifier: workspace:^
         version: link:../../packages/core
-      '@deskhand/plugin-sdk':
+      '@skovern/plugin-sdk':
         specifier: workspace:^
         version: link:../../packages/plugin-sdk
       electron-updater:
@@ -49,12 +49,12 @@ importers:
         specifier: ^3.19.0
         version: 3.19.0(typescript@5.9.3)
     devDependencies:
-      '@deskhand/site':
-        specifier: workspace:^
-        version: link:../site
       '@playwright/test':
         specifier: ^1.61.1
         version: 1.61.1
+      '@skovern/site':
+        specifier: workspace:^
+        version: link:../site
       '@testcontainers/postgresql':
         specifier: ^10.13.2
         version: 10.28.0
@@ -128,7 +128,7 @@ importers:
       '@ai-sdk/openai':
         specifier: ^2.0.0
         version: 2.0.110(zod@4.4.3)
-      '@deskhand/plugin-sdk':
+      '@skovern/plugin-sdk':
         specifier: workspace:*
         version: link:../plugin-sdk
       ai:

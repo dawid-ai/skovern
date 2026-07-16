@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { FetchSink, GgufSource } from "@deskhand/core";
+import type { FetchSink, GgufSource } from "@skovern/core";
 
 // Mock the downloader so the engine test needs neither electron nor a real file: which
 // models count as "downloaded" is controlled here.

@@ -9,7 +9,7 @@ vi.mock("electron", () => ({ app: { getPath: () => state.dir } }));
 import { getSettings, setOllamaLaunch } from "./settings-store.js";
 
 beforeEach(() => {
-  state.dir = mkdtempSync(path.join(tmpdir(), "deskhand-settings-"));
+  state.dir = mkdtempSync(path.join(tmpdir(), "skovern-settings-"));
 });
 afterEach(() => {
   rmSync(state.dir, { recursive: true, force: true });

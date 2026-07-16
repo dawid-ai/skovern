@@ -46,7 +46,7 @@ export class ResendMailer implements Mailer {
       body: JSON.stringify({
         from: this.from,
         to,
-        subject: "Your Deskhand sign-in link",
+        subject: "Your Skovern sign-in link",
         text:
           `Here's your sign-in link. It works once and expires in 15 minutes:\n\n` +
           `${url}\n\n` +

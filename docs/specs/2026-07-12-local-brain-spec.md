@@ -8,7 +8,7 @@
 
 ## Why
 
-Every Deskhand skill today needs a brain the user pays for or brings: an OpenRouter/
+Every Skovern skill today needs a brain the user pays for or brings: an OpenRouter/
 Anthropic key, or their Claude Code subscription (014). A non-technical florist with
 **neither** has no way to run anything. The Local Brain closes that gap: a **free,
 private, on-device** brain. It's the product's "free & private" promise made real —
@@ -120,7 +120,7 @@ well-understood heuristic over our maintainable (remote-updatable) catalog.
   streamed) and shows a progress bar — Ollama does the fetching, so still no native dep
   and no download plumbing on our side.
 - **Per-model transparency** (plain language, for a non-tech user): each suggestion says
-  *"Made by XYZ, not by Deskhand — a free file you run privately. Where it comes from →"*
+  *"Made by XYZ, not by Skovern — a free file you run privately. Where it comes from →"*
   with a real link to its Hugging Face / homepage + its license in plain words.
 - **Receipts:** a `local` call has **no egress**, so its receipt reads **"stayed on
   your computer — nothing left,"** not a false "sent." This makes the privacy claim
@@ -158,7 +158,7 @@ receipts, UI, re-scan) with **no native dep and no multi-GB download**.
 - **Descriptive errors** across the flow (Ollama down, catalog unreachable, pull
   failed, model won't load).
 - **Loopback-only guard:** the Ollama base URL is `http://127.0.0.1:11434` by default;
-  any override is a dev/test seam (`DESKHAND_OLLAMA_URL`, gated `!app.isPackaged`), so
+  any override is a dev/test seam (`SKOVERN_OLLAMA_URL`, gated `!app.isPackaged`), so
   the "local" backend can never be pointed at a remote host to exfiltrate prompts.
 
 ### Metric (loop contract will formalize)
@@ -174,7 +174,7 @@ receipts, UI, re-scan) with **no native dep and no multi-GB download**.
   fetch writes a **github receipt**. (Fixture server, not real GitHub, in CI.)
 - **Unit/negative — no false egress:** a `local` generate writes a receipt marked
   on-machine (no network "sent" line); assert the receipt shape.
-- **Negative — loopback guard:** a non-loopback `DESKHAND_OLLAMA_URL` is refused when
+- **Negative — loopback guard:** a non-loopback `SKOVERN_OLLAMA_URL` is refused when
   packaged (or the override is inert when packaged). Assert it can't point off-box.
 - **App e2e:** Settings → "On this computer" → (fixture Ollama + fixture catalog) →
   verdict + "what you have" + "our suggestions" (trade-offs, download state) render →

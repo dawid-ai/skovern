@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { AppInfo } from "@deskhand/core";
+import type { AppInfo } from "@skovern/core";
 import { Shell } from "./Shell.js";
 
 type Phase = "loading" | "email" | "link" | "in";
@@ -26,8 +26,8 @@ export function App() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    void window.deskhand.getAppInfo().then(setInfo);
-    void window.deskhand.account.current().then((account) => {
+    void window.skovern.getAppInfo().then(setInfo);
+    void window.skovern.account.current().then((account) => {
       if (account) {
         setOgNumber(account.ogNumber);
         setPhase("in");
@@ -40,7 +40,7 @@ export function App() {
   async function sendLink() {
     setBusy(true);
     setNotice("");
-    const res = await window.deskhand.account.request(email);
+    const res = await window.skovern.account.request(email);
     setBusy(false);
     setNotice(res.message);
     if (res.ok) setPhase("link");
@@ -49,7 +49,7 @@ export function App() {
   async function verify() {
     setBusy(true);
     setNotice("");
-    const res = await window.deskhand.account.verify(extractToken(link));
+    const res = await window.skovern.account.verify(extractToken(link));
     setBusy(false);
     if (res.ok && typeof res.ogNumber === "number") {
       setOgNumber(res.ogNumber);
@@ -60,7 +60,7 @@ export function App() {
   }
 
   async function signOut() {
-    await window.deskhand.account.signOut();
+    await window.skovern.account.signOut();
     setOgNumber(null);
     setEmail("");
     setLink("");
@@ -113,7 +113,7 @@ export function App() {
             <p>
               I sent a sign-in link to <strong>{email}</strong>. Paste it below to finish.
               <br />
-              <span className="hint">(Just testing? Your link also shows where Deskhand is running.)</span>
+              <span className="hint">(Just testing? Your link also shows where Skovern is running.)</span>
             </p>
             <div className="form">
               <label htmlFor="link">Paste your link</label>

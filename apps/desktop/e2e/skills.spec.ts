@@ -6,7 +6,7 @@ import path from "node:path";
 import { _electron as electron, expect, test } from "@playwright/test";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import pg from "pg";
-import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningServer } from "@deskhand/site";
+import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningServer } from "@skovern/site";
 
 // Loop 012b metric (app-level, THROUGH THE REAL host): sign in → open Skills → see
 // the bundled Hello skill + its permission card → Run → its result (from a fetch
@@ -57,15 +57,15 @@ test.afterAll(async () => {
 
 test("user runs the Hello skill and sees its result + a fetch receipt; the child is sandboxed", async () => {
   test.setTimeout(180_000);
-  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
   const app = await electron.launch({
     args: [".", `--user-data-dir=${userDataDir}`],
     env: {
       ...process.env,
-      DESKHAND_API_URL: server.url,
+      SKOVERN_API_URL: server.url,
       // dev/test seams: let the skill reach the loopback mock (off in production)
-      DESKHAND_PLUGIN_ALLOW_LOOPBACK: "1",
-      DESKHAND_HELLO_URL: webUrl,
+      SKOVERN_PLUGIN_ALLOW_LOOPBACK: "1",
+      SKOVERN_HELLO_URL: webUrl,
     },
   });
 
@@ -98,7 +98,7 @@ test("user runs the Hello skill and sees its result + a fetch receipt; the child
 
     // SANDBOX PROOF on the shipping runtime (Electron binary under the Permission
     // Model): the child is denied reading a file outside its dir + denied a subprocess.
-    const sandbox = await page.evaluate(() => window.deskhand.plugins.sandboxCheck());
+    const sandbox = await page.evaluate(() => window.skovern.plugins.sandboxCheck());
     expect(sandbox.fsReadDenied).toBe(true);
     expect(sandbox.spawnDenied).toBe(true);
   } finally {

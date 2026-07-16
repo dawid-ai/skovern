@@ -104,7 +104,7 @@ export function startAuthServer(opts: {
   visibility?: VisibilityStore;
   /** Guards the founder admin surface (DM thread, news publish). Null = off. */
   adminToken?: string | null;
-  /** Absolute public base (e.g. https://deskhand.app) for og:image URLs. When
+  /** Absolute public base (e.g. https://skovern.org) for og:image URLs. When
    *  set it wins over the request Host header, so a spoofed Host/proto can't be
    *  reflected into published pages. */
   publicOrigin?: string;

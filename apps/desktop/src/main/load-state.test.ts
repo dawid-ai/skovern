@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ollamaResidentModels } from "@deskhand/core";
+import { ollamaResidentModels } from "@skovern/core";
 
 // receipts.ts (transitive via local.ts) imports electron for app.getPath — stub it, dev seams on.
 vi.mock("electron", () => ({ app: { isPackaged: false, getPath: () => "." } }));
@@ -32,8 +32,8 @@ function psServer(status: number, body: string): Promise<{ url: string; hits: st
 const servers: Server[] = [];
 afterEach(() => {
   for (const s of servers.splice(0)) s.close();
-  delete process.env["DESKHAND_OLLAMA_URL"];
-  delete process.env["DESKHAND_BRAIN_LOADED"];
+  delete process.env["SKOVERN_OLLAMA_URL"];
+  delete process.env["SKOVERN_BRAIN_LOADED"];
 });
 
 describe("ollamaResidentModels (the probe)", () => {
@@ -67,7 +67,7 @@ describe("ollamaResidentModels (the probe)", () => {
 describe("modelLoaded (chip source of truth)", () => {
   it("U5: an Ollama model is loaded iff /api/ps lists it", async () => {
     const { url } = await psServer(200, JSON.stringify({ models: [{ name: "qwen2.5:coder" }] }));
-    process.env["DESKHAND_OLLAMA_URL"] = url;
+    process.env["SKOVERN_OLLAMA_URL"] = url;
     expect(await modelLoaded("qwen2.5:coder")).toBe(true);
     expect(await modelLoaded("some-other:model")).toBe(false);
   });

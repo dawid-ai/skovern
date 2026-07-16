@@ -46,11 +46,11 @@ export function resolveOllamaBin(): string | null {
   return null;
 }
 
-/** Is Ollama installed on this computer? Unpackaged test seam DESKHAND_OLLAMA_INSTALLED
+/** Is Ollama installed on this computer? Unpackaged test seam SKOVERN_OLLAMA_INSTALLED
  *  ("1"/"0") pins the answer so the consent flow is CI-drivable without a real install. */
 export function ollamaInstalled(): boolean {
   if (!app.isPackaged) {
-    const seam = process.env["DESKHAND_OLLAMA_INSTALLED"];
+    const seam = process.env["SKOVERN_OLLAMA_INSTALLED"];
     if (seam === "1") return true;
     if (seam === "0") return false;
   }
@@ -223,7 +223,7 @@ function logGpuEnv(): void {
 }
 
 function startOllamaProcess(): boolean {
-  if (!app.isPackaged && process.env["DESKHAND_OLLAMA_SPAWN_FAKE"] === "1") {
+  if (!app.isPackaged && process.env["SKOVERN_OLLAMA_SPAWN_FAKE"] === "1") {
     fakeLaunchAttempts++;
     return true; // attempted (fake) — but it won't actually serve, so readiness will fail
   }
@@ -261,7 +261,7 @@ function startOllamaProcess(): boolean {
 export async function ensureOllamaRunning(detect: () => Promise<boolean>, timeoutMs = 8000): Promise<boolean> {
   const started = startOllamaProcess();
   if (!started) return false;
-  if (!app.isPackaged && process.env["DESKHAND_OLLAMA_SPAWN_FAKE"] === "1") return false; // fake doesn't serve
+  if (!app.isPackaged && process.env["SKOVERN_OLLAMA_SPAWN_FAKE"] === "1") return false; // fake doesn't serve
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await detect()) return true;

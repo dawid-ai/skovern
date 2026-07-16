@@ -1,8 +1,8 @@
-# Deskhand
+# Skovern
 
 **An extra pair of hands for your business. On your computer. Yours.**
 
-Deskhand is a local-first AI assistant for small-business owners — the
+Skovern is a local-first AI assistant for small-business owners — the
 florist, the plumber, the single-location gym. It does real work (watches
 your competitors, fixes how AI search sees your business, drafts your
 content, organizes your knowledge) through buttons, not terminals.
@@ -36,6 +36,6 @@ hands, free, private, understandable.
 
 Fair-code (final license text landing before first release): free for any
 personal or internal business use, source open to read and contribute to —
-but selling access to Deskhand as a hosted service requires a commercial
+but selling access to Skovern as a hosted service requires a commercial
 license. The plugin SDK (`packages/plugin-sdk`) is MIT so community skills
 are yours, no strings.

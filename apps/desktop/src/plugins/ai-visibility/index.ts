@@ -1,4 +1,4 @@
-import type { Plugin } from "@deskhand/plugin-sdk";
+import type { Plugin } from "@skovern/plugin-sdk";
 import { aiVisibilityManifest } from "./manifest.js";
 import { buildPrompts, type BusinessInput } from "./prompts.js";
 import { computeScore, mentioned, type Finding } from "./score.js";

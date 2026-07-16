@@ -32,7 +32,7 @@ const BRAIN_LABEL: Record<string, string> = {
 // Who made the call, in florist words.
 function who(r: ReceiptView): string {
   if (!isFetch(r)) return isLocal(r) ? "Your private brain" : "Your brain";
-  if (r.task.startsWith("Deskhand:")) return "Deskhand";
+  if (r.task.startsWith("Skovern:")) return "Skovern";
   if (r.task.startsWith("skill:")) return "A connector";
   if (r.task.startsWith("Downloading")) return "A model download";
   return "A website";
@@ -41,7 +41,7 @@ function who(r: ReceiptView): string {
 // The plain-English reason for the call.
 function why(r: ReceiptView): string {
   if (!isFetch(r)) return r.task; // e.g. "Test my brain"
-  if (r.task.startsWith("Deskhand:")) return r.task.slice("Deskhand:".length).trim();
+  if (r.task.startsWith("Skovern:")) return r.task.slice("Skovern:".length).trim();
   if (r.task.startsWith("skill:")) return "read a website for a skill";
   return r.task;
 }
@@ -138,7 +138,7 @@ function Calendar({
         <h2>Your activity</h2>
         <p className="hint">
           {total === 0
-            ? "Nothing yet — the days will fill in as Deskhand does things for you."
+            ? "Nothing yet — the days will fill in as Skovern does things for you."
             : `${total.toLocaleString()} ${total === 1 ? "thing has" : "things have"} happened. Darker means busier. Click a day to see just that day.`}
         </p>
       </div>
@@ -186,12 +186,12 @@ export function ReceiptsPage() {
   // rows that aged out of the recent window. A reload clears selection (the idx pairing
   // is only valid within one loaded list).
   useEffect(() => {
-    void window.deskhand.receipts.activity().then(setActivity);
+    void window.skovern.receipts.activity().then(setActivity);
   }, []);
   useEffect(() => {
     const range = from || to ? { from: from || undefined, to: to || undefined } : undefined;
     let alive = true;
-    void window.deskhand.receipts.list(range).then((r) => {
+    void window.skovern.receipts.list(range).then((r) => {
       if (!alive) return;
       setReceipts(r);
       setSelected(new Set());
@@ -252,7 +252,7 @@ export function ReceiptsPage() {
   async function exportSelected(): Promise<void> {
     const rows = (receipts ?? []).filter((_r, idx) => selected.has(idx));
     if (rows.length === 0) return;
-    const dest = await window.deskhand.receipts.exportCsv(rows);
+    const dest = await window.skovern.receipts.exportCsv(rows);
     if (dest) setSavedTo(dest);
   }
 
@@ -389,7 +389,7 @@ export function ReceiptsPage() {
             <div className="receipt-routine">
               <h2>Routine background checks</h2>
               <p className="hint">
-                Deskhand quietly checking for news and messages on a timer — no business data, nothing you need
+                Skovern quietly checking for news and messages on a timer — no business data, nothing you need
                 to read. Counted here so the list above stays about what matters.
               </p>
               <ul>

@@ -1,5 +1,5 @@
 import { app, BrowserWindow, Menu, Tray, dialog, nativeImage } from "electron";
-import { writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -18,8 +18,8 @@ import {
   type ProviderId,
   type PullProgress,
   type Router,
-} from "@deskhand/core";
-import { explainCapability } from "@deskhand/plugin-sdk";
+} from "@skovern/core";
+import { explainCapability } from "@skovern/plugin-sdk";
 import { registerTrusted } from "./ipc.js";
 import { clearSession, loadSession, saveSession } from "./session.js";
 import { brainStatus, loadBrain, saveBrain } from "./keys.js";
@@ -44,6 +44,27 @@ import type { ActivitySummary, ReceiptView } from "../shared/receipts.js";
 import type { ChatMessage, ChatMeta, ChatSendResult, ChatView } from "../shared/chat.js";
 import type { OllamaStatusView, SettingsView } from "../shared/settings.js";
 
+// Product identity (renamed Deskhand → Skovern). Set the app name BEFORE any userData path is
+// resolved, so both packaged and dev data live under a "Skovern" folder. Then migrate a
+// pre-rename "@deskhand/desktop" userData dir ONCE, so an existing user's chats, saved brain
+// key, downloaded models, and receipts carry over instead of being orphaned.
+app.setName("Skovern");
+migrateLegacyUserData();
+function migrateLegacyUserData(): void {
+  try {
+    const current = app.getPath("userData"); // …/Skovern
+    if (existsSync(current)) return; // already migrated, or a fresh Skovern install
+    const legacy = path.join(app.getPath("appData"), "@deskhand", "desktop");
+    if (!existsSync(legacy)) return; // nothing to carry over
+    mkdirSync(path.dirname(current), { recursive: true });
+    renameSync(legacy, current); // same volume → instant; moves chats/keys/models/receipts
+    console.log("[migrate] moved legacy userData (@deskhand/desktop) → Skovern");
+  } catch (e) {
+    // Non-fatal: a fresh Skovern userData is created normally; the legacy dir stays untouched.
+    console.warn("[migrate] legacy userData migration skipped:", e);
+  }
+}
+
 const { autoUpdater } = electronUpdater;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -55,14 +76,14 @@ const TRUST = { devServerUrl: DEV_SERVER_URL, rendererIndexUrl: RENDERER_INDEX_U
 
 // The core auth client is the ONLY thing that talks to the cloud API. Local
 // server by default; a hosted URL is injected via env when one exists.
-const API_BASE = process.env["DESKHAND_API_URL"] ?? "http://127.0.0.1:8787";
+const API_BASE = process.env["SKOVERN_API_URL"] ?? "http://127.0.0.1:8787";
 
 // Receipts calendar "today" and CSV export path — dev/test seams (mirror of
 // DEV_SERVER_URL), honored ONLY unpackaged so the e2e day-grid is fixed on any runner
 // and the export asserts file content without the OS save dialog. Production uses the
 // real clock and the real dialog.
-const NOW_OVERRIDE = (!app.isPackaged && process.env["DESKHAND_NOW"]) || undefined;
-const EXPORT_PATH_OVERRIDE = (!app.isPackaged && process.env["DESKHAND_EXPORT_PATH"]) || undefined;
+const NOW_OVERRIDE = (!app.isPackaged && process.env["SKOVERN_NOW"]) || undefined;
+const EXPORT_PATH_OVERRIDE = (!app.isPackaged && process.env["SKOVERN_EXPORT_PATH"]) || undefined;
 function todayKey(): string {
   const base = NOW_OVERRIDE ? new Date(NOW_OVERRIDE) : new Date();
   const when = Number.isNaN(base.getTime()) ? new Date() : base;
@@ -73,17 +94,17 @@ function todayKey(): string {
 // Honored ONLY in unpackaged builds — a shipped app must never let an env var
 // redirect the user's key + prompt to an arbitrary host (mirror of DEV_SERVER_URL).
 const BRAIN_BASE = {
-  openrouter: app.isPackaged ? undefined : process.env["DESKHAND_OPENROUTER_BASE_URL"],
-  anthropic: app.isPackaged ? undefined : process.env["DESKHAND_ANTHROPIC_BASE_URL"],
+  openrouter: app.isPackaged ? undefined : process.env["SKOVERN_OPENROUTER_BASE_URL"],
+  anthropic: app.isPackaged ? undefined : process.env["SKOVERN_ANTHROPIC_BASE_URL"],
 };
 // The Claude Code CLI brain. In a shipped app it's always the real `claude` on PATH;
 // the bin/args overrides are dev/test seams (point at a stub so CI needs no
 // subscription) honored ONLY unpackaged — mirror of BRAIN_BASE. A packaged app must
 // never let an env var redirect the user's prompt to an arbitrary executable.
-const CLAUDE_BIN = (!app.isPackaged && process.env["DESKHAND_CLAUDE_BIN"]) || "claude";
+const CLAUDE_BIN = (!app.isPackaged && process.env["SKOVERN_CLAUDE_BIN"]) || "claude";
 function devClaudeArgs(): string[] | undefined {
   if (app.isPackaged) return undefined;
-  const raw = process.env["DESKHAND_CLAUDE_ARGS"];
+  const raw = process.env["SKOVERN_CLAUDE_ARGS"];
   if (!raw) return undefined;
   try {
     const parsed: unknown = JSON.parse(raw);
@@ -100,8 +121,8 @@ const CANT_REACH = "Couldn't connect right now. Try again in a moment.";
 // Skills: the bundled fixtures for v1. Loopback + a mock target are dev/test seams
 // (mirror of DEV_SERVER_URL) — a shipped app is https-only and reaches real pages.
 const SKILLS = [helloManifest, aiVisibilityManifest];
-const PLUGIN_ALLOW_LOOPBACK = !app.isPackaged && process.env["DESKHAND_PLUGIN_ALLOW_LOOPBACK"] === "1";
-const HELLO_URL = (!app.isPackaged && process.env["DESKHAND_HELLO_URL"]) || "https://example.com";
+const PLUGIN_ALLOW_LOOPBACK = !app.isPackaged && process.env["SKOVERN_PLUGIN_ALLOW_LOOPBACK"] === "1";
+const HELLO_URL = (!app.isPackaged && process.env["SKOVERN_HELLO_URL"]) || "https://example.com";
 
 // The Hello fixture uses only `fetch`, so it runs with a stub brain that refuses.
 // A skill can't reach it anyway unless its manifest declared `brain`.
@@ -385,7 +406,7 @@ function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 960,
     height: 640,
-    title: "Deskhand",
+    title: "Skovern",
     show: false,
     autoHideMenuBar: true,
     webPreferences: {
@@ -402,7 +423,7 @@ function createWindow(): void {
   mainWindow.webContents.on("will-navigate", (event) => event.preventDefault());
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 
-  // closing the window keeps Deskhand in the tray — but only if the tray exists.
+  // closing the window keeps Skovern in the tray — but only if the tray exists.
   // The brain STAYS LOADED across a hide-to-tray: a background job may still be using it,
   // and this is global lifecycle that future plugins inherit. The 5-min idle-unload
   // (embedded) / Ollama's own keep-alive frees an unused model instead; a real close
@@ -426,11 +447,11 @@ function createWindow(): void {
 
 function createTray(): void {
   tray = new Tray(nativeImage.createFromDataURL(TRAY_ICON_DATA_URL));
-  tray.setToolTip("Deskhand");
+  tray.setToolTip("Skovern");
   tray.setContextMenu(
     Menu.buildFromTemplate([
       {
-        label: "Open Deskhand",
+        label: "Open Skovern",
         click: () => {
           mainWindow?.show();
           mainWindow?.focus();
@@ -438,7 +459,7 @@ function createTray(): void {
       },
       { type: "separator" },
       {
-        label: "Quit Deskhand",
+        label: "Quit Skovern",
         click: () => {
           quitting = true;
           app.quit();
@@ -509,7 +530,7 @@ app
     // Metadata only (host + label + bytes), never a key, token, or body.
     const fetchSink = fileFetchSink();
 
-    const account = createAccountClient(API_BASE, receiptedFetch(fetchSink, "Deskhand: sign-in", { direction: "out" }));
+    const account = createAccountClient(API_BASE, receiptedFetch(fetchSink, "Skovern: sign-in", { direction: "out" }));
 
     registerTrusted(TRUST, "account:request", async (rawEmail: unknown): Promise<RequestResult> => {
       const email = typeof rawEmail === "string" ? rawEmail : "";
@@ -549,7 +570,7 @@ app
 
     // News is read-only polling (no business data leaves) → routine: grouped in the panel.
     // You're pulling news in → direction "in".
-    const news = createNewsClient(API_BASE, receiptedFetch(fetchSink, "Deskhand: news", { routine: true, direction: "in" }));
+    const news = createNewsClient(API_BASE, receiptedFetch(fetchSink, "Skovern: news", { routine: true, direction: "in" }));
     registerTrusted(TRUST, "news:list", async (): Promise<NewsPostView[]> => {
       try {
         return await news.list();
@@ -561,8 +582,8 @@ app
     // The unread-badge poll (thread/read) fires every 5s and carries no business
     // data → routine (grouped). A user's actual message (send) is real business data
     // leaving → its OWN non-routine client, so it can never hide in the quiet group.
-    const dm = createDmClient(API_BASE, receiptedFetch(fetchSink, "Deskhand: messages", { routine: true, direction: "in" }));
-    const dmSend = createDmClient(API_BASE, receiptedFetch(fetchSink, "Deskhand: your message to Dawid", { direction: "out" }));
+    const dm = createDmClient(API_BASE, receiptedFetch(fetchSink, "Skovern: messages", { routine: true, direction: "in" }));
+    const dmSend = createDmClient(API_BASE, receiptedFetch(fetchSink, "Skovern: your message to Dawid", { direction: "out" }));
     registerTrusted(TRUST, "dm:send", async (rawMessage: unknown): Promise<DmSendResult> => {
       const message = typeof rawMessage === "string" ? rawMessage : "";
       // The bearer token stays in main (keychain) — the renderer never holds it.
@@ -578,7 +599,7 @@ app
     // Publish an AI Visibility result to a public link. The renderer passes only
     // the result; the session token stays in main (keychain). Outbound + opt-in:
     // only fires on the user's explicit Publish click.
-    const publish = createPublishClient(API_BASE, receiptedFetch(fetchSink, "Deskhand: publish", { direction: "out" }));
+    const publish = createPublishClient(API_BASE, receiptedFetch(fetchSink, "Skovern: publish", { direction: "out" }));
     registerTrusted(TRUST, "visibility:publish", async (raw: unknown): Promise<PublishResultView> => {
       const o = (raw ?? {}) as { business?: unknown; score?: unknown; competitors?: unknown };
       const business = typeof o.business === "string" ? o.business : "";
@@ -621,7 +642,7 @@ app
           await fetchSink.append({
             kind: "fetch",
             host: API_HOST,
-            task: newReplies === 1 ? "Deskhand: new reply from Dawid" : `Deskhand: ${newReplies} new replies from Dawid`,
+            task: newReplies === 1 ? "Skovern: new reply from Dawid" : `Skovern: ${newReplies} new replies from Dawid`,
             bytesSent: 0,
             bytesReceived: 0,
             direction: "in",
@@ -682,7 +703,7 @@ app
       if (!dest) {
         const res = await dialog.showSaveDialog({
           title: "Save your receipts",
-          defaultPath: "deskhand-receipts.csv",
+          defaultPath: "skovern-receipts.csv",
           filters: [{ name: "Spreadsheet (CSV)", extensions: ["csv"] }],
         });
         if (res.canceled || !res.filePath) return null;
@@ -834,7 +855,7 @@ app
       installed: ollamaInstalled(),
       running: await makeEngine().detect(),
       // Only surfaced under the unpackaged fake-spawn seam, so an e2e can prove a launch fired.
-      ...(!app.isPackaged && process.env["DESKHAND_OLLAMA_SPAWN_FAKE"] === "1" ? { launchAttempts: fakeLaunchCount() } : {}),
+      ...(!app.isPackaged && process.env["SKOVERN_OLLAMA_SPAWN_FAKE"] === "1" ? { launchAttempts: fakeLaunchCount() } : {}),
     }));
 
     // Start Ollama once, on the user's explicit request (the in-chat "Start Ollama" CTA is the

@@ -34,9 +34,9 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
   const refresh = useCallback(async () => {
     setBusy(true);
     const [s, m, b] = await Promise.all([
-      window.deskhand.local.status(),
-      window.deskhand.local.models(),
-      window.deskhand.brain.status(),
+      window.skovern.local.status(),
+      window.skovern.local.models(),
+      window.skovern.brain.status(),
     ]);
     setStatus(s);
     setModels(m.models);
@@ -53,7 +53,7 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
   }, [refresh]);
 
   async function useModel(id: string) {
-    const res = await window.deskhand.brain.save({ provider: "local", key: "", model: id });
+    const res = await window.skovern.brain.save({ provider: "local", key: "", model: id });
     setNotice(res.message);
     if (res.ok) {
       setSavedId(id);
@@ -65,10 +65,10 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
     setPulling((prev) => ({ ...prev, [id]: { modelId: id, percent: 0, status: "starting", done: false, ok: true } }));
     // Subscribe BEFORE the pull so we don't miss early ticks (016 pattern).
     unsubPull.current?.();
-    unsubPull.current = window.deskhand.local.onPullProgress((p) => {
+    unsubPull.current = window.skovern.local.onPullProgress((p) => {
       setPulling((prev) => ({ ...prev, [p.modelId]: p }));
     });
-    const res = await window.deskhand.local.pull(id);
+    const res = await window.skovern.local.pull(id);
     unsubPull.current?.();
     unsubPull.current = null;
     if (res.ok) {
@@ -146,7 +146,7 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
     const licenseHref = safeHref(m.licenseUrl);
     return (
       <p className="hint local-transparency">
-        {compact ? `by ${m.creator}` : `Made by ${m.creator}, not by Deskhand — a free file you run privately.`}
+        {compact ? `by ${m.creator}` : `Made by ${m.creator}, not by Skovern — a free file you run privately.`}
         {m.license ? ` ${m.license}` : ""}{" "}
         {href && (
           <a href={href} target="_blank" rel="noreferrer">
@@ -307,7 +307,7 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
                 <div className="local-group">
                   <h2>Runs on this computer</h2>
                   <p className="hint">
-                    Pick one and Deskhand downloads it and runs it right here. Nothing you type ever leaves.
+                    Pick one and Skovern downloads it and runs it right here. Nothing you type ever leaves.
                   </p>
                   {modelTable(here)}
                 </div>

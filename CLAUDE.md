@@ -1,6 +1,6 @@
-# Deskhand — agent conventions
+# Skovern — agent conventions
 
-Deskhand is a local-first, fair-code AI business assistant for non-technical
+Skovern is a local-first, fair-code AI business assistant for non-technical
 small-business owners. Desktop app (Electron), React/TS UI, Node agent core.
 Full design spec lives in the private HQ repo; this file is what you need to
 write code here.
@@ -38,8 +38,8 @@ feature, not a finished one.
   `apps/desktop/e2e/*.spec.ts` Playwright harness), not just an HTTP test.
 - Pure-web surfaces (e.g. published `/u/...` pages) are hand-validated by opening
   the URL; that still counts as a usable frontend.
-- The bar: after `pnpm --filter @deskhand/site dev` + `pnpm --filter
-  @deskhand/desktop dev`, a person can click to the new thing and it works.
+- The bar: after `pnpm --filter @skovern/site dev` + `pnpm --filter
+  @skovern/desktop dev`, a person can click to the new thing and it works.
 
 ## UI information architecture (mandatory)
 

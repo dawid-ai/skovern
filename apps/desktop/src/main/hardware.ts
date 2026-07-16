@@ -1,5 +1,5 @@
 import si from "systeminformation";
-import type { GpuInfo, HardwareProfile } from "@deskhand/core";
+import type { GpuInfo, HardwareProfile } from "@skovern/core";
 
 // Best-effort, cross-platform hardware scan for the honesty engine. Runs in the
 // TRUSTED main process only (systeminformation shells out to platform tools —

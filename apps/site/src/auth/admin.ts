@@ -10,7 +10,7 @@ const UNAUTHORIZED: HttpResult = {
   status: 401,
   body: "Unauthorized",
   contentType: "text/plain",
-  headers: { "www-authenticate": 'Basic realm="Deskhand admin"' },
+  headers: { "www-authenticate": 'Basic realm="Skovern admin"' },
 };
 
 /** Extract the password from `Authorization: Basic base64(user:pass)`. */

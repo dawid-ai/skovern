@@ -1,4 +1,4 @@
-import type { AppInfo } from "@deskhand/core";
+import type { AppInfo } from "@skovern/core";
 import type { CurrentAccount, RequestResult, VerifyResult } from "./account.js";
 import type { DmSendResult, DmThreadView, NewsPostView, PublishResultView, PublishVisibilityInput } from "./cloud.js";
 import type { BrainStatusView, SaveBrainInput, SaveBrainResult, TestBrainResult } from "./brain.js";
@@ -10,7 +10,7 @@ import type { OllamaLaunch, OllamaStatusView, SettingsView } from "./settings.js
 
 declare global {
   interface Window {
-    deskhand: {
+    skovern: {
       getAppInfo(): Promise<AppInfo>;
       account: {
         request(email: string): Promise<RequestResult>;

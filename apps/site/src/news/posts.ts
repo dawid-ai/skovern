@@ -17,10 +17,10 @@ export interface NewsPost {
 export const POSTS: NewsPost[] = [
   {
     slug: "hello",
-    title: "Deskhand is being built in the open",
+    title: "Skovern is being built in the open",
     body:
-      "Hi! This is the very first note in Deskhand's news feed.\n\n" +
-      "Deskhand is a free assistant for your business that runs on your own " +
+      "Hi! This is the very first note in Skovern's news feed.\n\n" +
+      "Skovern is a free assistant for your business that runs on your own " +
       "computer. We're building it out loud — every week there's something new " +
       "to show, and it'll all show up right here.",
     publishedAt: "2026-07-09T09:00:00.000Z",
@@ -31,7 +31,7 @@ export const POSTS: NewsPost[] = [
     body:
       "Accounts are live. Pop in your email and we send you a link — click it " +
       "and you're in. No password to remember, nothing to lose.\n\n" +
-      "You don't need an account to use Deskhand. It just unlocks the news, a " +
+      "You don't need an account to use Skovern. It just unlocks the news, a " +
       "direct line to us, and your founding-user number.",
     publishedAt: "2026-07-09T15:00:00.000Z",
   },
@@ -39,7 +39,7 @@ export const POSTS: NewsPost[] = [
     slug: "the-server-can-stand-on-its-own",
     title: "Behind the scenes: the server now runs by itself",
     body:
-      "This one's for the tinkerers. Deskhand's little cloud helper is now a " +
+      "This one's for the tinkerers. Skovern's little cloud helper is now a " +
       "real program you can start on its own. Most folks will never see it — " +
       "but it's the plumbing that makes accounts and this news feed work.",
     publishedAt: "2026-07-10T10:00:00.000Z",

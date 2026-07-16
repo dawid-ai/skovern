@@ -132,7 +132,7 @@ export async function handleAdminDm(
     .join("\n");
 
   const html =
-    `<!doctype html><meta charset="utf-8"><title>Deskhand DMs</title>` +
+    `<!doctype html><meta charset="utf-8"><title>Skovern DMs</title>` +
     `<h1>Messages (${byAccount.size})</h1>${sections || "<p>No messages yet.</p>"}`;
   return { status: 200, body: html, contentType: "text/html", headers: ADMIN_HEADERS };
 }

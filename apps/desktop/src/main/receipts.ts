@@ -2,7 +2,7 @@ import { app } from "electron";
 import { createReadStream, existsSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { open } from "node:fs/promises";
 import path from "node:path";
-import type { FetchReceipt, FetchSink, Receipt, ReceiptSink } from "@deskhand/core";
+import type { FetchReceipt, FetchSink, Receipt, ReceiptSink } from "@skovern/core";
 import type { ActivityMap, ReceiptView } from "../shared/receipts.js";
 import { computeActivity, countsForActivity, dayKey } from "../shared/receipt-calendar.js";
 

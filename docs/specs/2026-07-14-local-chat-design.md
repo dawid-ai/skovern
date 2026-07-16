@@ -95,7 +95,7 @@ far; the receipt is still written `"done"` (the bytes that left are recorded).
 - Single-writer discipline: appends go through main only (renderer never touches disk);
   reuse the `receipts.ts` serialize-queue pattern if concurrent writes are possible.
 
-**IPC surface** (all `registerTrusted`, renderer via preload `window.deskhand.chat`):
+**IPC surface** (all `registerTrusted`, renderer via preload `window.skovern.chat`):
 `chat:list()`, `chat:get(id)`, `chat:new()`, `chat:rename(id, title)`, `chat:delete(id)`,
 `chat:send({chatId, text})` (streams), `chat:stop({chatId})`, `chat:search(query)`.
 
@@ -128,7 +128,7 @@ far; the receipt is still written `"done"` (the bytes that left are recorded).
 - **Extensions unit**: enable/disable/remove state transitions; remove deletes `chats/`.
 - **App e2e** (Playwright, real Electron + real server): enable Chat in Extensions → new
   chat → send a message → a streamed reply renders token-by-token (fake streaming brain via
-  an extended `DESKHAND_LLAMA_FAKE` or a fake streaming provider seam) → reload persists the
+  an extended `SKOVERN_LLAMA_FAKE` or a fake streaming provider seam) → reload persists the
   chat → search finds it by content → Stop cancels a generation → disable hides Chat from
   nav → Remove clears history. All environment inputs fixtured through `!app.isPackaged`
   seams (determinism gate).

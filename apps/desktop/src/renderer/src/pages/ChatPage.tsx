@@ -66,7 +66,7 @@ export function ChatPage({ brain, onSetup }: { brain: BrainStatusView | null; on
   const leavesMachine = configured && brain?.provider !== "local";
 
   const loadList = useCallback(async (): Promise<ChatMeta[]> => {
-    const list = await window.deskhand.chat.list();
+    const list = await window.skovern.chat.list();
     setChats(list);
     return list;
   }, []);
@@ -77,7 +77,7 @@ export function ChatPage({ brain, onSetup }: { brain: BrainStatusView | null; on
     setStreaming(null);
     setError("");
     setNote("");
-    const view = await window.deskhand.chat.get(id);
+    const view = await window.skovern.chat.get(id);
     setMessages(view?.messages ?? []);
   }, []);
 
@@ -91,7 +91,7 @@ export function ChatPage({ brain, onSetup }: { brain: BrainStatusView | null; on
 
   // Stream tokens into the in-progress reply for the active chat.
   useEffect(() => {
-    return window.deskhand.chat.onToken((e) => {
+    return window.skovern.chat.onToken((e) => {
       if (e.chatId !== activeIdRef.current) return;
       setStreaming((prev) => (prev ?? "") + e.delta);
     });
@@ -100,14 +100,14 @@ export function ChatPage({ brain, onSetup }: { brain: BrainStatusView | null; on
   // Show launch/prepare status ("Starting Ollama…", "Loading the model…") while waiting for
   // the first token (Issue 4). Main clears it (empty phase) when the reply starts arriving.
   useEffect(() => {
-    return window.deskhand.chat.onStatus((e) => {
+    return window.skovern.chat.onStatus((e) => {
       if (e.chatId !== activeIdRef.current) return;
       setPrepare(e.phase);
     });
   }, []);
 
   async function newChat(): Promise<void> {
-    const meta = await window.deskhand.chat.new();
+    const meta = await window.skovern.chat.new();
     await loadList();
     setActiveId(meta.id);
     setMessages([]);
@@ -126,7 +126,7 @@ export function ChatPage({ brain, onSetup }: { brain: BrainStatusView | null; on
     setMessages((m) => [...m, { role: "user", content: text, ts: new Date().toISOString() }]);
     setStreaming("");
     setSending(true);
-    const res = await window.deskhand.chat.send(id, text);
+    const res = await window.skovern.chat.send(id, text);
     setSending(false);
     setStreaming(null);
     setPrepare("");
@@ -138,7 +138,7 @@ export function ChatPage({ brain, onSetup }: { brain: BrainStatusView | null; on
     if (res.note) setNote(res.note);
     // Re-read the authoritative messages (the assistant reply is now on disk) and refresh
     // the list so its newest-first order + derived title update.
-    const view = await window.deskhand.chat.get(id);
+    const view = await window.skovern.chat.get(id);
     setMessages(view?.messages ?? []);
     await loadList();
   }
@@ -148,7 +148,7 @@ export function ChatPage({ brain, onSetup }: { brain: BrainStatusView | null; on
   async function startOllama(): Promise<void> {
     setStartingOllama(true);
     setError("");
-    const { running } = await window.deskhand.settings.startOllama();
+    const { running } = await window.skovern.settings.startOllama();
     setStartingOllama(false);
     if (running) {
       setOfferSetup(false);
@@ -159,11 +159,11 @@ export function ChatPage({ brain, onSetup }: { brain: BrainStatusView | null; on
   }
 
   function stop(): void {
-    if (activeId) void window.deskhand.chat.stop(activeId);
+    if (activeId) void window.skovern.chat.stop(activeId);
   }
 
   async function remove(id: string): Promise<void> {
-    await window.deskhand.chat.delete(id);
+    await window.skovern.chat.delete(id);
     const list = await loadList();
     if (activeId === id) {
       if (list.length > 0 && list[0]) void openChat(list[0].id);
@@ -175,7 +175,7 @@ export function ChatPage({ brain, onSetup }: { brain: BrainStatusView | null; on
   }
 
   async function saveRename(id: string): Promise<void> {
-    await window.deskhand.chat.rename(id, renameText);
+    await window.skovern.chat.rename(id, renameText);
     setRenamingId(null);
     await loadList();
   }

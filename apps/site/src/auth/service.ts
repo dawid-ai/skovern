@@ -11,7 +11,7 @@ export interface Session {
 }
 
 export interface AuthConfig {
-  /** Base URL the magic link points at, e.g. https://deskhand.app */
+  /** Base URL the magic link points at, e.g. https://skovern.org */
   appUrl: string;
   tokenTtlMinutes?: number;
   sessionTtlDays?: number;

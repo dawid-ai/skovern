@@ -1,4 +1,4 @@
-import type { Plugin } from "@deskhand/plugin-sdk";
+import type { Plugin } from "@skovern/plugin-sdk";
 import { helloManifest } from "./manifest.js";
 
 // The fixture skill: proves the whole runtime end to end. It only knows how to ask

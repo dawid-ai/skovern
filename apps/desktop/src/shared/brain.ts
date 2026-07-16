@@ -1,7 +1,7 @@
 // Shapes crossing the renderer ↔ main IPC boundary for the brain picker.
 // UI-facing: plain data and warm messages, NEVER the API key.
 
-import type { ProviderId, Receipt } from "@deskhand/core";
+import type { ProviderId, Receipt } from "@skovern/core";
 
 export type { ProviderId, Receipt };
 

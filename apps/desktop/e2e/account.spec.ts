@@ -10,7 +10,7 @@ import {
   ConsoleMailer,
   startAuthServer,
   type RunningServer,
-} from "@deskhand/site";
+} from "@skovern/site";
 
 // Contract 003 metric: the whole account vertical, end to end, no mocks —
 // real Electron window → preload → IPC → core client → real http server →
@@ -39,10 +39,10 @@ test.afterAll(async () => {
 
 test("sign in end to end and stay signed in across a restart", async () => {
   test.setTimeout(180_000);
-  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
   const launchOpts = {
     args: [".", `--user-data-dir=${userDataDir}`],
-    env: { ...process.env, DESKHAND_API_URL: server.url },
+    env: { ...process.env, SKOVERN_API_URL: server.url },
   };
 
   try {

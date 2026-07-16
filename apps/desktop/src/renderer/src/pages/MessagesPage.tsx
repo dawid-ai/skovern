@@ -18,13 +18,13 @@ export function MessagesPage({
   // While this page is open, seeing the thread means it's read — mark it and
   // refresh so the nav badge clears. Re-runs when new replies arrive.
   useEffect(() => {
-    void window.deskhand.dm.read().then(onChanged);
+    void window.skovern.dm.read().then(onChanged);
   }, [messages.length, onChanged]);
 
   async function send() {
     setBusy(true);
     setNotice("");
-    const res = await window.deskhand.dm.send(text);
+    const res = await window.skovern.dm.send(text);
     setBusy(false);
     setNotice(res.message);
     if (res.ok) {

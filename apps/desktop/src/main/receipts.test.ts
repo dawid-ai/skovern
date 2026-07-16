@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, w
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { FetchReceipt, FetchSink, Receipt } from "@deskhand/core";
+import type { FetchReceipt, FetchSink, Receipt } from "@skovern/core";
 
 // Mock Electron: a controllable userData dir so receiptsFile() points at a temp
 // file. safeStorage is unused here but stubbed so the import resolves.
@@ -51,7 +51,7 @@ function modelReceipt(task: string, pad = 0): Receipt {
 const FAKE_CRED = "sk-fake-cred-should-never-be-logged";
 
 beforeEach(() => {
-  state.dir = mkdtempSync(path.join(tmpdir(), "deskhand-receipts-"));
+  state.dir = mkdtempSync(path.join(tmpdir(), "skovern-receipts-"));
 });
 
 afterEach(() => {
@@ -85,8 +85,8 @@ describe("readReceipts", () => {
         JSON.stringify({
           ts: `2026-07-11T10:00:00.${String(i).padStart(3, "0")}Z`,
           kind: "fetch",
-          host: "api.deskhand.test",
-          task: `Deskhand: n${i}`,
+          host: "api.skovern.test",
+          task: `Skovern: n${i}`,
           bytesSent: i,
           bytesReceived: 0,
           ok: true,
@@ -100,8 +100,8 @@ describe("readReceipts", () => {
     expect(out).toHaveLength(500);
     // newest-first: index 0 is the very last line written (n699), and the oldest
     // kept is n200 (the first 200 were dropped by the 500 cap).
-    expect(out[0]).toMatchObject({ task: "Deskhand: n699" });
-    expect(out[499]).toMatchObject({ task: "Deskhand: n200" });
+    expect(out[0]).toMatchObject({ task: "Skovern: n699" });
+    expect(out[499]).toMatchObject({ task: "Skovern: n200" });
   });
 });
 
@@ -118,8 +118,8 @@ describe("receiptedFetch", () => {
     const { sink, receipts } = collectingSink();
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("ok", { status: 200 }));
 
-    const wrapped = receiptedFetch(sink, "Deskhand: messages");
-    await wrapped(`https://cloud.deskhand.test/dm?token=${FAKE_CRED}`, {
+    const wrapped = receiptedFetch(sink, "Skovern: messages");
+    await wrapped(`https://cloud.skovern.test/dm?token=${FAKE_CRED}`, {
       method: "POST",
       headers: { authorization: `Bearer ${FAKE_CRED}`, "content-type": "application/json" },
       body: JSON.stringify({ message: "hi" }),
@@ -133,8 +133,8 @@ describe("receiptedFetch", () => {
     expect(serialized).not.toContain("authorization");
     // what it DOES carry: host (not the path/query), the label, and byte counts
     for (const r of receipts) {
-      expect(r.host).toBe("cloud.deskhand.test");
-      expect(r.task).toBe("Deskhand: messages");
+      expect(r.host).toBe("cloud.skovern.test");
+      expect(r.task).toBe("Skovern: messages");
       expect(typeof r.bytesSent).toBe("number");
     }
   });
@@ -150,8 +150,8 @@ describe("receiptedFetch", () => {
       },
     };
 
-    const wrapped = receiptedFetch(sink, "Deskhand: messages");
-    await expect(wrapped("https://cloud.deskhand.test/dm")).rejects.toThrow(/disk full/);
+    const wrapped = receiptedFetch(sink, "Skovern: messages");
+    await expect(wrapped("https://cloud.skovern.test/dm")).rejects.toThrow(/disk full/);
     expect(fetchSpy).toHaveBeenCalledTimes(0);
   });
 });
@@ -208,8 +208,8 @@ describe("rotation → durable archive (full retention)", () => {
     const fetchReceipt: FetchReceipt = {
       kind: "fetch",
       ts: "2026-03-03T00:00:00.000Z",
-      host: "api.deskhand.test",
-      task: "Deskhand: news",
+      host: "api.skovern.test",
+      task: "Skovern: news",
       bytesSent: 5,
       bytesReceived: 0,
       ok: false,
@@ -284,7 +284,7 @@ function fetchReceiptAt(task: string, i: number, phase: "sent" | "done" = "sent"
   return {
     kind: "fetch",
     ts: `2026-07-13T10:00:00.${String(i).padStart(3, "0")}Z`,
-    host: "api.deskhand.test",
+    host: "api.skovern.test",
     task,
     bytesSent: i,
     bytesReceived: 0,
@@ -399,8 +399,8 @@ describe("durable activity index", () => {
   // NOT bump the calendar index — else the heatmap drowns in poll noise.
   it("I6: a routine poll does not bump the index; a real fetch does", async () => {
     writeFileSync(activityPath(), JSON.stringify({ "2026-07-14": 0 }));
-    await fileFetchSink().append({ ...fetchReceiptAt("Deskhand: messages", 1, "done"), routine: true, ts: "2026-07-14T10:00:00.000Z" });
-    await fileFetchSink().append({ ...fetchReceiptAt("Deskhand: news", 2, "done"), routine: true, ts: "2026-07-14T10:00:05.000Z" });
+    await fileFetchSink().append({ ...fetchReceiptAt("Skovern: messages", 1, "done"), routine: true, ts: "2026-07-14T10:00:00.000Z" });
+    await fileFetchSink().append({ ...fetchReceiptAt("Skovern: news", 2, "done"), routine: true, ts: "2026-07-14T10:00:05.000Z" });
     await fileFetchSink().append({ ...fetchReceiptAt("Downloading model", 3, "done"), ts: "2026-07-14T11:00:00.000Z" }); // real egress
     await flush();
     expect(await readActivityIndex()).toEqual({ "2026-07-14": 1 }); // only the real fetch counted

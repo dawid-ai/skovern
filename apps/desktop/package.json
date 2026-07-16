@@ -1,8 +1,8 @@
 {
-  "name": "@deskhand/desktop",
+  "name": "@skovern/desktop",
   "private": true,
   "version": "0.0.1",
-  "description": "Deskhand desktop app (Electron shell + React UI)",
+  "description": "Skovern desktop app (Electron shell + React UI)",
   "type": "module",
   "main": "out/main/index.js",
   "scripts": {
@@ -17,8 +17,8 @@
     "test:packaging": "playwright test packaging.spec.ts"
   },
   "dependencies": {
-    "@deskhand/core": "workspace:^",
-    "@deskhand/plugin-sdk": "workspace:^",
+    "@skovern/core": "workspace:^",
+    "@skovern/plugin-sdk": "workspace:^",
     "electron-updater": "^6.8.9",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
@@ -26,7 +26,7 @@
     "systeminformation": "^5.31.16"
   },
   "devDependencies": {
-    "@deskhand/site": "workspace:^",
+    "@skovern/site": "workspace:^",
     "@playwright/test": "^1.61.1",
     "@testcontainers/postgresql": "^10.13.2",
     "@types/node": "^26.1.1",

@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import type { Provider } from "@deskhand/core";
+import type { Provider } from "@skovern/core";
 
 // A brain backed by the local Claude Code CLI (`claude -p`). It runs on the user's
 // existing subscription at ZERO api cost — no key, no keychain. Spawned from the

@@ -7,7 +7,7 @@ import type { ReceiptView } from "../shared/receipts.js";
 //   2. Formula-injection neutralizing so opening the file in Excel/Sheets can't
 //      execute a cell as a formula (a `task` or `host` is semi-attacker-controlled).
 
-// Every field Deskhand captures, in a fixed column order. A receipt that lacks a field
+// Every field Skovern captures, in a fixed column order. A receipt that lacks a field
 // (e.g. a fetch has no `provider`) gets an empty cell.
 const COLUMNS = [
   "ts",

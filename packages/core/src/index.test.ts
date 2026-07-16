@@ -7,6 +7,6 @@ describe("core", () => {
   });
 
   it("returns app info the shell can render", () => {
-    expect(getAppInfo()).toEqual({ name: "Deskhand", version: CORE_VERSION });
+    expect(getAppInfo()).toEqual({ name: "Skovern", version: CORE_VERSION });
   });
 });

@@ -6,7 +6,7 @@ import path from "node:path";
 import { _electron as electron, expect, test } from "@playwright/test";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import pg from "pg";
-import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningServer } from "@deskhand/site";
+import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningServer } from "@skovern/site";
 
 // Loop 019 metric E1 (app-level, real Electron UI): sign in → Settings → "On this
 // computer" → the honest verdict + "what you have" / "our suggestions" (trade-offs,
@@ -26,7 +26,7 @@ const LOCAL_REPLY = "Hello from your private local brain.";
 // A fixed CPU-only machine so the verdict is deterministic on ANY runner (CI is
 // CPU-only; a dev box may have a big GPU). With 16 GB RAM and no usable GPU:
 // mistral:7b + qwen2.5:3b are amber (usable), qwen2.5:235b is red — so the pulled
-// mistral:7b is always the biggest-usable recommendation. Fed via the DESKHAND_HARDWARE
+// mistral:7b is always the biggest-usable recommendation. Fed via the SKOVERN_HARDWARE
 // dev/test seam (inert when packaged).
 const CPU_HARDWARE = JSON.stringify({
   ramBytes: 16 * 1024 ** 3,
@@ -170,15 +170,15 @@ test.afterAll(async () => {
 
 test("user sets up a private on-computer brain, always sees which brain is active, and runs it", async () => {
   test.setTimeout(180_000);
-  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
   const app = await electron.launch({
     args: [".", `--user-data-dir=${userDataDir}`],
     env: {
       ...process.env,
-      DESKHAND_API_URL: server.url,
-      DESKHAND_OLLAMA_URL: ollamaUrl,
-      DESKHAND_CATALOG_URL: catalogUrl,
-      DESKHAND_HARDWARE: CPU_HARDWARE,
+      SKOVERN_API_URL: server.url,
+      SKOVERN_OLLAMA_URL: ollamaUrl,
+      SKOVERN_CATALOG_URL: catalogUrl,
+      SKOVERN_HARDWARE: CPU_HARDWARE,
     },
   });
 
@@ -233,7 +233,7 @@ test("user sets up a private on-computer brain, always sees which brain is activ
     const afterOpen = readFileSync(path.join(userDataDir, "receipts.jsonl"), "utf8");
     const modelListSent = afterOpen
       .split("\n")
-      .filter((l) => l.includes('"task":"Deskhand: model list"') && l.includes('"phase":"sent"'));
+      .filter((l) => l.includes('"task":"Skovern: model list"') && l.includes('"phase":"sent"'));
     expect(modelListSent).toHaveLength(1);
 
     // DOWNLOAD-AND-USE from the table: "Get this one" on Qwen2.5 3B (NOT the recommended
@@ -296,7 +296,7 @@ test("user sets up a private on-computer brain, always sees which brain is activ
     expect(log).toContain('"local":true');
     expect(log).toContain('"tokensIn":7');
     expect(log).toContain('"tokensOut":42');
-    const modelListLine = log.split("\n").find((l) => l.includes('"task":"Deskhand: model list"'));
+    const modelListLine = log.split("\n").find((l) => l.includes('"task":"Skovern: model list"'));
     expect(modelListLine).toContain('"routine":true');
     expect(log).not.toContain(LOCAL_REPLY);
 

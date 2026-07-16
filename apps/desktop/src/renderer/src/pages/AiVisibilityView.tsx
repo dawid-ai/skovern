@@ -40,8 +40,8 @@ export function AiVisibilityView({ onBack }: { onBack: () => void }) {
     setProgress(null);
     // Subscribe BEFORE the run so we don't miss the first "Question 1 of 5…".
     unsubProgress.current?.();
-    unsubProgress.current = window.deskhand.plugins.onProgress((p) => setProgress(p));
-    const res = await window.deskhand.plugins.run("ai-visibility", JSON.stringify({ name, category, city }));
+    unsubProgress.current = window.skovern.plugins.onProgress((p) => setProgress(p));
+    const res = await window.skovern.plugins.run("ai-visibility", JSON.stringify({ name, category, city }));
     unsubProgress.current?.();
     unsubProgress.current = null;
     setProgress(null);
@@ -61,7 +61,7 @@ export function AiVisibilityView({ onBack }: { onBack: () => void }) {
     if (!result) return;
     setPublishBusy(true);
     setPublished(null);
-    const res = await window.deskhand.visibility.publish({
+    const res = await window.skovern.visibility.publish({
       business: result.business,
       score: result.score,
       competitors: result.competitors,

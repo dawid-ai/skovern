@@ -18,7 +18,7 @@ vi.mock("electron", () => ({
 import { brainStatus, clearBrain, saveBrain } from "./keys.js";
 
 beforeEach(() => {
-  state.dir = mkdtempSync(path.join(tmpdir(), "deskhand-keys-"));
+  state.dir = mkdtempSync(path.join(tmpdir(), "skovern-keys-"));
 });
 afterEach(() => {
   rmSync(state.dir, { recursive: true, force: true });

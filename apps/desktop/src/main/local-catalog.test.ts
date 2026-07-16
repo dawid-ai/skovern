@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { FetchReceipt, FetchSink } from "@deskhand/core";
+import type { FetchReceipt, FetchSink } from "@skovern/core";
 
 // receipts.ts imports electron for app.getPath — stub it so the import resolves.
 vi.mock("electron", () => ({ app: { getPath: () => "." } }));
@@ -68,7 +68,7 @@ describe("loadCatalog (C1)", () => {
     // the fetch was receipted with the model-list label (a fetch/egress receipt)
     expect(receipts.length).toBeGreaterThanOrEqual(1);
     expect(receipts.every((r) => r.kind === "fetch")).toBe(true);
-    expect(receipts.every((r) => r.task === "Deskhand: model list")).toBe(true);
+    expect(receipts.every((r) => r.task === "Skovern: model list")).toBe(true);
     expect(receipts.some((r) => r.phase === "sent")).toBe(true);
     // classified routine at the SOURCE (housekeeping poll) → the panel groups it.
     expect(receipts.every((r) => r.routine === true)).toBe(true);

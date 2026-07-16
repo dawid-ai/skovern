@@ -13,7 +13,7 @@ import {
   startAuthServer,
   VisibilityStore,
   type RunningServer,
-} from "@deskhand/site";
+} from "@skovern/site";
 
 // Loop 013b metric (app-level, full stack): sign in → run AI Visibility on a mock
 // brain → click Publish → a public /u/visibility link appears, and fetching it
@@ -79,10 +79,10 @@ test.afterAll(async () => {
 
 test("user publishes an AI Visibility result and gets a live public link", async () => {
   test.setTimeout(180_000);
-  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
   const app = await electron.launch({
     args: [".", `--user-data-dir=${userDataDir}`],
-    env: { ...process.env, DESKHAND_API_URL: server.url, DESKHAND_OPENROUTER_BASE_URL: brainUrl },
+    env: { ...process.env, SKOVERN_API_URL: server.url, SKOVERN_OPENROUTER_BASE_URL: brainUrl },
   });
 
   try {

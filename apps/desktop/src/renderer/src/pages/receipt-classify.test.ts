@@ -28,8 +28,8 @@ describe("isRoutine — authoritative, not string-sniffed", () => {
   it("a call NOT marked routine is never routine, even if its task LOOKS like a poll", () => {
     // This is the exact bug the old sniff had: a user's message shares the "messages"
     // label but is real egress — it must NOT be grouped away.
-    expect(isRoutine(fetchReceipt({ routine: undefined, task: "Deskhand: messages" }))).toBe(false);
-    expect(isRoutine(fetchReceipt({ task: "Deskhand: news" }))).toBe(false);
+    expect(isRoutine(fetchReceipt({ routine: undefined, task: "Skovern: messages" }))).toBe(false);
+    expect(isRoutine(fetchReceipt({ task: "Skovern: news" }))).toBe(false);
   });
 
   it("a model (brain) receipt is never routine", () => {
@@ -40,13 +40,13 @@ describe("isRoutine — authoritative, not string-sniffed", () => {
 
 describe("routineGroup — florist labels, task as key", () => {
   it("labels the known polls and keys by task suffix", () => {
-    expect(routineGroup(fetchReceipt({ task: "Deskhand: news" }))).toEqual({ key: "news", label: "Checked the news" });
-    expect(routineGroup(fetchReceipt({ task: "Deskhand: messages" })).label).toBe("Checked your messages");
-    expect(routineGroup(fetchReceipt({ task: "Deskhand: model list" })).label).toBe("Checked the model list");
+    expect(routineGroup(fetchReceipt({ task: "Skovern: news" }))).toEqual({ key: "news", label: "Checked the news" });
+    expect(routineGroup(fetchReceipt({ task: "Skovern: messages" })).label).toBe("Checked your messages");
+    expect(routineGroup(fetchReceipt({ task: "Skovern: model list" })).label).toBe("Checked the model list");
   });
 
   it("falls back to a plain label for an unknown routine kind", () => {
-    expect(routineGroup(fetchReceipt({ task: "Deskhand: weather" }))).toEqual({ key: "weather", label: "Checked: weather" });
+    expect(routineGroup(fetchReceipt({ task: "Skovern: weather" }))).toEqual({ key: "weather", label: "Checked: weather" });
   });
 });
 

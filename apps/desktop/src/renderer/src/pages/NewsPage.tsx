@@ -7,14 +7,14 @@ export function NewsPage() {
   const [news, setNews] = useState<NewsPostView[] | null>(null);
 
   useEffect(() => {
-    void window.deskhand.news.list().then(setNews);
+    void window.skovern.news.list().then(setNews);
   }, []);
 
   return (
     <section className="page">
       <header className="page-head">
         <h1>What&apos;s new</h1>
-        <p>Ship notes and news from the people building Deskhand.</p>
+        <p>Ship notes and news from the people building Skovern.</p>
       </header>
 
       {news === null ? (

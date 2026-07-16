@@ -1,4 +1,4 @@
-# Local dev Postgres for the auth server. `pnpm --filter @deskhand/site db:up`.
+# Local dev Postgres for the auth server. `pnpm --filter @skovern/site db:up`.
 # Password is a well-known dev-only default — never used in a real deployment.
 services:
   db:
@@ -11,7 +11,7 @@ services:
     ports:
       - "5442:5432"
     volumes:
-      - deskhand-pgdata:/var/lib/postgresql/data
+      - skovern-pgdata:/var/lib/postgresql/data
 
 volumes:
-  deskhand-pgdata:
+  skovern-pgdata:

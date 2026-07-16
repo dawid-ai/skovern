@@ -1,4 +1,4 @@
-import type { Capability, PluginContext } from "@deskhand/plugin-sdk";
+import type { Capability, PluginContext } from "@skovern/plugin-sdk";
 import { helloPlugin } from "../plugins/hello/index.js";
 import { aiVisibilityPlugin } from "../plugins/ai-visibility/index.js";
 import type { ChildToHost, HostToChild } from "../shared/plugin-rpc.js";

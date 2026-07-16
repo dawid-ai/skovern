@@ -4,7 +4,7 @@ import {
   type CapabilityRequest,
   type CapabilityResponse,
   type PluginManifest,
-} from "@deskhand/plugin-sdk";
+} from "@skovern/plugin-sdk";
 import type { Router } from "../router/types.js";
 import type { FetchReceipt, FetchSink } from "./receipt.js";
 

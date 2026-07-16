@@ -6,7 +6,7 @@ import path from "node:path";
 import { _electron as electron, expect, test } from "@playwright/test";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import pg from "pg";
-import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningServer } from "@deskhand/site";
+import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningServer } from "@skovern/site";
 
 // Loop 011 metric (app-level): the brain picker THROUGH THE REAL APP — sign in,
 // open Settings, save a key, "Test my brain" does a real round-trip (against a
@@ -74,14 +74,14 @@ test.afterAll(async () => {
 
 test("user connects a brain in Settings and tests it, seeing the reply + a receipt", async () => {
   test.setTimeout(180_000);
-  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
   const app = await electron.launch({
     args: [".", `--user-data-dir=${userDataDir}`],
     env: {
       ...process.env,
-      DESKHAND_API_URL: server.url,
+      SKOVERN_API_URL: server.url,
       // point the real OpenRouter (OpenAI-compatible) adapter at the mock
-      DESKHAND_OPENROUTER_BASE_URL: brainUrl,
+      SKOVERN_OPENROUTER_BASE_URL: brainUrl,
     },
   });
 

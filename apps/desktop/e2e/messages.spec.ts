@@ -13,7 +13,7 @@ import {
   NewsStore,
   startAuthServer,
   type RunningServer,
-} from "@deskhand/site";
+} from "@skovern/site";
 
 // Loop 010 metric: two-way founder chat THROUGH THE REAL APP — user sends,
 // founder replies (via the admin endpoint), the reply lands in the user's
@@ -58,10 +58,10 @@ test.afterAll(async () => {
 
 test("user and founder hold a two-way conversation with an unread badge", async () => {
   test.setTimeout(180_000);
-  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
   const app = await electron.launch({
     args: [".", `--user-data-dir=${userDataDir}`],
-    env: { ...process.env, DESKHAND_API_URL: server.url },
+    env: { ...process.env, SKOVERN_API_URL: server.url },
   });
 
   try {

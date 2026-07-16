@@ -7,7 +7,7 @@ import path from "node:path";
 import { _electron as electron, expect, test, type Page } from "@playwright/test";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import pg from "pg";
-import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningServer } from "@deskhand/site";
+import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningServer } from "@skovern/site";
 
 // Loop 032 metric: self-reliant local brain. A signed-in user with NO brain is guided into a
 // first-run ONBOARDING that sets up the built-in, on-computer brain with zero external tools
@@ -120,13 +120,13 @@ function launchOpts(userDataDir: string) {
     args: [".", `--user-data-dir=${userDataDir}`],
     env: {
       ...process.env,
-      DESKHAND_API_URL: server.url,
-      DESKHAND_OLLAMA_URL: "http://127.0.0.1:1", // Ollama down → embedded path
-      DESKHAND_CATALOG_URL: catalogUrl,
-      DESKHAND_HARDWARE: GPU_HARDWARE,
-      DESKHAND_LLAMA_FAKE: "1",
-      DESKHAND_LLAMA_FAKE_DELAY_MS: "150",
-      DESKHAND_MODEL_DOWNLOAD_URL: downloadUrl,
+      SKOVERN_API_URL: server.url,
+      SKOVERN_OLLAMA_URL: "http://127.0.0.1:1", // Ollama down → embedded path
+      SKOVERN_CATALOG_URL: catalogUrl,
+      SKOVERN_HARDWARE: GPU_HARDWARE,
+      SKOVERN_LLAMA_FAKE: "1",
+      SKOVERN_LLAMA_FAKE_DELAY_MS: "150",
+      SKOVERN_MODEL_DOWNLOAD_URL: downloadUrl,
     },
   };
 }
@@ -146,7 +146,7 @@ async function setUpBuiltInBrain(page: Page): Promise<void> {
 
 test("O1: a first-run user is onboarded to a working built-in brain, then chats", async () => {
   test.setTimeout(180_000);
-  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
   const app = await electron.launch(launchOpts(userDataDir));
   try {
     const page = await app.firstWindow();
@@ -167,7 +167,7 @@ test("O1: a first-run user is onboarded to a working built-in brain, then chats"
 
 test("O2: an unreachable Ollama brain falls back to the built-in in BOTH chat and Test my brain", async () => {
   test.setTimeout(180_000);
-  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
   const receiptsPath = path.join(userDataDir, "receipts.jsonl");
   const app = await electron.launch(launchOpts(userDataDir));
   try {
@@ -179,7 +179,7 @@ test("O2: an unreachable Ollama brain falls back to the built-in in BOTH chat an
     // Now pin the brain to an OLLAMA model (not embedded). Ollama is down (dead port), so every
     // local call must fall back to the downloaded built-in. Set it directly via the IPC — the
     // Ollama-model config can't be produced in CI through the UI (needs a live Ollama).
-    await page.evaluate(() => window.deskhand.brain.save({ provider: "local", key: "", model: "mistral-small:latest" }));
+    await page.evaluate(() => window.skovern.brain.save({ provider: "local", key: "", model: "mistral-small:latest" }));
 
     // chat falls back to the built-in, with the honest note
     await page.getByRole("button", { name: "Chat" }).click();
@@ -208,13 +208,13 @@ test("O2: an unreachable Ollama brain falls back to the built-in in BOTH chat an
 
 test("O3: Ollama consent — the auto-launch preference persists, and a down Ollama still answers", async () => {
   test.setTimeout(180_000);
-  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
   const app = await electron.launch({
     args: [".", `--user-data-dir=${userDataDir}`],
     env: {
       ...launchOpts(userDataDir).env,
-      DESKHAND_OLLAMA_INSTALLED: "1", // Ollama "installed" (seam) but the URL is dead → not running
-      DESKHAND_OLLAMA_SPAWN_FAKE: "1", // a fake `ollama serve` (records the attempt, won't serve)
+      SKOVERN_OLLAMA_INSTALLED: "1", // Ollama "installed" (seam) but the URL is dead → not running
+      SKOVERN_OLLAMA_SPAWN_FAKE: "1", // a fake `ollama serve` (records the attempt, won't serve)
     },
   });
   try {
@@ -235,7 +235,7 @@ test("O3: Ollama consent — the auto-launch preference persists, and a down Oll
 
     // Pin the brain to an Ollama model. With "always" + installed + down, the app ATTEMPTS a
     // (fake) launch; the fake can't serve, so it gracefully falls back to the built-in.
-    await page.evaluate(() => window.deskhand.brain.save({ provider: "local", key: "", model: "mistral-small:latest" }));
+    await page.evaluate(() => window.skovern.brain.save({ provider: "local", key: "", model: "mistral-small:latest" }));
     await page.getByRole("button", { name: "Chat" }).click();
     await page.getByRole("button", { name: "New chat" }).click();
     await page.getByLabel("Message your brain").fill("hi");
@@ -245,7 +245,7 @@ test("O3: Ollama consent — the auto-launch preference persists, and a down Oll
 
     // prove the consent→launch WIRING fired (not just a silent built-in shortcut): "always" +
     // installed + down actually attempted the (fake) `ollama serve`.
-    const attempts = await page.evaluate(() => window.deskhand.settings.ollamaStatus().then((s) => s.launchAttempts ?? 0));
+    const attempts = await page.evaluate(() => window.skovern.settings.ollamaStatus().then((s) => s.launchAttempts ?? 0));
     expect(attempts).toBeGreaterThan(0);
   } finally {
     await app.close();
@@ -255,12 +255,12 @@ test("O3: Ollama consent — the auto-launch preference persists, and a down Oll
 
 test("Issue 3a: 'use my built-in brain' with NO model downloaded routes to setup, not a silent no-op", async () => {
   test.setTimeout(120_000);
-  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
   const app = await electron.launch({
     args: [".", `--user-data-dir=${userDataDir}`],
     env: {
       ...launchOpts(userDataDir).env,
-      DESKHAND_OLLAMA_INSTALLED: "1", // installed (seam) so the consent offer appears; URL is dead → not running
+      SKOVERN_OLLAMA_INSTALLED: "1", // installed (seam) so the consent offer appears; URL is dead → not running
     },
   });
   try {
@@ -285,10 +285,10 @@ test("O4: onboarding always offers an escape to an online brain — never a dead
   test.setTimeout(120_000);
   // No embedded fixtures here: even if the built-in couldn't be set up, onboarding must never
   // trap the user — the online-brain escape is always offered and reaches the usable app.
-  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
   const app = await electron.launch({
     args: [".", `--user-data-dir=${userDataDir}`],
-    env: { ...process.env, DESKHAND_API_URL: server.url },
+    env: { ...process.env, SKOVERN_API_URL: server.url },
   });
   try {
     const page = await app.firstWindow();

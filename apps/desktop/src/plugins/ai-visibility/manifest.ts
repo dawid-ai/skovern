@@ -1,4 +1,4 @@
-import type { PluginManifest } from "@deskhand/plugin-sdk";
+import type { PluginManifest } from "@skovern/plugin-sdk";
 
 // AI Visibility — the wow wedge (spec §8), now a real skill. Split from run so the
 // HOST (broker + permission card) and the sandboxed CHILD read the same declaration.

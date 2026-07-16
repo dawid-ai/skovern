@@ -1,6 +1,6 @@
 // Project site + cloud API. Auth is the first cloud surface; more (news, DM,
 // publish) hang off the same store as later loops land.
-export const SITE_NAME = "deskhand";
+export const SITE_NAME = "Skovern";
 
 export { AuthService, AuthStore, ConsoleMailer, normalizeEmail } from "./auth/service.js";
 export type { AuthConfig, Session } from "./auth/service.js";

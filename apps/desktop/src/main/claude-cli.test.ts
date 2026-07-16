@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
-import { createRouter, type Provider } from "@deskhand/core";
+import { createRouter, type Provider } from "@skovern/core";
 import { claudeCliProvider, collectOutput } from "./claude-cli.js";
 
 // A fake `claude` we can spawn shell-free on any OS: a node script the provider runs

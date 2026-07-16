@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { CapabilityRequest, PluginManifest } from "@deskhand/plugin-sdk";
+import type { CapabilityRequest, PluginManifest } from "@skovern/plugin-sdk";
 import { createBroker } from "./broker.js";
 import type { FetchReceipt, FetchSink } from "./receipt.js";
 import type { GenerateInput, GenerateResult, Router } from "../router/types.js";

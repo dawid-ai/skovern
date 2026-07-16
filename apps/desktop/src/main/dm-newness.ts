@@ -1,4 +1,4 @@
-import type { Thread } from "@deskhand/core";
+import type { Thread } from "@skovern/core";
 
 // Deciding when a founder reply is genuinely NEW (worth a distinct Receipts entry) vs.
 // just the same old/read thread coming back on the next poll. Pure + unit-tested so the

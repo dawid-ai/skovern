@@ -7,7 +7,7 @@ import path from "node:path";
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import pg from "pg";
-import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningServer } from "@deskhand/site";
+import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningServer } from "@skovern/site";
 
 // Loop 031 (Chat feature, Loop B) app-level metric: the REAL Electron UI + real server.
 // A LOCAL embedded brain (faked native child, fixture download bytes) streams a reply
@@ -186,7 +186,7 @@ function seedLongChat(chatsDir: string, id: string, title: string, turns: number
 
 test("chat streams a local reply, persists it, stops mid-stream, and writes one receipt", async () => {
   test.setTimeout(240_000);
-  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
   const receiptsPath = path.join(userDataDir, "receipts.jsonl");
   const chatsDir = path.join(userDataDir, "chats");
 
@@ -196,8 +196,8 @@ test("chat streams a local reply, persists it, stops mid-stream, and writes one 
   writeFileSync(
     receiptsPath,
     [
-      { kind: "fetch", host: "127.0.0.1", task: "Deskhand: messages", direction: "in", routine: true, ts: "2026-07-14T09:00:00.000Z", bytesSent: 0, bytesReceived: 0, ok: true, phase: "done" },
-      { kind: "fetch", host: "127.0.0.1", task: "Deskhand: news", direction: "in", routine: true, ts: "2026-07-14T09:00:05.000Z", bytesSent: 0, bytesReceived: 0, ok: true, phase: "done" },
+      { kind: "fetch", host: "127.0.0.1", task: "Skovern: messages", direction: "in", routine: true, ts: "2026-07-14T09:00:00.000Z", bytesSent: 0, bytesReceived: 0, ok: true, phase: "done" },
+      { kind: "fetch", host: "127.0.0.1", task: "Skovern: news", direction: "in", routine: true, ts: "2026-07-14T09:00:05.000Z", bytesSent: 0, bytesReceived: 0, ok: true, phase: "done" },
       { provider: "openrouter", model: "x", task: "Test my brain", bytesSent: 10, ts: "2026-07-14T09:01:00.000Z", bytesReceived: 0, ok: false, phase: "sent" },
       { provider: "openrouter", model: "x", task: "Test my brain", bytesSent: 10, ts: "2026-07-14T09:01:01.000Z", bytesReceived: 20, ok: true, phase: "done" },
     ]
@@ -220,13 +220,13 @@ test("chat streams a local reply, persists it, stops mid-stream, and writes one 
     args: [".", `--user-data-dir=${userDataDir}`],
     env: {
       ...process.env,
-      DESKHAND_API_URL: server.url,
-      DESKHAND_OLLAMA_URL: "http://127.0.0.1:1", // Ollama down → embedded path
-      DESKHAND_CATALOG_URL: catalogUrl,
-      DESKHAND_HARDWARE: GPU_HARDWARE,
-      DESKHAND_LLAMA_FAKE: "1", // fake native child, streams the canned reply
-      DESKHAND_LLAMA_FAKE_DELAY_MS: "200", // slow enough to observe a mid-stream partial
-      DESKHAND_MODEL_DOWNLOAD_URL: downloadUrl, // fixture model bytes
+      SKOVERN_API_URL: server.url,
+      SKOVERN_OLLAMA_URL: "http://127.0.0.1:1", // Ollama down → embedded path
+      SKOVERN_CATALOG_URL: catalogUrl,
+      SKOVERN_HARDWARE: GPU_HARDWARE,
+      SKOVERN_LLAMA_FAKE: "1", // fake native child, streams the canned reply
+      SKOVERN_LLAMA_FAKE_DELAY_MS: "200", // slow enough to observe a mid-stream partial
+      SKOVERN_MODEL_DOWNLOAD_URL: downloadUrl, // fixture model bytes
     },
   };
 
@@ -371,7 +371,7 @@ function startStreamingOllama(): { server: Server; ready: Promise<string> } {
 
 test("Issue 2/4/3b: an Ollama brain STREAMS token-by-token with a prepare status; when it goes down, Chat offers setup", async () => {
   test.setTimeout(240_000);
-  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
   const ollama = startStreamingOllama();
   const ollamaUrl = await ollama.ready;
 
@@ -379,10 +379,10 @@ test("Issue 2/4/3b: an Ollama brain STREAMS token-by-token with a prepare status
     args: [".", `--user-data-dir=${userDataDir}`],
     env: {
       ...process.env,
-      DESKHAND_API_URL: server.url,
-      DESKHAND_OLLAMA_URL: ollamaUrl, // a REAL (fixture) Ollama, up and streaming
-      DESKHAND_CATALOG_URL: catalogUrl, // no embedded model downloaded → no built-in fallback
-      DESKHAND_HARDWARE: GPU_HARDWARE, // mistral:7b is usable → "Use this one"
+      SKOVERN_API_URL: server.url,
+      SKOVERN_OLLAMA_URL: ollamaUrl, // a REAL (fixture) Ollama, up and streaming
+      SKOVERN_CATALOG_URL: catalogUrl, // no embedded model downloaded → no built-in fallback
+      SKOVERN_HARDWARE: GPU_HARDWARE, // mistral:7b is usable → "Use this one"
     },
   });
   try {
@@ -440,10 +440,10 @@ test("Issue 2/4/3b: an Ollama brain STREAMS token-by-token with a prepare status
 
 test("Issue 1 (C6): with NO brain, Chat offers a 'Set up a brain' CTA into onboarding — no dead disabled box", async () => {
   test.setTimeout(120_000);
-  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
   const app = await electron.launch({
     args: [".", `--user-data-dir=${userDataDir}`],
-    env: { ...process.env, DESKHAND_API_URL: server.url },
+    env: { ...process.env, SKOVERN_API_URL: server.url },
   });
   try {
     const page = await app.firstWindow();
@@ -469,10 +469,10 @@ test("Issue 1 (C6): with NO brain, Chat offers a 'Set up a brain' CTA into onboa
 
 test("C7: with a CLOUD brain, the chat shows an honest 'leaves your computer' note", async () => {
   test.setTimeout(120_000);
-  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
   const app = await electron.launch({
     args: [".", `--user-data-dir=${userDataDir}`],
-    env: { ...process.env, DESKHAND_API_URL: server.url, DESKHAND_OPENROUTER_BASE_URL: brainUrl },
+    env: { ...process.env, SKOVERN_API_URL: server.url, SKOVERN_OPENROUTER_BASE_URL: brainUrl },
   });
   try {
     const page = await app.firstWindow();
@@ -493,12 +493,12 @@ test("C7: with a CLOUD brain, the chat shows an honest 'leaves your computer' no
 
 test("a brain that FAILS surfaces an error in the chat, never silence", async () => {
   test.setTimeout(120_000);
-  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
   const app = await electron.launch({
     args: [".", `--user-data-dir=${userDataDir}`],
     // a cloud brain pointed at a dead port → every send fails fast (ECONNREFUSED). The bug
     // was: a failed send showed NOTHING. It must now show an honest error + re-enable send.
-    env: { ...process.env, DESKHAND_API_URL: server.url, DESKHAND_OPENROUTER_BASE_URL: "http://127.0.0.1:1" },
+    env: { ...process.env, SKOVERN_API_URL: server.url, SKOVERN_OPENROUTER_BASE_URL: "http://127.0.0.1:1" },
   });
   try {
     const page = await app.firstWindow();
@@ -528,11 +528,11 @@ test("a brain that FAILS surfaces an error in the chat, never silence", async ()
 // E10 open-at-bottom · E11 the four jump buttons · E12 disabled at the ends / empty thread.
 test("chat scroll: opens at the bottom, the jump buttons navigate, and they disable at the ends", async () => {
   test.setTimeout(120_000);
-  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
   seedLongChat(path.join(userDataDir, "chats"), "long-chat", "Long chat", 40);
   const app = await electron.launch({
     args: [".", `--user-data-dir=${userDataDir}`],
-    env: { ...process.env, DESKHAND_API_URL: server.url },
+    env: { ...process.env, SKOVERN_API_URL: server.url },
   });
   try {
     const page = await app.firstWindow();
@@ -599,7 +599,7 @@ test("chat scroll: opens at the bottom, the jump buttons navigate, and they disa
 // ── Markdown: the brain's reply renders bold / lists / links / HR; the user's text stays literal ──
 test("chat renders the brain's reply as safe markdown, and keeps the user's message literal", async () => {
   test.setTimeout(120_000);
-  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
   const chatsDir = path.join(userDataDir, "chats");
   mkdirSync(chatsDir, { recursive: true });
   writeFileSync(
@@ -624,7 +624,7 @@ test("chat renders the brain's reply as safe markdown, and keeps the user's mess
       JSON.stringify({ role: "assistant", content: assistantMd, ts: "2026-07-14T08:00:02.000Z" }) + "\n",
   );
 
-  const app = await electron.launch({ args: [".", `--user-data-dir=${userDataDir}`], env: { ...process.env, DESKHAND_API_URL: server.url } });
+  const app = await electron.launch({ args: [".", `--user-data-dir=${userDataDir}`], env: { ...process.env, SKOVERN_API_URL: server.url } });
   try {
     const page = await app.firstWindow();
     await signIn(page, "markdown@shop.test");
@@ -656,21 +656,21 @@ test("chat renders the brain's reply as safe markdown, and keeps the user's mess
 // tray keeps the model loaded (the 66bc60c regression) · E6 the chip poll writes no receipts.
 test("chat auto-follows the stream (pausing when scrolled up) and the chip stays green across a hide-to-tray", async () => {
   test.setTimeout(240_000);
-  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
   const receiptsPath = path.join(userDataDir, "receipts.jsonl");
   seedLongChat(path.join(userDataDir, "chats"), "long-chat", "Long chat", 40);
   const app = await electron.launch({
     args: [".", `--user-data-dir=${userDataDir}`],
     env: {
       ...process.env,
-      DESKHAND_API_URL: server.url,
-      DESKHAND_OLLAMA_URL: "http://127.0.0.1:1", // Ollama down → embedded path
-      DESKHAND_CATALOG_URL: catalogUrl,
-      DESKHAND_HARDWARE: GPU_HARDWARE,
-      DESKHAND_LLAMA_FAKE: "1",
-      DESKHAND_LLAMA_FAKE_DELAY_MS: "250", // ~2.5s stream — room to interact
-      DESKHAND_MODEL_DOWNLOAD_URL: downloadUrl,
-      DESKHAND_IDLE_UNLOAD_MS: "120000", // large: the model must NOT idle-unload during this test
+      SKOVERN_API_URL: server.url,
+      SKOVERN_OLLAMA_URL: "http://127.0.0.1:1", // Ollama down → embedded path
+      SKOVERN_CATALOG_URL: catalogUrl,
+      SKOVERN_HARDWARE: GPU_HARDWARE,
+      SKOVERN_LLAMA_FAKE: "1",
+      SKOVERN_LLAMA_FAKE_DELAY_MS: "250", // ~2.5s stream — room to interact
+      SKOVERN_MODEL_DOWNLOAD_URL: downloadUrl,
+      SKOVERN_IDLE_UNLOAD_MS: "120000", // large: the model must NOT idle-unload during this test
     },
   });
   try {
@@ -744,21 +744,21 @@ test("chat auto-follows the stream (pausing when scrolled up) and the chip stays
 // E2 gray-when-unloaded · E4 the live green→gray→green flip driven by the real idle-unload.
 test("brain chip goes gray when the model idle-unloads and green again on the next chat", async () => {
   test.setTimeout(180_000);
-  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
   const app = await electron.launch({
     args: [".", `--user-data-dir=${userDataDir}`],
     env: {
       ...process.env,
-      DESKHAND_API_URL: server.url,
-      DESKHAND_OLLAMA_URL: "http://127.0.0.1:1",
-      DESKHAND_CATALOG_URL: catalogUrl,
-      DESKHAND_HARDWARE: GPU_HARDWARE,
-      DESKHAND_LLAMA_FAKE: "1",
-      DESKHAND_LLAMA_FAKE_DELAY_MS: "50",
-      DESKHAND_MODEL_DOWNLOAD_URL: downloadUrl,
+      SKOVERN_API_URL: server.url,
+      SKOVERN_OLLAMA_URL: "http://127.0.0.1:1",
+      SKOVERN_CATALOG_URL: catalogUrl,
+      SKOVERN_HARDWARE: GPU_HARDWARE,
+      SKOVERN_LLAMA_FAKE: "1",
+      SKOVERN_LLAMA_FAKE_DELAY_MS: "50",
+      SKOVERN_MODEL_DOWNLOAD_URL: downloadUrl,
       // Must exceed the 5s chip poll so the GREEN (warm) state is actually observed before the
       // model frees itself — a sub-poll idle would unload it invisibly between two polls.
-      DESKHAND_IDLE_UNLOAD_MS: "8000",
+      SKOVERN_IDLE_UNLOAD_MS: "8000",
     },
   });
   try {

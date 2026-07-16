@@ -17,7 +17,7 @@ export function dayKey(ts: string): string | null {
 // holds HISTORICAL receipts written before the `routine` flag existed — flag-only filtering
 // would leave thousands of old polls counted. Keep this in sync with the `routine:true`
 // call sites; the flag is authoritative for new receipts, the labels rescue legacy ones.
-const ROUTINE_TASKS = new Set(["Deskhand: messages", "Deskhand: news", "Deskhand: model list"]);
+const ROUTINE_TASKS = new Set(["Skovern: messages", "Skovern: news", "Skovern: model list"]);
 
 // Is this a routine background poll (excluded from the calendar)? True if flagged
 // `routine`, OR — for pre-flag legacy receipts — if its task is a known routine label.

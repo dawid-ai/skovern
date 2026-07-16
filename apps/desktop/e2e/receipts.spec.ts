@@ -6,7 +6,7 @@ import path from "node:path";
 import { _electron as electron, expect, test } from "@playwright/test";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import pg from "pg";
-import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningServer } from "@deskhand/site";
+import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningServer } from "@skovern/site";
 
 // Loop 015 metric (app-level, THROUGH THE REAL app + real main + real log): sign in
 // (a first-party cloud call) → connect a brain → "Test my brain" (a model call, mock
@@ -71,20 +71,20 @@ test.afterAll(async () => {
 
 test("the Receipts page shows a first-party cloud call and a model call", async () => {
   test.setTimeout(180_000);
-  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
   const app = await electron.launch({
     args: [".", `--user-data-dir=${userDataDir}`],
     env: {
       ...process.env,
-      DESKHAND_API_URL: server.url,
-      DESKHAND_OPENROUTER_BASE_URL: brainUrl,
+      SKOVERN_API_URL: server.url,
+      SKOVERN_OPENROUTER_BASE_URL: brainUrl,
     },
   });
 
   try {
     const page = await app.firstWindow();
 
-    // sign in — this is itself a first-party cloud call (receipted "Deskhand: sign-in")
+    // sign in — this is itself a first-party cloud call (receipted "Skovern: sign-in")
     await page.getByLabel("Your email").fill("receipts@shop.test");
     await page.getByRole("button", { name: "Send me a link" }).click();
     await expect.poll(() => mailer.sent.length, { timeout: 30_000 }).toBeGreaterThan(0);
@@ -105,15 +105,15 @@ test("the Receipts page shows a first-party cloud call and a model call", async 
     await expect(page.getByRole("heading", { name: "What leaves your machine" })).toBeVisible();
 
     const list = page.locator(".receipt-list");
-    // a first-party receipt (sign-in), shown as "Deskhand"
-    await expect(list.locator(".receipt-who", { hasText: "Deskhand" }).first()).toBeVisible();
+    // a first-party receipt (sign-in), shown as "Skovern"
+    await expect(list.locator(".receipt-who", { hasText: "Skovern" }).first()).toBeVisible();
     // a model receipt (the brain), shown as "Your brain" going to OpenRouter
     await expect(list.locator(".receipt-who", { hasText: "Your brain" }).first()).toBeVisible();
     await expect(list.getByText("OpenRouter").first()).toBeVisible();
 
     // the on-disk log proves it — metadata only, no key, no secret
     const log = readFileSync(path.join(userDataDir, "receipts.jsonl"), "utf8");
-    expect(log).toContain('"task":"Deskhand: sign-in"');
+    expect(log).toContain('"task":"Skovern: sign-in"');
     expect(log).toContain('"provider":"openrouter"');
     expect(log).not.toContain(FAKE_KEY);
   } finally {

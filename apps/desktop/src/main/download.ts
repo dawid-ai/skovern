@@ -3,7 +3,7 @@ import { createReadStream, createWriteStream, existsSync, statSync } from "node:
 import { mkdir, readdir, rename, statfs, unlink } from "node:fs/promises";
 import { createHash, type Hash } from "node:crypto";
 import path from "node:path";
-import type { FetchSink, GgufSource } from "@deskhand/core";
+import type { FetchSink, GgufSource } from "@skovern/core";
 
 // Our own model downloader for the EMBEDDED runtime. The no-Ollama user has no Ollama
 // pull server, so we fetch the GGUF ourselves — and do it the privacy-safe way:

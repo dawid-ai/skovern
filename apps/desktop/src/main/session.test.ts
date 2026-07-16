@@ -20,7 +20,7 @@ vi.mock("electron", () => ({
 import { clearSession, loadSession, saveSession } from "./session.js";
 
 beforeEach(() => {
-  state.dir = mkdtempSync(path.join(tmpdir(), "deskhand-session-"));
+  state.dir = mkdtempSync(path.join(tmpdir(), "skovern-session-"));
   state.available = true;
 });
 

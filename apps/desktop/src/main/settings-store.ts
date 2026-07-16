@@ -4,7 +4,7 @@ import path from "node:path";
 import type { OllamaLaunch } from "../shared/settings.js";
 
 // Small main-owned app settings (NOT secrets — those stay in the keychain). Plain JSON in
-// userData. Today it holds one thing: whether Deskhand may auto-start Ollama for the user.
+// userData. Today it holds one thing: whether Skovern may auto-start Ollama for the user.
 
 export type { OllamaLaunch };
 

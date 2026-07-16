@@ -23,7 +23,7 @@ import {
 } from "./chat-store.js";
 
 beforeEach(() => {
-  state.dir = mkdtempSync(path.join(tmpdir(), "deskhand-chat-"));
+  state.dir = mkdtempSync(path.join(tmpdir(), "skovern-chat-"));
 });
 afterEach(() => {
   rmSync(state.dir, { recursive: true, force: true });

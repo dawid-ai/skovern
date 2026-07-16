@@ -7,8 +7,8 @@ import { ensureOllamaRunning, fakeLaunchCount, ollamaInstalled, pickOllamaAction
 
 const savedEnv = { ...process.env };
 beforeEach(() => {
-  delete process.env["DESKHAND_OLLAMA_INSTALLED"];
-  delete process.env["DESKHAND_OLLAMA_SPAWN_FAKE"];
+  delete process.env["SKOVERN_OLLAMA_INSTALLED"];
+  delete process.env["SKOVERN_OLLAMA_SPAWN_FAKE"];
 });
 afterEach(() => {
   process.env = { ...savedEnv };
@@ -32,16 +32,16 @@ describe("pickOllamaAction", () => {
 
 describe("ollamaInstalled seam", () => {
   it("honours the unpackaged test seam", () => {
-    process.env["DESKHAND_OLLAMA_INSTALLED"] = "1";
+    process.env["SKOVERN_OLLAMA_INSTALLED"] = "1";
     expect(ollamaInstalled()).toBe(true);
-    process.env["DESKHAND_OLLAMA_INSTALLED"] = "0";
+    process.env["SKOVERN_OLLAMA_INSTALLED"] = "0";
     expect(ollamaInstalled()).toBe(false);
   });
 });
 
 describe("ensureOllamaRunning (fake spawn)", () => {
   it("attempts a launch but reports not-running (the fake doesn't serve) → caller falls back", async () => {
-    process.env["DESKHAND_OLLAMA_SPAWN_FAKE"] = "1";
+    process.env["SKOVERN_OLLAMA_SPAWN_FAKE"] = "1";
     const before = fakeLaunchCount();
     const detect = vi.fn(async () => false);
     const ok = await ensureOllamaRunning(detect, 1000);

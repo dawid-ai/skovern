@@ -14,7 +14,7 @@ import {
   POSTS,
   startAuthServer,
   type RunningServer,
-} from "@deskhand/site";
+} from "@skovern/site";
 
 // Loop 008 metric: the news + DM features, end to end, THROUGH THE REAL APP —
 // Electron UI → preload → IPC → core client → real server (news + dm wired) →
@@ -53,10 +53,10 @@ test.afterAll(async () => {
 
 test("signed-in user sees the news and can message the founder", async () => {
   test.setTimeout(180_000);
-  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
   const app = await electron.launch({
     args: [".", `--user-data-dir=${userDataDir}`],
-    env: { ...process.env, DESKHAND_API_URL: server.url },
+    env: { ...process.env, SKOVERN_API_URL: server.url },
   });
 
   try {

@@ -15,7 +15,7 @@ import {
   NewsStore,
   startAuthServer,
   type RunningServer,
-} from "@deskhand/site";
+} from "@skovern/site";
 
 // Loop 023 metric (app-level, real Electron UI): the Receipts page as a two-way ledger.
 // Against a real auth+dm+news server + a mock brain, drive the whole flow and prove:
@@ -98,10 +98,10 @@ test.afterAll(async () => {
 
 test("Receipts reads as a two-way ledger: In/Out tags, one entry per new reply, routine stays quiet", async () => {
   test.setTimeout(180_000);
-  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
   const app = await electron.launch({
     args: [".", `--user-data-dir=${userDataDir}`],
-    env: { ...process.env, DESKHAND_API_URL: server.url, DESKHAND_OPENROUTER_BASE_URL: brainUrl },
+    env: { ...process.env, SKOVERN_API_URL: server.url, SKOVERN_OPENROUTER_BASE_URL: brainUrl },
   });
 
   try {
@@ -177,13 +177,13 @@ test("Receipts reads as a two-way ledger: In/Out tags, one entry per new reply, 
     expect(replyLines).toHaveLength(1);
     expect(replyLines[0]).toContain('"direction":"in"');
     // directions are stamped at the source
-    expect(log).toContain('"task":"Deskhand: your message to Dawid"');
-    expect(log).toMatch(/"task":"Deskhand: your message to Dawid"[^}]*"direction":"out"/);
+    expect(log).toContain('"task":"Skovern: your message to Dawid"');
+    expect(log).toMatch(/"task":"Skovern: your message to Dawid"[^}]*"direction":"out"/);
     // the invariant holds: routine polls are STILL fully receipted on disk (just grouped in UI)
-    const msgPolls = log.split("\n").filter((l) => l.includes('"task":"Deskhand: messages"') && l.includes('"routine":true'));
+    const msgPolls = log.split("\n").filter((l) => l.includes('"task":"Skovern: messages"') && l.includes('"routine":true'));
     expect(msgPolls.length).toBeGreaterThan(0);
     // news carries its In direction at the data layer too (grouped in the UI, authoritative on disk)
-    expect(log).toMatch(/"task":"Deskhand: news"[^}]*"direction":"in"/);
+    expect(log).toMatch(/"task":"Skovern: news"[^}]*"direction":"in"/);
     // metadata only — neither the message nor the reply body ever hit the log
     expect(log).not.toContain(MY_MESSAGE);
     expect(log).not.toContain(FOUNDER_REPLY);

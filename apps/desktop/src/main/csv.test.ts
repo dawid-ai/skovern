@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { FetchReceipt, Receipt } from "@deskhand/core";
+import type { FetchReceipt, Receipt } from "@skovern/core";
 import { toCsv } from "./csv.js";
 
 describe("toCsv", () => {
@@ -20,8 +20,8 @@ describe("toCsv", () => {
     const fetch: FetchReceipt = {
       kind: "fetch",
       ts: "2026-07-14T11:00:00Z",
-      host: "api.deskhand.test",
-      task: "Deskhand: news",
+      host: "api.skovern.test",
+      task: "Skovern: news",
       bytesSent: 20,
       bytesReceived: 100,
       ok: true,
@@ -35,7 +35,7 @@ describe("toCsv", () => {
     // model row: no kind/host/direction/routine, has provider/model/local/tokens
     expect(rows[0]).toBe("2026-07-14T10:00:00Z,,local,qwen,,Test my brain,,,true,5,9,12,34,true,done");
     // fetch row: kind/host/direction/routine present, provider/model/tokens empty
-    expect(rows[1]).toBe("2026-07-14T11:00:00Z,fetch,,,api.deskhand.test,Deskhand: news,in,true,,20,100,,,true,done");
+    expect(rows[1]).toBe("2026-07-14T11:00:00Z,fetch,,,api.skovern.test,Skovern: news,in,true,,20,100,,,true,done");
   });
 
   it("RFC-4180 quotes a cell with a comma, quote, or newline", () => {

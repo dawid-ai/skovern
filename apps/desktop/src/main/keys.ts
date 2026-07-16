@@ -1,7 +1,7 @@
 import { app, safeStorage } from "electron";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import type { ProviderId } from "@deskhand/core";
+import type { ProviderId } from "@skovern/core";
 
 // The user's brain choice + its API key. The key is a secret: it lives ONLY here,
 // encrypted by the OS keychain (safeStorage), and is NEVER returned to the

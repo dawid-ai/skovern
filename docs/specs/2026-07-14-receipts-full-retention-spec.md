@@ -103,7 +103,7 @@ round-tripping them adds no new disclosure, and main stays the only writer.
 - `receipts:activity` → `ActivityMap` — returns `readActivityIndex()` (fast: reads the durable
   index; rebuilds from all files once if missing/corrupt). O(days) on the hot path.
 - `receipts:exportCsv(rows: ReceiptView[])` → writes via `dialog.showSaveDialog`; **CI seam**
-  `DESKHAND_EXPORT_PATH` (gated `!app.isPackaged`) writes to a fixed temp path, bypassing the
+  `SKOVERN_EXPORT_PATH` (gated `!app.isPackaged`) writes to a fixed temp path, bypassing the
   dialog, so the e2e asserts file CONTENT deterministically. Empty `rows` → no-op (button disabled
   renderer-side too).
 - `receipts:list(range?)` — **no range** → the recent window (`readReceipts`: most-recent archive +
@@ -122,14 +122,14 @@ day-paged archive index only if someone genuinely ranges over >2000 receipts.`
 
 ## Determinism seam
 
-- **"today" / calendar window** → `DESKHAND_NOW` (ISO), gated `!app.isPackaged`, read where the
+- **"today" / calendar window** → `SKOVERN_NOW` (ISO), gated `!app.isPackaged`, read where the
   grid's date window is computed, so the calendar is identical on any runner/day.
 - Receipts + archives written to the e2e temp `userData` at fixed dates.
-- CSV path via `DESKHAND_EXPORT_PATH`.
+- CSV path via `SKOVERN_EXPORT_PATH`.
 
 ## App e2e (`apps/desktop/e2e/receipts-timeline.spec.ts`)
 
-Seeded receipts at KNOWN dates + pinned `DESKHAND_NOW`:
+Seeded receipts at KNOWN dates + pinned `SKOVERN_NOW`:
 1. Calendar renders history — a busy day's square is darker than a light day's; an empty day empty;
    hover/click surfaces the count.
 2. Date-range narrows the table; a zero-result range shows the empty state, calendar still renders.
@@ -152,7 +152,7 @@ corrupt/oversized line → skipped, calendar degrades to empty rather than throw
   `renderer/pages/` as the contract wrote) because main's index-rebuild + ranged read import them too.
 - **Change** `receipts.ts` (archive-not-delete rotation + all-files reader + ranged read + per-line
   cap + durable index), `index.ts` (`receipts:list(range?)`, `receipts:activity`,
-  `receipts:exportCsv`, `DESKHAND_NOW`/`DESKHAND_EXPORT_PATH` seams), `preload/index.ts` +
+  `receipts:exportCsv`, `SKOVERN_NOW`/`SKOVERN_EXPORT_PATH` seams), `preload/index.ts` +
   `shared/global.d.ts` (expose the IPCs to the renderer), `shared/receipts.ts` (`ActivityMap`,
   `ActivitySummary`, `DateRange`), `ReceiptsPage.tsx` (calendar + controls + selection + Export),
   `app.css`.

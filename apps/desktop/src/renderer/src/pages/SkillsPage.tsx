@@ -13,14 +13,14 @@ export function SkillsPage() {
   const [open, setOpen] = useState<string | null>(null);
 
   useEffect(() => {
-    void window.deskhand.plugins.list().then(setSkills);
+    void window.skovern.plugins.list().then(setSkills);
   }, []);
 
   if (open === "ai-visibility") return <AiVisibilityView onBack={() => setOpen(null)} />;
 
   async function run(id: string) {
     setBusy(id);
-    const res = await window.deskhand.plugins.run(id);
+    const res = await window.skovern.plugins.run(id);
     setBusy(null);
     setResults((prev) => ({ ...prev, [id]: res }));
   }

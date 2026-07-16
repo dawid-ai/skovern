@@ -1,11 +1,11 @@
-import type { FetchSink } from "@deskhand/core";
+import type { FetchSink } from "@skovern/core";
 
 // Wrap `fetch` so every first-party cloud call is receipted like a plugin fetch:
 // a `"sent"` line lands on disk BEFORE any byte leaves (fail-closed — if the sink
 // throws we never fetch), then a `"done"` line with the outcome. Metadata only:
 // host (never the full URL / query string), a caller-supplied label, and byte
 // counts — never a key, header, or body. One wrapper is built per client with its
-// own label ("Deskhand: news", etc.). Split from the log store (receipts.ts): this is
+// own label ("Skovern: news", etc.). Split from the log store (receipts.ts): this is
 // the egress-wrapper concern; that file owns the on-disk log + its activity index.
 
 function encodedBytes(s: string): number {

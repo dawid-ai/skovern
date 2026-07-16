@@ -9,7 +9,7 @@ import {
   type LocalModelInfo,
   type PullProgress,
   type VerdictModel,
-} from "@deskhand/core";
+} from "@skovern/core";
 import { fileFetchSink } from "./receipts.js";
 import { scanHardware } from "./hardware.js";
 import { createCachedCatalogLoader, snapshotCatalog } from "./catalog.js";
@@ -38,13 +38,13 @@ const loadCatalog = createCachedCatalogLoader();
 // honored ONLY unpackaged — mirror of DEV_SERVER_URL. The engine ALSO enforces
 // loopback regardless, so this can never reach off-box even if misused.
 export function ollamaBaseUrl(): string {
-  const override = !app.isPackaged ? process.env["DESKHAND_OLLAMA_URL"] : undefined;
+  const override = !app.isPackaged ? process.env["SKOVERN_OLLAMA_URL"] : undefined;
   return override && override.length > 0 ? override : "http://127.0.0.1:11434";
 }
 
 // Catalog URL override is likewise an unpackaged dev/test seam (fixture server).
 function catalogUrl(): string | undefined {
-  return !app.isPackaged ? process.env["DESKHAND_CATALOG_URL"] || undefined : undefined;
+  return !app.isPackaged ? process.env["SKOVERN_CATALOG_URL"] || undefined : undefined;
 }
 
 // Hardware override: an unpackaged dev/test seam (mirror of the URL seams) that pins
@@ -52,7 +52,7 @@ function catalogUrl(): string | undefined {
 // dev box may have a big GPU). Inert when packaged — production always scans the real
 // machine. A malformed override falls back to a real scan, never a crash.
 async function scanProfile(): Promise<HardwareProfile> {
-  const override = !app.isPackaged ? process.env["DESKHAND_HARDWARE"] : undefined;
+  const override = !app.isPackaged ? process.env["SKOVERN_HARDWARE"] : undefined;
   if (override) {
     try {
       return JSON.parse(override) as HardwareProfile;
@@ -104,7 +104,7 @@ export function downloadedEmbeddedModelId(): string | null {
   return ready[0]!.id;
 }
 
-// A dev/test seam (unpackaged only, mirror of DESKHAND_OLLAMA_URL / DESKHAND_CLAUDE_BIN):
+// A dev/test seam (unpackaged only, mirror of SKOVERN_OLLAMA_URL / SKOVERN_CLAUDE_BIN):
 // when set, the embedded engine uses a FAKE in-process child that answers with canned
 // text — so the app e2e can drive the real UI + real downloader without the native
 // runtime. Inert (undefined) in a packaged app, which always forks the real child.
@@ -113,13 +113,13 @@ const FAKE_REPLY = "Hello — I'm your private brain, running right here on your
 // The per-word gap the fake streams at. A dev/test seam (unpackaged only) so the chat
 // e2e can slow the stream enough to deterministically observe a mid-stream partial.
 function fakeStreamDelayMs(): number {
-  const raw = !app.isPackaged ? process.env["DESKHAND_LLAMA_FAKE_DELAY_MS"] : undefined;
+  const raw = !app.isPackaged ? process.env["SKOVERN_LLAMA_FAKE_DELAY_MS"] : undefined;
   const n = raw ? Number(raw) : NaN;
   return Number.isFinite(n) && n >= 0 ? n : 60;
 }
 
 function fakeLlamaSpawn(): (() => ChildLike) | undefined {
-  if (app.isPackaged || process.env["DESKHAND_LLAMA_FAKE"] !== "1") return undefined;
+  if (app.isPackaged || process.env["SKOVERN_LLAMA_FAKE"] !== "1") return undefined;
   const delayMs = fakeStreamDelayMs();
   return () => {
     const listeners: { message: ((m: FromChild) => void)[] } = { message: [] };
@@ -176,7 +176,7 @@ function fakeLlamaSpawn(): (() => ChildLike) | undefined {
 // real host); only the bytes come from the fixture. Inert (undefined) when packaged.
 function downloadFetchSeam(): typeof fetch | undefined {
   if (app.isPackaged) return undefined;
-  const override = process.env["DESKHAND_MODEL_DOWNLOAD_URL"];
+  const override = process.env["SKOVERN_MODEL_DOWNLOAD_URL"];
   return override ? ((() => fetch(override)) as typeof fetch) : undefined;
 }
 
@@ -193,17 +193,17 @@ function makeLlamaEngine(): LocalEngine {
 // e2e can watch a model unload — and the chip go gray — without waiting 5 minutes. A bad
 // value is ignored (undefined → the engine's 5-min default). Inert when packaged.
 export function idleUnloadMs(): number | undefined {
-  const override = !app.isPackaged ? process.env["DESKHAND_IDLE_UNLOAD_MS"] : undefined;
+  const override = !app.isPackaged ? process.env["SKOVERN_IDLE_UNLOAD_MS"] : undefined;
   const n = override ? Number(override) : NaN;
   return Number.isFinite(n) && n >= 0 ? n : undefined;
 }
 
 /** Is the active local model resident RIGHT NOW (drives the sidebar chip: green loaded,
  *  gray unloaded)? Embedded → the warm child; Ollama → its `/api/ps`. Best-effort: any
- *  probe failure reads as "not loaded", never throws. The `DESKHAND_BRAIN_LOADED` dev seam
+ *  probe failure reads as "not loaded", never throws. The `SKOVERN_BRAIN_LOADED` dev seam
  *  (unpackaged only) forces the answer so the e2e is deterministic on any machine. */
 export async function modelLoaded(modelId: string | null): Promise<boolean> {
-  const forced = !app.isPackaged ? process.env["DESKHAND_BRAIN_LOADED"] : undefined;
+  const forced = !app.isPackaged ? process.env["SKOVERN_BRAIN_LOADED"] : undefined;
   if (forced === "1") return true;
   if (forced === "0") return false;
   if (!modelId) return false;

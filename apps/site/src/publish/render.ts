@@ -18,7 +18,7 @@ export function renderMarkdown(body: string): string {
 }
 
 /** A published post's public page: real HTML + OpenGraph tags for share cards.
- *  `origin` is the absolute base (e.g. https://deskhand.app) so og:image is
+ *  `origin` is the absolute base (e.g. https://skovern.org) so og:image is
  *  absolute, which scrapers require. */
 export function renderPostPage(post: NewsPost, origin: string): string {
   const title = escapeHtml(post.title);
@@ -26,7 +26,7 @@ export function renderPostPage(post: NewsPost, origin: string): string {
   return (
     `<!doctype html><html lang="en"><head>` +
     `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">` +
-    `<title>${title} · Deskhand</title>` +
+    `<title>${title} · Skovern</title>` +
     `<meta property="og:type" content="article">` +
     `<meta property="og:title" content="${title}">` +
     `<meta property="og:image" content="${escapeHtml(ogImage)}">` +
@@ -46,7 +46,7 @@ export function renderOgImage(post: NewsPost): string {
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">` +
     `<rect width="1200" height="630" fill="#0f172a"/>` +
-    `<text x="80" y="120" font-family="sans-serif" font-size="32" fill="#38bdf8">Deskhand</text>` +
+    `<text x="80" y="120" font-family="sans-serif" font-size="32" fill="#38bdf8">Skovern</text>` +
     `<text x="80" y="330" font-family="sans-serif" font-size="64" font-weight="bold" fill="#f8fafc">${title}</text>` +
     `</svg>`
   );
@@ -145,17 +145,17 @@ export function renderVisibilityPage(v: PublishedVisibility, origin: string, non
   return (
     `<!doctype html><html lang="en"><head>` +
     `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">` +
-    `<title>${business} · AI Visibility · Deskhand</title>` +
+    `<title>${business} · AI Visibility · Skovern</title>` +
     `<meta name="description" content="How well AI knows ${business}: ${v.score} out of 100.">` +
     `<meta property="og:type" content="website">` +
     `<meta property="og:title" content="${business} — AI Visibility ${v.score}/100">` +
-    `<meta property="og:description" content="${label}. See what AI says about your business — with Deskhand.">` +
+    `<meta property="og:description" content="${label}. See what AI says about your business — with Skovern.">` +
     `<meta property="og:image" content="${escapeHtml(ogImage)}">` +
     `<meta name="twitter:card" content="summary_large_image">` +
     `<style nonce="${nonce}">${style}</style>` +
     `</head><body>` +
     `<main class="card">` +
-    `<div class="brand"><span class="petal">&#10047;</span> Deskhand &middot; AI Visibility</div>` +
+    `<div class="brand"><span class="petal">&#10047;</span> Skovern &middot; AI Visibility</div>` +
     `<h1 class="serif">${business}</h1>` +
     `<p class="lede">Here&rsquo;s how well AI knows this business right now.</p>` +
     `<div class="score">` +
@@ -172,7 +172,7 @@ export function renderVisibilityPage(v: PublishedVisibility, origin: string, non
     chips +
     `<div class="cta"><p>Curious how AI talks about <em>your</em> shop?</p>` +
     `<a href="${home}">See what AI says about your business</a></div>` +
-    `<p class="foot">Made with Deskhand &mdash; the friendly assistant for small businesses.</p>` +
+    `<p class="foot">Made with Skovern &mdash; the friendly assistant for small businesses.</p>` +
     `</main></body></html>`
   );
 }

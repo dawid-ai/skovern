@@ -7,14 +7,14 @@ import path from "node:path";
 import { _electron as electron, expect, test } from "@playwright/test";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import pg from "pg";
-import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningServer } from "@deskhand/site";
+import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningServer } from "@skovern/site";
 
 // Loop 026 (2a) app-level metric: the NO-OLLAMA persona. Ollama is down, but an EMBEDDED
 // model (Qwen2.5-3B, gguf) shows and is actionable. "Get this one" runs OUR streaming,
 // sha256-gated downloader against a fixture server; "Use this one" runs a skill on the
 // (faked) node-llama-cpp child → the Receipts page shows the Hugging Face download (In ↓)
-// AND a "stayed on your computer" generate. The native runtime is faked (DESKHAND_LLAMA_FAKE)
-// and the download bytes come from a loopback fixture (DESKHAND_MODEL_DOWNLOAD_URL), so
+// AND a "stayed on your computer" generate. The native runtime is faked (SKOVERN_LLAMA_FAKE)
+// and the download bytes come from a loopback fixture (SKOVERN_MODEL_DOWNLOAD_URL), so
 // PASS/FAIL is a pure function of the diff — the real 2 GB native run is hand-validation.
 
 const FAKE_REPLY = "Hello — I'm your private brain, running right here on your computer.";
@@ -151,17 +151,17 @@ test.afterAll(async () => {
 
 test("no-Ollama user downloads and runs an embedded private brain", async () => {
   test.setTimeout(180_000);
-  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
   const app = await electron.launch({
     args: [".", `--user-data-dir=${userDataDir}`],
     env: {
       ...process.env,
-      DESKHAND_API_URL: server.url,
-      DESKHAND_OLLAMA_URL: "http://127.0.0.1:1", // nothing listening → Ollama is DOWN
-      DESKHAND_CATALOG_URL: catalogUrl,
-      DESKHAND_HARDWARE: GPU_HARDWARE,
-      DESKHAND_LLAMA_FAKE: "1", // fake the native child (canned reply)
-      DESKHAND_MODEL_DOWNLOAD_URL: downloadUrl, // stream the model bytes from the fixture
+      SKOVERN_API_URL: server.url,
+      SKOVERN_OLLAMA_URL: "http://127.0.0.1:1", // nothing listening → Ollama is DOWN
+      SKOVERN_CATALOG_URL: catalogUrl,
+      SKOVERN_HARDWARE: GPU_HARDWARE,
+      SKOVERN_LLAMA_FAKE: "1", // fake the native child (canned reply)
+      SKOVERN_MODEL_DOWNLOAD_URL: downloadUrl, // stream the model bytes from the fixture
     },
   });
 

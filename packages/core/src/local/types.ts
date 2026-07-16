@@ -115,7 +115,7 @@ export interface CatalogModel {
   /** On-disk footprint in bytes. */
   sizeBytes: number;
   quant: string;
-  /** Who made it (NOT Deskhand). */
+  /** Who made it (NOT Skovern). */
   creator: string;
   /** Homepage / model card URL (http(s) only). */
   homepage: string;

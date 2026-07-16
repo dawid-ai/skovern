@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { _electron as electron, expect, test } from "@playwright/test";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import pg from "pg";
-import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningServer } from "@deskhand/site";
+import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningServer } from "@skovern/site";
 
 // Loop 029 PACKAGING metric. Proves a PACKAGED Windows build (not the dev/source build)
 // actually works on a fresh machine:
@@ -16,7 +16,7 @@ import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningSer
 //        is GPU/model-coupled → hand-validation, not this metric.
 //   P2 — systeminformation survives packaging: the real hardware scan returns concrete
 //        specs, not the "unknown" degraded fallback.
-//   P3 — the dev seams are INERT when packaged: hostile DESKHAND_* env vars can't redirect
+//   P3 — the dev seams are INERT when packaged: hostile SKOVERN_* env vars can't redirect
 //        the catalog or fake the hardware verdict. (Security must-pass negative.)
 //   P4 — the packaged renderer carries the STRICT CSP, not the dev CSP.
 //
@@ -25,7 +25,7 @@ import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningSer
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WIN_UNPACKED = path.resolve(__dirname, "../dist/win-unpacked");
-const EXE = path.join(WIN_UNPACKED, "Deskhand.exe");
+const EXE = path.join(WIN_UNPACKED, "Skovern.exe");
 // The forked runtime child, inside the packed app.asar (its native addon resolves from
 // app.asar.unpacked). Same file + same ELECTRON_RUN_AS_NODE fork main uses in production.
 const CHILD_IN_ASAR = "resources/app.asar/out/main/llama-child.js";
@@ -105,19 +105,19 @@ test.describe("packaged Windows build (loop 029)", () => {
 
     test("P2/P3/P4: real hardware scan, seams inert, strict CSP", async () => {
       test.setTimeout(180_000);
-      const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-pkg-"));
+      const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-pkg-"));
       const app = await electron.launch({
         executablePath: EXE,
         args: [`--user-data-dir=${userDataDir}`],
         env: {
           ...process.env,
-          DESKHAND_API_URL: server.url, // the ONE honored seam (hosted-URL injection, not gated)
+          SKOVERN_API_URL: server.url, // the ONE honored seam (hosted-URL injection, not gated)
           // Every local-brain seam set HOSTILE — a packaged app must ignore all of them:
-          DESKHAND_HARDWARE: EVIL_HARDWARE,
-          DESKHAND_CATALOG_URL: EVIL_CATALOG,
-          DESKHAND_MODEL_DOWNLOAD_URL: "https://evildownload.test/model.gguf",
-          DESKHAND_OLLAMA_URL: "https://evilollama.test",
-          DESKHAND_LLAMA_FAKE: "1",
+          SKOVERN_HARDWARE: EVIL_HARDWARE,
+          SKOVERN_CATALOG_URL: EVIL_CATALOG,
+          SKOVERN_MODEL_DOWNLOAD_URL: "https://evildownload.test/model.gguf",
+          SKOVERN_OLLAMA_URL: "https://evilollama.test",
+          SKOVERN_LLAMA_FAKE: "1",
         },
       });
 
@@ -131,7 +131,7 @@ test.describe("packaged Windows build (loop 029)", () => {
         expect(csp).not.toContain("unsafe-inline");
         expect(csp).not.toContain("ws://");
 
-        // sign in (DESKHAND_API_URL points at the test auth server)
+        // sign in (SKOVERN_API_URL points at the test auth server)
         await page.getByLabel("Your email").fill("fresh@shop.test");
         await page.getByRole("button", { name: "Send me a link" }).click();
         await expect.poll(() => mailer.sent.length, { timeout: 30_000 }).toBeGreaterThan(0);
@@ -153,10 +153,10 @@ test.describe("packaged Windows build (loop 029)", () => {
         await expect(specs).toContainText(/processor cores/);
         await expect(specs).not.toContainText("Processor unknown");
 
-        // P3 — the hostile DESKHAND_HARDWARE was IGNORED: its sentinel GPU never appears.
+        // P3 — the hostile SKOVERN_HARDWARE was IGNORED: its sentinel GPU never appears.
         await expect(specs).not.toContainText(EVIL_GPU);
 
-        // P3 — the hostile DESKHAND_CATALOG_URL was IGNORED: no receipt to the evil host is
+        // P3 — the hostile SKOVERN_CATALOG_URL was IGNORED: no receipt to the evil host is
         // ever written (the packaged app fetched its real catalog, or fell back to snapshot).
         const logPath = path.join(userDataDir, "receipts.jsonl");
         const log = existsSync(logPath) ? readFileSync(logPath, "utf8") : "";

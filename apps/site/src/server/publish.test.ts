@@ -47,7 +47,7 @@ it("serves published pages with OG cards and sanitizes hostile bodies", async ()
       DATABASE_URL: container.getConnectionUri(),
       PORT: "0",
       RESEND_API_KEY: "",
-      DESKHAND_ADMIN_TOKEN: ADMIN_PW,
+      SKOVERN_ADMIN_TOKEN: ADMIN_PW,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

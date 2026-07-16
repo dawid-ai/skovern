@@ -1,5 +1,5 @@
-import type { CatalogModel, GgufSource } from "@deskhand/core";
-import type { FetchSink } from "@deskhand/core";
+import type { CatalogModel, GgufSource } from "@skovern/core";
+import type { FetchSink } from "@skovern/core";
 import { receiptedFetch } from "./receipts.js";
 import snapshotJson from "./catalog-snapshot.json";
 
@@ -123,7 +123,7 @@ const SNAPSHOT: CatalogModel[] = validateCatalog(snapshotJson) ?? [];
 export async function loadCatalog(fetchSink: FetchSink, url: string = LIVE_URL): Promise<CatalogResult> {
   // The catalog list is the app's own housekeeping fetch (no business data) → routine,
   // so the panel groups it instead of a row per view-open. You pull the list in → "in".
-  const doFetch = receiptedFetch(fetchSink, "Deskhand: model list", { routine: true, direction: "in" });
+  const doFetch = receiptedFetch(fetchSink, "Skovern: model list", { routine: true, direction: "in" });
   try {
     const res = await doFetch(url);
     if (!res.ok) {

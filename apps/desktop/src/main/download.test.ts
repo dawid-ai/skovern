@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { FetchReceipt, FetchSink, GgufSource } from "@deskhand/core";
+import type { FetchReceipt, FetchSink, GgufSource } from "@skovern/core";
 
 // A controllable userData dir so modelsDir() points at a temp folder.
 const state = { dir: "" };
@@ -115,7 +115,7 @@ function startRangeServer(body: Buffer, opts: { ignoreRange?: boolean } = {}): P
 }
 
 beforeEach(() => {
-  state.dir = mkdtempSync(path.join(tmpdir(), "deskhand-dl-"));
+  state.dir = mkdtempSync(path.join(tmpdir(), "skovern-dl-"));
 });
 afterEach(async () => {
   await new Promise<void>((resolve) => (server ? server.close(() => resolve()) : resolve()));

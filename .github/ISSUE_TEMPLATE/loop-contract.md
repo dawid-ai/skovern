@@ -12,7 +12,7 @@ labels: loop
 ## Metric
 
 <!-- A command that exits 0 when the objective is met and fails when it isn't.
-     e.g. `pnpm --filter @deskhand/core test -- router.spec` -->
+     e.g. `pnpm --filter @skovern/core test -- router.spec` -->
 
 ```bash
 

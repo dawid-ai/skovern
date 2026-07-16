@@ -15,7 +15,7 @@ const DEV_CSP =
 
 function injectCsp(policy: string, apply: "build" | "serve"): Plugin {
   return {
-    name: `deskhand-csp-${apply}`,
+    name: `skovern-csp-${apply}`,
     apply,
     transformIndexHtml(html) {
       if (!html.includes("<!-- CSP -->")) {
@@ -31,11 +31,11 @@ function injectCsp(policy: string, apply: "build" | "serve"): Plugin {
 
 export default defineConfig({
   main: {
-    // @deskhand/core + plugin-sdk are workspace TS source — bundle, don't externalize.
+    // @skovern/core + plugin-sdk are workspace TS source — bundle, don't externalize.
     // node-llama-cpp is an OPTIONAL native dep (not in `dependencies`, so not auto-
     // externalized) — force it external so the llama-child never bundles its native
     // internals (which import per-platform binary packages that aren't all installed).
-    plugins: [externalizeDepsPlugin({ exclude: ["@deskhand/core", "@deskhand/plugin-sdk"], include: ["node-llama-cpp"] })],
+    plugins: [externalizeDepsPlugin({ exclude: ["@skovern/core", "@skovern/plugin-sdk"], include: ["node-llama-cpp"] })],
     build: {
       rollupOptions: {
         // Second entry: the sandboxed child. Emitted as a fully-bundled .mjs (no bare

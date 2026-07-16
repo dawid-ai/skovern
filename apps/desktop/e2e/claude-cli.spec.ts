@@ -4,13 +4,13 @@ import path from "node:path";
 import { _electron as electron, expect, test } from "@playwright/test";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import pg from "pg";
-import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningServer } from "@deskhand/site";
+import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningServer } from "@skovern/site";
 
 // Loop 014 metric (app-level, THROUGH THE REAL provider path): sign in → Settings →
 // pick "Claude Code (my subscription)" (NO key field) → Save → Test my brain answers
 // via a stub `claude` → then run the real AI Visibility skill ON the subscription brain
 // and see a score. The stub is a node script the provider spawns shell-free via the
-// dev-only DESKHAND_CLAUDE_BIN/ARGS seam — so CI needs no real subscription.
+// dev-only SKOVERN_CLAUDE_BIN/ARGS seam — so CI needs no real subscription.
 
 // One canned answer for every `claude -p` call: names the business (→ score) and
 // carries a competitor JSON block. Doubles as the "Test my brain" reply. Passed to
@@ -52,15 +52,15 @@ test.afterAll(async () => {
 
 test("user picks the Claude Code subscription brain (no key) and runs a skill on it", async () => {
   test.setTimeout(180_000);
-  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
   const app = await electron.launch({
     args: [".", `--user-data-dir=${userDataDir}`],
     env: {
       ...process.env,
-      DESKHAND_API_URL: server.url,
+      SKOVERN_API_URL: server.url,
       // spawn `node <stub> -p` in place of the real `claude` (dev/test seam)
-      DESKHAND_CLAUDE_BIN: process.execPath,
-      DESKHAND_CLAUDE_ARGS: JSON.stringify([stubPath]),
+      SKOVERN_CLAUDE_BIN: process.execPath,
+      SKOVERN_CLAUDE_ARGS: JSON.stringify([stubPath]),
       STUB_REPLY: REPLY,
     },
   });

@@ -34,7 +34,7 @@ export class TelegramNotifier implements Notifier {
   ) {}
 
   async notify(msg: DmNotification): Promise<void> {
-    const text = `New Deskhand DM from ${msg.email}:\n\n${msg.body}`;
+    const text = `New Skovern DM from ${msg.email}:\n\n${msg.body}`;
     const res = await fetch(`https://api.telegram.org/bot${this.botToken}/sendMessage`, {
       method: "POST",
       headers: { "content-type": "application/json" },

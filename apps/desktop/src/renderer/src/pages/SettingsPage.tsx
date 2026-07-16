@@ -55,22 +55,22 @@ export function SettingsPage({ onBrainChanged }: { onBrainChanged?: () => void }
 
   // Refetch our own status AND tell the shell so the sidebar readout stays in step.
   const refreshStatus = () =>
-    void window.deskhand.brain.status().then((s) => {
+    void window.skovern.brain.status().then((s) => {
       setStatus(s);
       onBrainChanged?.();
     });
 
   useEffect(() => {
-    void window.deskhand.brain.status().then((s) => {
+    void window.skovern.brain.status().then((s) => {
       setStatus(s);
       if (s.provider) setProvider(s.provider);
     });
-    void window.deskhand.settings.get().then(setSettings);
-    void window.deskhand.settings.ollamaStatus().then(setOllama);
+    void window.skovern.settings.get().then(setSettings);
+    void window.skovern.settings.ollamaStatus().then(setOllama);
   }, []);
 
   async function changeOllamaLaunch(v: OllamaLaunch) {
-    setSettings(await window.deskhand.settings.setOllamaLaunch(v));
+    setSettings(await window.skovern.settings.setOllamaLaunch(v));
   }
 
   // "Use my built-in brain" (loop 033 Issue 3): record the choice, but if there's no built-in
@@ -97,7 +97,7 @@ export function SettingsPage({ onBrainChanged }: { onBrainChanged?: () => void }
   async function save() {
     setBusy(true);
     setNotice("");
-    const res = await window.deskhand.brain.save({ provider, key, model });
+    const res = await window.skovern.brain.save({ provider, key, model });
     setBusy(false);
     setNotice(res.message);
     if (res.ok) {
@@ -112,7 +112,7 @@ export function SettingsPage({ onBrainChanged }: { onBrainChanged?: () => void }
     setNotice("");
     setReply(null);
     setReceipt(null);
-    const res = await window.deskhand.brain.test();
+    const res = await window.skovern.brain.test();
     setBusy(false);
     setTesting(false);
     setNotice(res.message);
@@ -249,7 +249,7 @@ export function SettingsPage({ onBrainChanged }: { onBrainChanged?: () => void }
         <div className="form ollama-settings">
           <h2>Ollama (optional helper)</h2>
           <p className="hint">
-            Ollama is a free helper that can run bigger brains on your computer. Deskhand doesn&apos;t
+            Ollama is a free helper that can run bigger brains on your computer. Skovern doesn&apos;t
             need it — your built-in brain works on its own.{" "}
             {ollama.installed
               ? ollama.running
@@ -261,7 +261,7 @@ export function SettingsPage({ onBrainChanged }: { onBrainChanged?: () => void }
             // The consent OFFER (default state): ask before ever starting Ollama for the user.
             <div className="ollama-consent" role="group" aria-label="Use Ollama?">
               <p>
-                We found Ollama on your computer. Want Deskhand to start it automatically when you
+                We found Ollama on your computer. Want Skovern to start it automatically when you
                 use an Ollama brain? You can change this anytime.
               </p>
               <div className="row">

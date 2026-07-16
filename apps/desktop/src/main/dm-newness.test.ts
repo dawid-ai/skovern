@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Thread } from "@deskhand/core";
+import type { Thread } from "@skovern/core";
 import { initialNewness, observeThread } from "./dm-newness.js";
 
 // Loop 023: a founder reply is a distinct Receipts entry only when it's genuinely NEW.

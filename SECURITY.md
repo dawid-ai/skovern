@@ -1,6 +1,6 @@
 # Security policy
 
-Deskhand handles small businesses' email, files, and customer data. If you
+Skovern handles small businesses' email, files, and customer data. If you
 find a vulnerability, please report it privately — do not open a public issue.
 
 **Contact:** security reports via GitHub private vulnerability reporting on

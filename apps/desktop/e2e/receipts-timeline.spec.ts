@@ -4,10 +4,10 @@ import path from "node:path";
 import { _electron as electron, expect, test, type Page } from "@playwright/test";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import pg from "pg";
-import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningServer } from "@deskhand/site";
+import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningServer } from "@skovern/site";
 
 // Loop 027 metric (app-level, real Electron UI + real main + real log): seed the egress
-// log with receipts at KNOWN past dates, pin "today" via DESKHAND_NOW, then drive the
+// log with receipts at KNOWN past dates, pin "today" via SKOVERN_NOW, then drive the
 // Receipts page — the activity calendar shows history (busier day darker), the date
 // range narrows the table, pagination navigates, and "Export selected → CSV" writes a
 // spreadsheet of the picked rows. Sign-in/background polls land on the REAL current day
@@ -90,7 +90,7 @@ async function signIn(page: Page): Promise<void> {
 
 test("the Receipts timeline: calendar, date filter, pagination, and CSV export", async () => {
   test.setTimeout(180_000);
-  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-timeline-"));
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-timeline-"));
   const exportPath = path.join(userDataDir, "export.csv");
   // Seed the log BEFORE launch so the page reads it on open. Two dated ARCHIVE files +
   // the live file: the oldest archive is beyond the recent (last-2-files) window, so its
@@ -123,9 +123,9 @@ test("the Receipts timeline: calendar, date filter, pagination, and CSV export",
     args: [".", `--user-data-dir=${userDataDir}`],
     env: {
       ...process.env,
-      DESKHAND_API_URL: server.url,
-      DESKHAND_NOW: NOW,
-      DESKHAND_EXPORT_PATH: exportPath,
+      SKOVERN_API_URL: server.url,
+      SKOVERN_NOW: NOW,
+      SKOVERN_EXPORT_PATH: exportPath,
     },
   });
 

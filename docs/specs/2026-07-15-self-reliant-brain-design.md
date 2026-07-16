@@ -5,7 +5,7 @@
 
 ## Purpose
 
-Deskhand must work for a non-technical florist with **nothing installed** and no idea what
+Skovern must work for a non-technical florist with **nothing installed** and no idea what
 Ollama is. Today the local brain silently depends on Ollama being installed AND running; when
 it isn't, features just fail. This loop makes the app **self-reliant**: the built-in embedded
 runtime (already shipped, loops 026/028/029) becomes the guaranteed floor, external tools
@@ -98,10 +98,10 @@ The renderer talks ONLY to main via IPC; all detection/spawn/download happens in
 ## Testing plan (metric)
 
 All environment inputs fixtured through `!app.isPackaged` seams (determinism gate). New seams:
-- `DESKHAND_OLLAMA_INSTALLED` — force "Ollama binary detected" without a real install.
-- `DESKHAND_OLLAMA_SPAWN_FAKE` — a fake `ollama serve` spawn (records the launch, flips a fake
+- `SKOVERN_OLLAMA_INSTALLED` — force "Ollama binary detected" without a real install.
+- `SKOVERN_OLLAMA_SPAWN_FAKE` — a fake `ollama serve` spawn (records the launch, flips a fake
   "running" state) so the consent→launch→use path is CI-drivable without real Ollama.
-- Reuse `DESKHAND_HARDWARE`, `DESKHAND_CATALOG_URL`, `DESKHAND_MODEL_DOWNLOAD_URL`, `DESKHAND_LLAMA_FAKE`.
+- Reuse `SKOVERN_HARDWARE`, `SKOVERN_CATALOG_URL`, `SKOVERN_MODEL_DOWNLOAD_URL`, `SKOVERN_LLAMA_FAKE`.
 
 **App e2e (`e2e/onboarding.spec.ts` + additions):**
 - **O1 first-run** — fresh userData, no brain → onboarding shows → (fixtured hardware) → pick the
@@ -133,7 +133,7 @@ All environment inputs fixtured through `!app.isPackaged` seams (determinism gat
 - **Settings file:** no secret in `settings.json`; the API key stays in the keychain.
 - **Fallback:** never changes the receipt guarantee — a fallback call is still one receipt,
   `local:true`.
-- **Seams:** every new `DESKHAND_*` seam is `!app.isPackaged`-gated (a packaged app can't be
+- **Seams:** every new `SKOVERN_*` seam is `!app.isPackaged`-gated (a packaged app can't be
   redirected), matching every existing local-brain seam.
 
 ## Out of scope

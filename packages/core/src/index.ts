@@ -8,7 +8,7 @@ export interface AppInfo {
 // ponytail: first sliver of the core API — grows into the typed local API
 // that is the UI's ONLY door into models, connectors, and data.
 export function getAppInfo(): AppInfo {
-  return { name: "Deskhand", version: CORE_VERSION };
+  return { name: "Skovern", version: CORE_VERSION };
 }
 
 export { createAccountClient } from "./account/client.js";
