@@ -16,6 +16,10 @@ export interface BrainStatusView {
   /** The optional Ollama helper is installed (may or may not be running) — lets Chat offer
    *  a "Start Ollama" shortcut when the configured Ollama brain is down (loop 033 Issue 1). */
   ollamaInstalled: boolean;
+  /** Is the active LOCAL model resident in memory right now? Drives the sidebar chip: green
+   *  when loaded, gray when configured-but-unloaded (loop 034). Always false for a non-local
+   *  (online) brain — the load/gray distinction is a local-VRAM concept. */
+  modelLoaded: boolean;
 }
 
 /** Short, florist-facing name for a brain provider — for the Settings "currently

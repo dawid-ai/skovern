@@ -42,6 +42,7 @@ export function SettingsPage({ onBrainChanged }: { onBrainChanged?: () => void }
     model: null,
     builtinReady: false,
     ollamaInstalled: false,
+    modelLoaded: false,
   });
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);

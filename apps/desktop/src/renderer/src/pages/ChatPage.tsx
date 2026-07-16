@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ChatMessage, ChatMeta } from "../../../shared/chat.js";
 import type { BrainStatusView } from "../../../shared/brain.js";
+import { atBottom, nextOffset, prevOffset, BOTTOM_EPS } from "./chat-scroll.js";
 
 // "Chat" — talk to your brain, one conversation at a time, replies streaming in
 // token-by-token. Separate chats persist across restarts. The renderer never touches
@@ -24,6 +25,34 @@ export function ChatPage({ brain, onSetup }: { brain: BrainStatusView | null; on
   const activeIdRef = useRef<string | null>(null);
   activeIdRef.current = activeId;
 
+  // --- Scroll: auto-follow the newest content while pinned to the bottom; pause the moment
+  // the user scrolls up; the four jump buttons navigate a long conversation (loop 034). ---
+  const threadRef = useRef<HTMLDivElement>(null);
+  const pinnedRef = useRef(true); // are we following new content? (true until the user scrolls up)
+  const [nav, setNav] = useState({ scrollTop: 0, clientHeight: 0, scrollHeight: 0, offsets: [] as number[] });
+
+  const measure = useCallback((): void => {
+    const el = threadRef.current;
+    if (!el) return;
+    const offsets = Array.from(el.querySelectorAll<HTMLElement>(".bubble.from-brain")).map((b) => b.offsetTop);
+    setNav({ scrollTop: el.scrollTop, clientHeight: el.clientHeight, scrollHeight: el.scrollHeight, offsets });
+  }, []);
+
+  const onScroll = useCallback((): void => {
+    const el = threadRef.current;
+    if (!el) return;
+    pinnedRef.current = atBottom(el.scrollTop, el.clientHeight, el.scrollHeight);
+    measure();
+  }, [measure]);
+
+  // Follow new messages / streamed tokens only while pinned. Runs before paint so the jump
+  // is invisible. Opening a chat sets pinnedRef true (below), so it lands at the bottom.
+  useLayoutEffect(() => {
+    const el = threadRef.current;
+    if (el && pinnedRef.current) el.scrollTop = el.scrollHeight;
+    measure();
+  }, [messages, streaming, prepare, activeId, measure]);
+
   const configured = brain?.configured ?? false;
   const leavesMachine = configured && brain?.provider !== "local";
 
@@ -34,6 +63,7 @@ export function ChatPage({ brain, onSetup }: { brain: BrainStatusView | null; on
   }, []);
 
   const openChat = useCallback(async (id: string): Promise<void> => {
+    pinnedRef.current = true; // opening a chat always lands at the newest message (loop 034)
     setActiveId(id);
     setStreaming(null);
     setError("");
@@ -143,6 +173,25 @@ export function ChatPage({ brain, onSetup }: { brain: BrainStatusView | null; on
 
   const titleOf = (m: ChatMeta): string => (m.title.trim().length > 0 ? m.title : "New chat");
 
+  // Jump buttons. Scrolling up any of these ways stops auto-follow; jumping to the bottom
+  // re-pins it. After moving, remeasure so the buttons' disabled states stay honest.
+  function jumpTo(top: number, pin: boolean): void {
+    const el = threadRef.current;
+    if (!el) return;
+    el.scrollTop = top;
+    pinnedRef.current = pin;
+    measure();
+  }
+  const maxScroll = Math.max(0, nav.scrollHeight - nav.clientHeight);
+  const prevTarget = prevOffset(nav.offsets, nav.scrollTop);
+  // The last reply's top sits above the very bottom, so at the bottom `nextOffset` still
+  // returns it — a dead jump. Clamp to maxScroll and only treat it as a real target if
+  // jumping there actually moves the view; otherwise "next reply" is disabled.
+  const rawNext = nextOffset(nav.offsets, nav.scrollTop);
+  const nextTarget = rawNext !== null && Math.min(rawNext, maxScroll) > nav.scrollTop + BOTTOM_EPS ? Math.min(rawNext, maxScroll) : null;
+  const atTop = nav.scrollTop <= BOTTOM_EPS;
+  const atEnd = atBottom(nav.scrollTop, nav.clientHeight, nav.scrollHeight);
+
   return (
     <section className="page chat-page">
       <aside className="chat-list" aria-label="Your chats">
@@ -236,7 +285,8 @@ export function ChatPage({ brain, onSetup }: { brain: BrainStatusView | null; on
           <p className="hint">Start a new chat to begin.</p>
         ) : (
           <>
-            <div className="thread chat-thread">
+            <div className="chat-thread-wrap">
+            <div className="thread chat-thread" ref={threadRef} onScroll={onScroll}>
               {messages.length === 0 && streaming === null ? (
                 <p className="hint">Say something to get started.</p>
               ) : (
@@ -257,6 +307,24 @@ export function ChatPage({ brain, onSetup }: { brain: BrainStatusView | null; on
                   </p>
                 </div>
               )}
+            </div>
+
+            {/* Jump nav for long conversations. Each button disables when there's nowhere to
+                go that way (empty thread / already at an end), so it never lies. */}
+            <div className="chat-jump" role="group" aria-label="Jump around this chat">
+              <button className="chat-jump-btn" aria-label="Jump to top" title="Jump to top" disabled={atTop} onClick={() => jumpTo(0, false)}>
+                ⤒
+              </button>
+              <button className="chat-jump-btn" aria-label="Previous reply" title="Previous reply" disabled={prevTarget === null} onClick={() => prevTarget !== null && jumpTo(prevTarget, false)}>
+                ↑
+              </button>
+              <button className="chat-jump-btn" aria-label="Next reply" title="Next reply" disabled={nextTarget === null} onClick={() => nextTarget !== null && jumpTo(nextTarget, false)}>
+                ↓
+              </button>
+              <button className="chat-jump-btn" aria-label="Jump to newest" title="Jump to newest" disabled={atEnd} onClick={() => jumpTo(threadRef.current?.scrollHeight ?? 0, true)}>
+                ⤓
+              </button>
+            </div>
             </div>
 
             <div className="form chat-composer">

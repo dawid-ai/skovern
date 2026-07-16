@@ -17,6 +17,11 @@ import { downloadModel, modelDownloaded, modelPath } from "./download.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_GEN_TIMEOUT_MS = 180_000; // a small model on CPU can be slow; generous
 const READY_TIMEOUT_MS = 30_000;
+// Free the model's memory/VRAM after this long with NO use. The correct, activity-based
+// replacement for the old "wipe on hide-to-tray" (which killed a brain mid-job). The timer
+// only ever runs while the child is warm AND idle (no request in flight), so a running
+// generation is never interrupted; any use resets it.
+const DEFAULT_IDLE_MS = 5 * 60_000;
 
 const NO_MODEL = "That's not a model this computer can run on its own yet.";
 const NOT_DOWNLOADED = "Download this model first, then use it.";
@@ -63,7 +68,14 @@ export interface LlamaEngineOptions {
   /** Injected download fetch (tests point it at a fixture server). */
   fetchImpl?: typeof fetch;
   genTimeoutMs?: number;
+  /** Free the warm child after this long idle (no request in flight). Default 5 min;
+   *  tests inject a tiny value. `0` disables idle-unload (stays warm until dispose). */
+  idleMs?: number;
 }
+
+/** The embedded engine plus lifecycle extras main owns: `dispose` (quit) and `isWarm`
+ *  (the load-state chip — is a model actually resident right now). */
+export type LlamaEngine = LocalEngine & { dispose(): void; isWarm(): boolean };
 
 // Re-fork the Electron binary as plain Node (ELECTRON_RUN_AS_NODE), same mechanism as
 // the plugin host. The child (llama-child.js, a separate build output) dynamically imports
@@ -76,12 +88,15 @@ function forkChild(): ChildLike {
   return child as unknown as ChildLike;
 }
 
-export function llamaEngine(opts: LlamaEngineOptions): LocalEngine & { dispose(): void } {
+export function llamaEngine(opts: LlamaEngineOptions): LlamaEngine {
   const spawn = opts.spawn ?? forkChild;
   const genTimeoutMs = opts.genTimeoutMs ?? DEFAULT_GEN_TIMEOUT_MS;
+  const idleMs = opts.idleMs ?? DEFAULT_IDLE_MS;
 
   let child: ChildLike | null = null;
   let readyPromise: Promise<void> | null = null;
+  let ready = false; // the native runtime reported loaded → the model is resident (chip goes green)
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
   let nextId = 1;
   const pending = new Map<number, { resolve: (r: LocalGenerateResult) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>; onChunk?: (text: string) => void }>();
 
@@ -89,11 +104,45 @@ export function llamaEngine(opts: LlamaEngineOptions): LocalEngine & { dispose()
     return opts.models().find((m) => m.id === modelId)?.gguf;
   }
 
+  function cancelIdle(): void {
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
+    }
+  }
+
+  // Arm the idle timer ONLY when the child is warm and nothing is in flight, so a running
+  // generation is structurally safe (pending is non-empty during one). Any new request
+  // calls cancelIdle() first, resetting the clock.
+  function armIdle(): void {
+    cancelIdle();
+    if (idleMs > 0 && child && pending.size === 0) {
+      idleTimer = setTimeout(idleUnload, idleMs);
+    }
+  }
+
+  // 5 min idle → free the child (and its VRAM). Nothing is pending here, so no caller is
+  // dropped; the next generate respawns via ensureReady.
+  function idleUnload(): void {
+    const c = child;
+    child = null;
+    readyPromise = null;
+    ready = false;
+    idleTimer = null;
+    try {
+      c?.kill();
+    } catch {
+      /* already gone */
+    }
+  }
+
   // Fail every in-flight request and drop the child so the next call respawns. Called on
   // any child death — a crash can never leave a caller hanging or crash the host.
   function teardown(reason: string): void {
+    cancelIdle();
     child = null;
     readyPromise = null;
+    ready = false;
     for (const [, p] of pending) {
       clearTimeout(p.timer);
       p.reject(new Error(reason));
@@ -128,7 +177,9 @@ export function llamaEngine(opts: LlamaEngineOptions): LocalEngine & { dispose()
         if (m.type === "ready") {
           if (settled) return;
           settled = true;
+          ready = true; // model resident → chip green; nothing pending yet → start the idle clock
           clearTimeout(readyTimer);
+          armIdle();
           resolve();
         } else if (m.type === "load-error") {
           teardownReject(new Error(m.message || RUNTIME_DOWN));
@@ -140,6 +191,7 @@ export function llamaEngine(opts: LlamaEngineOptions): LocalEngine & { dispose()
           if (p) {
             pending.delete(m.id);
             clearTimeout(p.timer);
+            armIdle(); // request settled; if that was the last one, start the idle clock
             p.resolve({ text: m.text, tokensIn: m.tokensIn, tokensOut: m.tokensOut });
           }
         } else if (m.type === "error") {
@@ -147,6 +199,7 @@ export function llamaEngine(opts: LlamaEngineOptions): LocalEngine & { dispose()
           if (p) {
             pending.delete(m.id);
             clearTimeout(p.timer);
+            armIdle();
             p.reject(new Error(m.message || CRASHED));
           }
         }
@@ -187,6 +240,7 @@ export function llamaEngine(opts: LlamaEngineOptions): LocalEngine & { dispose()
       const gguf = lookup(modelId);
       if (!gguf) throw new Error(NO_MODEL);
       if (!modelDownloaded(gguf.filename)) throw new Error(NOT_DOWNLOADED);
+      cancelIdle(); // a use resets the idle clock — the model stays warm through this call
       await ensureReady();
       const c = child;
       if (!c) throw new Error(RUNTIME_DOWN);
@@ -194,6 +248,7 @@ export function llamaEngine(opts: LlamaEngineOptions): LocalEngine & { dispose()
       return new Promise<LocalGenerateResult>((resolve, reject) => {
         const timer = setTimeout(() => {
           pending.delete(id);
+          armIdle();
           reject(new Error(TOO_SLOW));
         }, genTimeoutMs);
         pending.set(id, { resolve, reject, timer });
@@ -214,6 +269,7 @@ export function llamaEngine(opts: LlamaEngineOptions): LocalEngine & { dispose()
       // Already stopped before we started → don't spawn a doomed multi-second generation;
       // return an empty partial (nothing was produced).
       if (signal?.aborted) return { text: "" };
+      cancelIdle(); // a use resets the idle clock — the model stays warm through this call
       await ensureReady();
       const c = child;
       if (!c) throw new Error(RUNTIME_DOWN);
@@ -225,6 +281,7 @@ export function llamaEngine(opts: LlamaEngineOptions): LocalEngine & { dispose()
         };
         const timer = setTimeout(() => {
           pending.delete(id);
+          armIdle();
           cleanup();
           reject(new Error(TOO_SLOW));
         }, genTimeoutMs);
@@ -271,9 +328,14 @@ export function llamaEngine(opts: LlamaEngineOptions): LocalEngine & { dispose()
       ).then(() => undefined);
     },
 
+    // Is a model actually resident right now? Drives the sidebar chip (green vs gray).
+    isWarm(): boolean {
+      return ready;
+    },
+
     dispose(): void {
       const c = child;
-      teardown(CRASHED);
+      teardown(CRASHED); // clears the idle timer too
       try {
         c?.kill();
       } catch {

@@ -39,6 +39,41 @@ function isAbort(cause: unknown): boolean {
   return cause instanceof Error && cause.name === "AbortError";
 }
 
+// A short cap for the load-state probe — it's a status ping, not a generation.
+const PS_TIMEOUT_MS = 3_000;
+
+/** Which models Ollama currently has RESIDENT in memory (its `/api/ps`). Best-effort and
+ *  NOT receipted: it's an on-machine status ping (no user content leaves), used to color the
+ *  brain chip green (loaded) vs gray (unloaded). Any failure — Ollama down, timeout, odd
+ *  shape — returns `[]` (treated as "nothing loaded"), never throws. Loopback-only, same as
+ *  the engine. */
+export async function ollamaResidentModels(baseUrl: string, fetchImpl: typeof fetch = fetch): Promise<string[]> {
+  let origin: string;
+  try {
+    origin = assertLoopback(baseUrl).origin;
+  } catch {
+    return [];
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PS_TIMEOUT_MS);
+  try {
+    const res = await fetchImpl(`${origin}/api/ps`, { signal: controller.signal });
+    if (!res.ok) return [];
+    const body = (await res.json()) as { models?: unknown };
+    if (!Array.isArray(body.models)) return [];
+    return body.models
+      .map((raw) => {
+        const m = (raw ?? {}) as Record<string, unknown>;
+        return typeof m["name"] === "string" ? m["name"] : typeof m["model"] === "string" ? (m["model"] as string) : "";
+      })
+      .filter((id) => id.length > 0);
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function assertLoopback(baseUrl: string): URL {
   let url: URL;
   try {

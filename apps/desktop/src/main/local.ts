@@ -1,6 +1,7 @@
 import { app } from "electron";
 import {
   ollamaEngine,
+  ollamaResidentModels,
   verdict,
   type CatalogModel,
   type HardwareProfile,
@@ -13,7 +14,7 @@ import { fileFetchSink } from "./receipts.js";
 import { scanHardware } from "./hardware.js";
 import { createCachedCatalogLoader, snapshotCatalog } from "./catalog.js";
 import { modelDownloaded } from "./download.js";
-import { llamaEngine, type ChildLike, type EmbeddedModel, type FromChild } from "./llama-engine.js";
+import { llamaEngine, type ChildLike, type EmbeddedModel, type FromChild, type LlamaEngine } from "./llama-engine.js";
 import type {
   HardwareView,
   LocalModelsView,
@@ -180,12 +181,35 @@ function downloadFetchSeam(): typeof fetch | undefined {
 }
 
 // One warm embedded engine for the app's life.
-let llama: (LocalEngine & { dispose(): void }) | null = null;
+let llama: LlamaEngine | null = null;
 function makeLlamaEngine(): LocalEngine {
   if (!llama) {
-    llama = llamaEngine({ models: () => latestEmbedded, fetchSink: fileFetchSink(), spawn: fakeLlamaSpawn(), fetchImpl: downloadFetchSeam() });
+    llama = llamaEngine({ models: () => latestEmbedded, fetchSink: fileFetchSink(), spawn: fakeLlamaSpawn(), fetchImpl: downloadFetchSeam(), idleMs: idleUnloadMs() });
   }
   return llama;
+}
+
+// Idle-unload interval seam (unpackaged dev/test only): shrink the 5-min default so the app
+// e2e can watch a model unload — and the chip go gray — without waiting 5 minutes. A bad
+// value is ignored (undefined → the engine's 5-min default). Inert when packaged.
+export function idleUnloadMs(): number | undefined {
+  const override = !app.isPackaged ? process.env["DESKHAND_IDLE_UNLOAD_MS"] : undefined;
+  const n = override ? Number(override) : NaN;
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+/** Is the active local model resident RIGHT NOW (drives the sidebar chip: green loaded,
+ *  gray unloaded)? Embedded → the warm child; Ollama → its `/api/ps`. Best-effort: any
+ *  probe failure reads as "not loaded", never throws. The `DESKHAND_BRAIN_LOADED` dev seam
+ *  (unpackaged only) forces the answer so the e2e is deterministic on any machine. */
+export async function modelLoaded(modelId: string | null): Promise<boolean> {
+  const forced = !app.isPackaged ? process.env["DESKHAND_BRAIN_LOADED"] : undefined;
+  if (forced === "1") return true;
+  if (forced === "0") return false;
+  if (!modelId) return false;
+  if (isEmbeddedModel(modelId)) return llama?.isWarm() ?? false;
+  const resident = await ollamaResidentModels(ollamaBaseUrl());
+  return resident.includes(modelId);
 }
 
 /** Dispatch a chosen model to its backend: a model with a catalog `gguf` block runs on

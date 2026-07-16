@@ -154,6 +154,36 @@ async function signIn(page: Page, email: string): Promise<void> {
 // The chat thread's brain-reply text, most recent last.
 const lastBrainP = (page: Page) => page.locator(".chat-thread .from-brain p").last();
 
+// Live scroll geometry of the thread — the loop-034 auto-follow + jump-nav proofs read this.
+const threadMetrics = (page: Page) =>
+  page.locator(".chat-thread").evaluate((el) => ({ top: el.scrollTop, sh: el.scrollHeight, ch: el.clientHeight }));
+const isAtBottom = (m: { top: number; sh: number; ch: number }): boolean => m.top + m.ch >= m.sh - 8;
+
+// Set up + activate the local EMBEDDED brain via the real UI (download the fixture 3B → active).
+async function setupLocalEmbeddedBrain(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Your brain").selectOption("local");
+  await page.getByRole("button", { name: "Set up the local brain →" }).click();
+  await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible();
+  await page.getByRole("button", { name: "Get this one" }).first().click();
+  await expect(page.getByText("Local: qwen2.5:3b")).toBeVisible({ timeout: 60_000 });
+}
+
+// Seed a long (overflowing) chat on disk so scrolling actually matters.
+function seedLongChat(chatsDir: string, id: string, title: string, turns: number): void {
+  mkdirSync(chatsDir, { recursive: true });
+  writeFileSync(
+    path.join(chatsDir, "index.json"),
+    JSON.stringify([{ id, title, createdAt: "2026-07-14T08:00:00.000Z", updatedAt: "2026-07-14T08:00:00.000Z" }]),
+  );
+  const lines: string[] = [];
+  for (let i = 0; i < turns; i++) {
+    lines.push(JSON.stringify({ role: "user", content: `question ${i} ${"x".repeat(50)}`, ts: `2026-07-14T08:00:${String(i % 60).padStart(2, "0")}.000Z` }));
+    lines.push(JSON.stringify({ role: "assistant", content: `answer ${i} ${"y".repeat(50)}`, ts: `2026-07-14T08:10:${String(i % 60).padStart(2, "0")}.000Z` }));
+  }
+  writeFileSync(path.join(chatsDir, `${id}.jsonl`), lines.join("\n") + "\n");
+}
+
 test("chat streams a local reply, persists it, stops mid-stream, and writes one receipt", async () => {
   test.setTimeout(240_000);
   const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
@@ -418,6 +448,8 @@ test("Issue 1 (C6): with NO brain, Chat offers a 'Set up a brain' CTA into onboa
   try {
     const page = await app.firstWindow();
     await signIn(page, "nobrain@shop.test");
+    // E3 (loop 034): with no brain, the sidebar chip honestly reads "No brain yet".
+    await expect(page.locator(".brain-chip")).toContainText("No brain yet");
     await page.getByRole("button", { name: "Chat" }).click();
     await page.getByRole("button", { name: "New chat" }).click();
     // still no dead Send (the composer is disabled without a brain)…
@@ -486,6 +518,189 @@ test("a brain that FAILS surfaces an error in the chat, never silence", async ()
     await expect(page.getByRole("alert")).toContainText(/didn't answer|nothing|went wrong/i);
     // and the composer is usable again for a retry
     await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible();
+  } finally {
+    await app.close();
+    rmSync(userDataDir, { recursive: true, force: true });
+  }
+});
+
+// ── Loop 034: chat scroll + jump nav (no brain needed — a seeded long chat) ──────────────
+// E10 open-at-bottom · E11 the four jump buttons · E12 disabled at the ends / empty thread.
+test("chat scroll: opens at the bottom, the jump buttons navigate, and they disable at the ends", async () => {
+  test.setTimeout(120_000);
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  seedLongChat(path.join(userDataDir, "chats"), "long-chat", "Long chat", 40);
+  const app = await electron.launch({
+    args: [".", `--user-data-dir=${userDataDir}`],
+    env: { ...process.env, DESKHAND_API_URL: server.url },
+  });
+  try {
+    const page = await app.firstWindow();
+    await signIn(page, "scroll-nav@shop.test");
+    await page.getByRole("button", { name: "Chat" }).click();
+    await page.locator(".chat-list").getByRole("button", { name: "Long chat" }).click();
+
+    // precondition: the thread overflows (there's something to scroll)
+    await expect.poll(async () => { const m = await threadMetrics(page); return m.sh - m.ch; }).toBeGreaterThan(20);
+
+    // E10: an opened chat starts scrolled to the bottom (newest message in view)
+    await expect.poll(async () => isAtBottom(await threadMetrics(page))).toBe(true);
+    // at the bottom, "next reply" / "jump to newest" have nowhere to go → disabled
+    await expect(page.getByRole("button", { name: "Jump to newest" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Next reply" })).toBeDisabled();
+
+    // E11: Jump to top → scrollTop ~0; the top button then disables, prev disables
+    await page.getByRole("button", { name: "Jump to top" }).click();
+    await expect.poll(async () => (await threadMetrics(page)).top).toBeLessThanOrEqual(8);
+    await expect(page.getByRole("button", { name: "Jump to top" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Previous reply" })).toBeDisabled();
+
+    // E11: Next reply steps DOWN onto a reply; Jump to newest returns to the bottom
+    await page.getByRole("button", { name: "Next reply" }).click();
+    await expect.poll(async () => (await threadMetrics(page)).top).toBeGreaterThan(8);
+    await page.getByRole("button", { name: "Jump to newest" }).click();
+    await expect.poll(async () => isAtBottom(await threadMetrics(page))).toBe(true);
+    // Previous reply from the bottom steps back UP
+    const bottomTop = (await threadMetrics(page)).top;
+    await page.getByRole("button", { name: "Previous reply" }).click();
+    await expect.poll(async () => (await threadMetrics(page)).top).toBeLessThan(bottomTop);
+
+    // E12: a fresh EMPTY chat → every jump button is disabled (nothing to navigate)
+    await page.getByRole("button", { name: "New chat" }).click();
+    await expect(page.getByRole("button", { name: "Jump to top" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Jump to newest" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Previous reply" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Next reply" })).toBeDisabled();
+  } finally {
+    await app.close();
+    rmSync(userDataDir, { recursive: true, force: true });
+  }
+});
+
+// ── Loop 034: auto-follow while streaming + the brain chip (green/hide/receipts) ─────────
+// E7 follow · E8 pause when scrolled up · E9 re-pin · E1 chip green when loaded · E5 hide to
+// tray keeps the model loaded (the 66bc60c regression) · E6 the chip poll writes no receipts.
+test("chat auto-follows the stream (pausing when scrolled up) and the chip stays green across a hide-to-tray", async () => {
+  test.setTimeout(240_000);
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const receiptsPath = path.join(userDataDir, "receipts.jsonl");
+  seedLongChat(path.join(userDataDir, "chats"), "long-chat", "Long chat", 40);
+  const app = await electron.launch({
+    args: [".", `--user-data-dir=${userDataDir}`],
+    env: {
+      ...process.env,
+      DESKHAND_API_URL: server.url,
+      DESKHAND_OLLAMA_URL: "http://127.0.0.1:1", // Ollama down → embedded path
+      DESKHAND_CATALOG_URL: catalogUrl,
+      DESKHAND_HARDWARE: GPU_HARDWARE,
+      DESKHAND_LLAMA_FAKE: "1",
+      DESKHAND_LLAMA_FAKE_DELAY_MS: "250", // ~2.5s stream — room to interact
+      DESKHAND_MODEL_DOWNLOAD_URL: downloadUrl,
+      DESKHAND_IDLE_UNLOAD_MS: "120000", // large: the model must NOT idle-unload during this test
+    },
+  });
+  try {
+    const page = await app.firstWindow();
+    await signIn(page, "follow@shop.test");
+    await setupLocalEmbeddedBrain(page);
+    await page.getByRole("button", { name: "Chat" }).click();
+    await page.locator(".chat-list").getByRole("button", { name: "Long chat" }).click();
+    await expect.poll(async () => isAtBottom(await threadMetrics(page))).toBe(true);
+
+    // E7: pinned at the bottom → sending + streaming keeps the newest content in view
+    await page.getByLabel("Message your brain").fill("follow me");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(lastBrainP(page)).toHaveText(FAKE_REPLY, { timeout: 30_000 });
+    await expect.poll(async () => isAtBottom(await threadMetrics(page))).toBe(true);
+
+    // E8: scroll UP → auto-follow pauses; the next send does NOT yank the view to the bottom
+    await page.locator(".chat-thread").evaluate((el) => (el.scrollTop = 0));
+    await page.waitForTimeout(250); // let the scroll handler mark us un-pinned
+    await page.getByLabel("Message your brain").fill("stay put");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(lastBrainP(page)).toHaveText(FAKE_REPLY, { timeout: 30_000 });
+    expect((await threadMetrics(page)).top).toBeLessThan(80); // still near the top, not at the bottom
+
+    // E9: Jump to newest re-pins → the following send tracks the bottom again
+    await page.getByRole("button", { name: "Jump to newest" }).click();
+    await page.getByLabel("Message your brain").fill("pin me again");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(lastBrainP(page)).toHaveText(FAKE_REPLY, { timeout: 30_000 });
+    await expect.poll(async () => isAtBottom(await threadMetrics(page))).toBe(true);
+
+    // E1: the model is resident → the sidebar chip is GREEN (local + loaded), not gray
+    const chip = page.locator(".brain-chip");
+    await expect(chip).toHaveClass(/brain-chip-local/, { timeout: 15_000 });
+    await expect(chip).not.toHaveClass(/brain-chip-asleep/);
+
+    // E6: over a chip-poll cycle, the load-state probe writes NO non-routine receipts.
+    const before = readFileSync(receiptsPath, "utf8").trim().split("\n").filter((l) => l.length);
+    await page.waitForTimeout(6_000); // > POLL_MS (5s): at least one chip poll fires
+    const added = readFileSync(receiptsPath, "utf8").trim().split("\n").filter((l) => l.length).slice(before.length).map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(added.filter((r) => r["routine"] !== true)).toHaveLength(0); // no phantom egress from the poll
+
+    // E5: hide to tray via the REAL close handler — the model must STAY loaded (66bc60c wiped it).
+    // Assumes a tray-capable platform (win32/macOS — the target); where a tray can't be created
+    // the app quits on close by design, so hide-to-tray doesn't apply.
+    const hidden = await app.evaluate(async ({ BrowserWindow }) => {
+      const w = BrowserWindow.getAllWindows()[0];
+      w?.close(); // fires close → preventDefault → hide (tray path)
+      return w ? !w.isDestroyed() : false; // true = hidden (not closed) → the hide path engaged
+    });
+    expect(hidden).toBe(true);
+    await app.evaluate(async ({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.show());
+    await expect(chip).toHaveClass(/brain-chip-local/, { timeout: 15_000 }); // STILL green after hide/show
+    await expect(chip).not.toHaveClass(/brain-chip-asleep/);
+  } finally {
+    await app.close();
+    rmSync(userDataDir, { recursive: true, force: true });
+  }
+});
+
+// ── Loop 034: the chip goes GRAY when the model idle-unloads, GREEN again on the next chat ─
+// E2 gray-when-unloaded · E4 the live green→gray→green flip driven by the real idle-unload.
+test("brain chip goes gray when the model idle-unloads and green again on the next chat", async () => {
+  test.setTimeout(180_000);
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "deskhand-e2e-"));
+  const app = await electron.launch({
+    args: [".", `--user-data-dir=${userDataDir}`],
+    env: {
+      ...process.env,
+      DESKHAND_API_URL: server.url,
+      DESKHAND_OLLAMA_URL: "http://127.0.0.1:1",
+      DESKHAND_CATALOG_URL: catalogUrl,
+      DESKHAND_HARDWARE: GPU_HARDWARE,
+      DESKHAND_LLAMA_FAKE: "1",
+      DESKHAND_LLAMA_FAKE_DELAY_MS: "50",
+      DESKHAND_MODEL_DOWNLOAD_URL: downloadUrl,
+      // Must exceed the 5s chip poll so the GREEN (warm) state is actually observed before the
+      // model frees itself — a sub-poll idle would unload it invisibly between two polls.
+      DESKHAND_IDLE_UNLOAD_MS: "8000",
+    },
+  });
+  try {
+    const page = await app.firstWindow();
+    await signIn(page, "chip-idle@shop.test");
+    await setupLocalEmbeddedBrain(page);
+    const chip = page.locator(".brain-chip");
+
+    // load the model with one message → chip GREEN
+    await page.getByRole("button", { name: "Chat" }).click();
+    await page.getByRole("button", { name: "New chat" }).click();
+    await page.getByLabel("Message your brain").fill("wake up");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(lastBrainP(page)).toHaveText(FAKE_REPLY, { timeout: 30_000 });
+    await expect(chip).toHaveClass(/brain-chip-local/, { timeout: 15_000 });
+
+    // E2/E4: after the 8s idle the model unloads; the next chip poll (≤5s) turns it GRAY (asleep)
+    await expect(chip).toHaveClass(/brain-chip-asleep/, { timeout: 25_000 });
+
+    // green again on the next chat (the model respawns) — no dead end
+    await page.getByLabel("Message your brain").fill("wake up again");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(lastBrainP(page)).toHaveText(FAKE_REPLY, { timeout: 30_000 });
+    await expect(chip).toHaveClass(/brain-chip-local/, { timeout: 15_000 });
+    await expect(chip).not.toHaveClass(/brain-chip-asleep/);
   } finally {
     await app.close();
     rmSync(userDataDir, { recursive: true, force: true });
