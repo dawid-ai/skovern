@@ -24,7 +24,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await pool.query("TRUNCATE accounts, magic_tokens, sessions RESTART IDENTITY CASCADE");
-  await pool.query("ALTER SEQUENCE deskhand_og_seq RESTART WITH 1");
+  await pool.query("ALTER SEQUENCE skovern_og_seq RESTART WITH 1");
 });
 
 function makeService(): { service: AuthService; mailer: ConsoleMailer } {

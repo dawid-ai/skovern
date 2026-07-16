@@ -6,7 +6,7 @@ export type Pool = pg.Pool;
 
 // A fixed hash of the same length as a real one, compared against on a token
 // miss so the constant-time path runs whether or not the id existed.
-const DUMMY_SECRET_HASH = sha256("deskhand/no-such-token");
+const DUMMY_SECRET_HASH = sha256("skovern/no-such-token");
 
 type AccountRow = { id: string; og_number: string; email: string };
 
@@ -14,12 +14,12 @@ type AccountRow = { id: string; og_number: string; email: string };
 // for three tables; when the cloud schema grows past a handful, swap this for
 // node-pg-migrate.
 const MIGRATION = `
-CREATE SEQUENCE IF NOT EXISTS deskhand_og_seq START 1;
+CREATE SEQUENCE IF NOT EXISTS skovern_og_seq START 1;
 
 CREATE TABLE IF NOT EXISTS accounts (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   email       text NOT NULL UNIQUE,
-  og_number   bigint NOT NULL UNIQUE DEFAULT nextval('deskhand_og_seq'),
+  og_number   bigint NOT NULL UNIQUE DEFAULT nextval('skovern_og_seq'),
   created_at  timestamptz NOT NULL DEFAULT now()
 );
 

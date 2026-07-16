@@ -4,9 +4,9 @@ services:
   db:
     image: postgres:17-alpine
     environment:
-      POSTGRES_USER: deskhand
-      POSTGRES_PASSWORD: deskhand
-      POSTGRES_DB: deskhand
+      POSTGRES_USER: skovern
+      POSTGRES_PASSWORD: skovern
+      POSTGRES_DB: skovern
     # Host port 5442 (not the crowded 5432) to avoid clashing with other local DBs.
     ports:
       - "5442:5432"

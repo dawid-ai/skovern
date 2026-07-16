@@ -10,7 +10,7 @@ import { pickNotifier } from "../dm/notifier.js";
 import { VisibilityStore } from "../publish/visibility-store.js";
 
 // Defaults match docker-compose.yml so `pnpm dev` works right after `db:up`.
-const DEFAULT_DATABASE_URL = "postgres://deskhand:deskhand@localhost:5442/deskhand";
+const DEFAULT_DATABASE_URL = "postgres://skovern:skovern@localhost:5442/skovern";
 
 function pickMailer(): Mailer {
   const key = process.env["RESEND_API_KEY"];
