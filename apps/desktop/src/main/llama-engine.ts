@@ -242,6 +242,7 @@ export function llamaEngine(opts: LlamaEngineOptions): LlamaEngine {
       if (!modelDownloaded(gguf.filename)) throw new Error(NOT_DOWNLOADED);
       cancelIdle(); // a use resets the idle clock — the model stays warm through this call
       await ensureReady();
+      cancelIdle(); // a COLD spawn armed idle at "ready" (pending was empty) — clear it before we start
       const c = child;
       if (!c) throw new Error(RUNTIME_DOWN);
       const id = nextId++;
@@ -271,6 +272,7 @@ export function llamaEngine(opts: LlamaEngineOptions): LlamaEngine {
       if (signal?.aborted) return { text: "" };
       cancelIdle(); // a use resets the idle clock — the model stays warm through this call
       await ensureReady();
+      cancelIdle(); // a COLD spawn armed idle at "ready" (pending was empty) — clear it before we start
       const c = child;
       if (!c) throw new Error(RUNTIME_DOWN);
       const id = nextId++;

@@ -105,6 +105,31 @@ describe("embedded idle-unload", () => {
     expect(fakes[0]!.killed()).toBe(1);
   });
 
+  it("U3 (cold start): the FIRST generation after a spawn is never killed mid-flight", async () => {
+    // No warmup — a cold engine. The `ready` handler arms idle while pending is momentarily
+    // empty; the generate must clear that timer so a slow cold answer isn't reaped. (Regression:
+    // before the post-ensureReady cancelIdle, idle fired at ready-time and killed the child.)
+    const fakes: ReturnType<typeof makeFakeChild>[] = [];
+    const engine = llamaEngine({
+      models: () => MODELS,
+      fetchSink: { append: () => {} },
+      idleMs: IDLE,
+      spawn: () => {
+        const f = makeFakeChild();
+        fakes.push(f);
+        queueMicrotask(f.ready);
+        return f.child;
+      },
+    });
+    const p = engine.generate("m", "long"); // cold, kept in flight
+    await vi.advanceTimersByTimeAsync(0); // ready fires (armed idle at ready-time before the fix)
+    await vi.advanceTimersByTimeAsync(IDLE * 2); // long past idle while the request is pending
+    expect(fakes[0]!.killed()).toBe(0); // NOT reaped mid-generation
+    expect(engine.isWarm()).toBe(true);
+    fakes[0]!.finish(1);
+    await p;
+  });
+
   it("respawns on the next use after an idle-unload", async () => {
     const { engine, fakes } = await warmup();
     await vi.advanceTimersByTimeAsync(IDLE);
