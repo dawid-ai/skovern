@@ -168,6 +168,147 @@ test.afterAll(async () => {
   catalog?.close();
 });
 
+// A strong-GPU machine (24 GB) so bigger models fit — the profile Dawid actually has.
+const GPU_HARDWARE = JSON.stringify({
+  ramBytes: 64 * 1024 ** 3,
+  cpuCores: 16,
+  gpus: [{ model: "Test GPU 24GB", vramBytes: 24 * 1024 ** 3 }],
+  bestVramBytes: 24 * 1024 ** 3,
+  unifiedMemory: false,
+  diskFreeBytes: 500 * 1024 ** 3,
+  notes: [],
+});
+
+// Loop 035 — Ollama installed but not running: a real loading state (E1), a consented "Start
+// Ollama" that reveals the user's OWN pulled models (E3/E4), and pull-any-model-by-name (E5).
+test("Ollama installed-but-down: honest loading, consented Start reveals your pulled models, pull any by name", async () => {
+  test.setTimeout(180_000);
+  let ollamaUp = false; // the test flips this UP to simulate a successful start
+  const pulls: string[] = []; // model names the fixture was asked to pull
+
+  // A controllable Ollama: 503 ("down") until `ollamaUp`, then the user's OWN pulled models.
+  const toggle = createServer((req, res) => {
+    const url = req.url ?? "";
+    if (!ollamaUp) {
+      res.writeHead(503);
+      res.end("{}");
+      return;
+    }
+    if (req.method === "GET" && url === "/api/tags") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          models: [
+            { name: "gemma2:9b", size: 5_400_000_000, details: { quantization_level: "Q4_K_M", parameter_size: "9B" } },
+            { name: "mixtral:8x7b", size: 26_000_000_000, details: { quantization_level: "Q4_K_M", parameter_size: "47B" } },
+          ],
+        }),
+      );
+      return;
+    }
+    if (req.method === "POST" && url === "/api/pull") {
+      let raw = "";
+      req.on("data", (c) => (raw += c));
+      req.on("end", () => {
+        try {
+          const b = JSON.parse(raw) as { model?: string; name?: string };
+          pulls.push(b.model ?? b.name ?? "");
+        } catch {
+          /* ignore */
+        }
+        res.writeHead(200, { "content-type": "application/x-ndjson" });
+        res.write(JSON.stringify({ status: "pulling", completed: 5e7, total: 1e8 }) + "\n");
+        res.end(JSON.stringify({ status: "success" }) + "\n");
+      });
+      return;
+    }
+    res.writeHead(404);
+    res.end("{}");
+  });
+  await new Promise<void>((r) => toggle.listen(0, "127.0.0.1", () => r()));
+  const toggleUrl = `http://127.0.0.1:${(toggle.address() as AddressInfo).port}`;
+
+  // A DELAYED catalog so the LOADING state (E1) is observable before the scan resolves.
+  const slowCat = createServer((_req, res) => {
+    setTimeout(() => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          models: [{ id: "qwen2.5:3b", label: "Qwen2.5 3B", params: 3, sizeBytes: 2e9, quant: "Q4_K_M", creator: "Alibaba (Qwen team)", homepage: "https://huggingface.co/x", license: "Apache 2.0 — free.", licenseUrl: "https://apache.org/x", tradeoff: "good" }],
+        }),
+      );
+    }, 700);
+  });
+  await new Promise<void>((r) => slowCat.listen(0, "127.0.0.1", () => r()));
+  const slowCatUrl = `http://127.0.0.1:${(slowCat.address() as AddressInfo).port}/catalog/models.json`;
+
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
+  const app = await electron.launch({
+    args: [".", `--user-data-dir=${userDataDir}`],
+    env: {
+      ...process.env,
+      SKOVERN_API_URL: server.url,
+      SKOVERN_OLLAMA_INSTALLED: "1", // installed…
+      SKOVERN_OLLAMA_URL: toggleUrl, // …but 503 (down) until we flip it
+      SKOVERN_OLLAMA_SPAWN_FAKE: "serve", // "start" succeeds once the fixture is up
+      SKOVERN_CATALOG_URL: slowCatUrl,
+      SKOVERN_HARDWARE: GPU_HARDWARE,
+    },
+  });
+  try {
+    const page = await app.firstWindow();
+    const before = mailer.sent.length;
+    await page.getByLabel("Your email").fill("gpu@shop.test");
+    await page.getByRole("button", { name: "Send me a link" }).click();
+    await expect.poll(() => mailer.sent.length, { timeout: 30_000 }).toBeGreaterThan(before);
+    await page.getByLabel("Paste your link").fill(mailer.sent[mailer.sent.length - 1]!.url);
+    await page.getByRole("button", { name: "Verify" }).click();
+    await expect(page.getByText(/founding user #/i)).toBeVisible();
+
+    await page.getByRole("button", { name: "Settings" }).click();
+    await page.getByLabel("Your brain").selectOption("local");
+    await page.getByRole("button", { name: "Set up the local brain →" }).click();
+
+    // E1: while the (slow) scan runs, a REAL structured loading state shows — a spinner, not bare text.
+    await expect(page.locator(".local-loading .spinner")).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible({ timeout: 30_000 });
+
+    // E3: Ollama installed but DOWN → an actionable "Start Ollama" prompt, and the user's
+    // models are NOT shown yet (they can't be enumerated while it's down).
+    const startBtn = page.getByRole("button", { name: "Start Ollama to see your models" });
+    await expect(startBtn).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText("mixtral:8x7b")).toHaveCount(0);
+
+    // E4: consent to start → bring Ollama up (simulated) + click → the user's OWN pulled
+    // models (gemma/mixtral, NOT in the catalog) appear as ready; the start prompt is gone.
+    ollamaUp = true;
+    await startBtn.click();
+    const table = page.locator("table.local-table");
+    await expect(table.locator("tr.receipt-row", { hasText: "mixtral:8x7b" })).toBeVisible({ timeout: 30_000 });
+    await expect(table.locator("tr.receipt-row", { hasText: "gemma2:9b" })).toBeVisible();
+    await expect(startBtn).toHaveCount(0);
+
+    // E5: pull ANY Ollama model by name (Advanced). A malformed name is rejected BEFORE any
+    // pull; a valid one pulls and becomes the active brain.
+    await page.locator("details.local-advanced summary").click();
+    const nameInput = page.getByLabel("Ollama model name");
+    await nameInput.fill("bad name!");
+    await page.getByRole("button", { name: "Get it" }).click();
+    await expect(page.getByText(/Use only letters/i)).toBeVisible({ timeout: 10_000 });
+    expect(pulls).not.toContain("bad name!"); // rejected before any /api/pull
+
+    await nameInput.fill("codellama:13b");
+    await page.getByRole("button", { name: "Get it" }).click();
+    await expect(page.getByText("Local: codellama:13b")).toBeVisible({ timeout: 30_000 });
+    expect(pulls).toContain("codellama:13b"); // the pull actually fired
+  } finally {
+    await app.close();
+    toggle.close();
+    slowCat.close();
+    rmSync(userDataDir, { recursive: true, force: true });
+  }
+});
+
 test("user sets up a private on-computer brain, always sees which brain is active, and runs it", async () => {
   test.setTimeout(180_000);
   const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
@@ -179,19 +320,24 @@ test("user sets up a private on-computer brain, always sees which brain is activ
       SKOVERN_OLLAMA_URL: ollamaUrl,
       SKOVERN_CATALOG_URL: catalogUrl,
       SKOVERN_HARDWARE: CPU_HARDWARE,
+      // Ollama NOT installed (deterministic): so the degraded case below shows the honest
+      // "isn't running" line, not the loop-035 "Start Ollama" prompt (which needs it installed).
+      SKOVERN_OLLAMA_INSTALLED: "0",
     },
   });
 
   try {
     const page = await app.firstWindow();
 
-    // sign in
+    // sign in (capture the before-count — another test in this file signs in too, so a bare
+    // ">0" would grab a stale link)
+    const before = mailer.sent.length;
     await page.getByLabel("Your email").fill("local@shop.test");
     await page.getByRole("button", { name: "Send me a link" }).click();
-    await expect.poll(() => mailer.sent.length, { timeout: 30_000 }).toBeGreaterThan(0);
+    await expect.poll(() => mailer.sent.length, { timeout: 30_000 }).toBeGreaterThan(before);
     await page.getByLabel("Paste your link").fill(mailer.sent[mailer.sent.length - 1]!.url);
     await page.getByRole("button", { name: "Verify" }).click();
-    await expect(page.getByText(/founding user #1/i)).toBeVisible();
+    await expect(page.getByText(/founding user #/i)).toBeVisible(); // order-independent (another test may take #1)
 
     // the always-visible active-brain readout starts empty for a fresh user
     await expect(page.getByText("No brain yet")).toBeVisible();

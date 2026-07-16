@@ -29,6 +29,8 @@ import { runPlugin, sandboxCheck } from "./plugin-host.js";
 import { claudeCliProvider } from "./claude-cli.js";
 import { disposeLocal, downloadedEmbeddedModelId, embeddedFilenames, engineForModel, isEmbeddedModel, localModels, localStatus, makeEngine, modelLoaded, pullModel } from "./local.js";
 import { appendMessage, createTokenCoalescer, deleteChat, getChat, listChats, newChat, renameChat, sendChatStatus, sendChatToken } from "./chat-store.js";
+import { resolveChatReply } from "./chat-reply.js";
+import { validateOllamaName } from "./ollama-name.js";
 import { disposeOllama, ensureOllamaRunning, fakeLaunchCount, ollamaInstalled, pickOllamaAction, sweepOrphanedOllama } from "./ollama-launch.js";
 import { getSettings, setOllamaLaunch, type OllamaLaunch } from "./settings-store.js";
 import { sweepOrphanParts } from "./download.js";
@@ -268,6 +270,8 @@ function brainFailureMessage(): string {
 
 // ── Chat send (loop 031) ─────────────────────────────────────────────────────────────
 const CHAT_MAX_INPUT = 32 * 1024; // bound untrusted renderer text before it reaches a brain
+// Shown when a reply streamed then stopped early (the model hit its context limit) — florist copy.
+const CHAT_CUTOFF_NOTE = "That answer got cut off — the brain ran out of room. Try asking for a shorter reply.";
 const TOKEN_FLUSH_MS = 33; // coalesce tokens at ≈30fps so a fast stream can't churn the renderer
 const TOKEN_FLUSH_BYTES = 4096; // …but flush sooner if a burst piles up (flood cap)
 
@@ -318,6 +322,11 @@ async function chatSend(chatId: string, text: string): Promise<ChatSendResult> {
   chatAborts.set(chatId, controller);
 
   let tokenCount = 0;
+  // Accumulate every streamed delta here, independent of what the engine returns. If the
+  // generation ERRORS mid-stream (e.g. the model fills its context window) or ends empty,
+  // the tokens already on the user's screen are a real, partial answer — we save THIS so the
+  // reply is never dropped to a blank turn (Issue 6).
+  let streamed = "";
   const tGen = Date.now(); // generation clock: measure time-to-first-token + total
   let tFirst = 0;
   const coalescer = createTokenCoalescer(
@@ -342,7 +351,7 @@ async function chatSend(chatId: string, text: string): Promise<ChatSendResult> {
   sendStatus(fallbackNote ? "Loading your built-in brain…" : embedded ? "Loading the model…" : "Working on it…");
 
   try {
-    const res = await router.generateStream({ task: "Chat", prompt }, (d) => coalescer.push(d), controller.signal);
+    const res = await router.generateStream({ task: "Chat", prompt }, (d) => { streamed += d; coalescer.push(d); }, controller.signal);
     coalescer.flush(); // any buffered tail before we finalize
     // The telemetry that answers "what actually ran + why slow": the REAL model the router
     // used (res.model — Ollama's id, or the embedded fallback's), time-to-first-token, total
@@ -355,19 +364,28 @@ async function chatSend(chatId: string, text: string): Promise<ChatSendResult> {
       `done: engine=${res.provider}:${res.model}  first-token=${firstMs}ms  total=${genMs}ms  ` +
         `out=${outTok ?? "?"} tokens  ~${tps} tok/s  (${res.text.length} chars, ${tokenCount} render-flushes)`,
     );
-    // The partial (on stop) is a real answer — save it, never discard (contract C3).
-    if (res.text.length > 0) {
-      await appendMessage(chatId, { role: "assistant", content: res.text, ts: new Date().toISOString() });
+    // The partial (on Stop) is a real answer — save it, never discard (contract C3).
+    const d = resolveChatReply({ resText: res.text, streamed, errored: false });
+    if (d.save !== null) {
+      await appendMessage(chatId, { role: "assistant", content: d.save, ts: new Date().toISOString() });
+      return { ok: true, messageId, text: d.save, note: fallbackNote || undefined };
     }
-    // A reply with zero text isn't a crash, but it IS "nothing happened" to the user —
-    // tell them honestly instead of leaving a blank bubble.
-    if (res.text.length === 0) return { ok: false, messageId, message: "Your brain replied with nothing. Check it in Settings and try again." };
-    return { ok: true, messageId, text: res.text, note: fallbackNote || undefined };
+    // Truly nothing came back (no text, no streamed tokens) — not a crash, but "nothing
+    // happened" to the user, so say so honestly instead of leaving a blank bubble.
+    return { ok: false, messageId, message: "Your brain replied with nothing. Check it in Settings and try again." };
   } catch (err) {
     coalescer.flush();
     // The raw brain/network error stays in main (could carry a key/prompt) — warm copy
     // out to the user; the real reason is on the terminal (see withDevErrorLog) in dev.
     devlog("generation failed:", err instanceof Error ? scrubSecrets(err.message) : err);
+    // Issue 6: if the model already streamed text before it failed (it filled its context
+    // window and choked), that text is a real partial answer — KEEP it and say it was cut
+    // off, never drop it to a blank turn. Only a failure with zero streamed text is a bare error.
+    const d = resolveChatReply({ resText: "", streamed, errored: true });
+    if (d.save !== null) {
+      await appendMessage(chatId, { role: "assistant", content: d.save, ts: new Date().toISOString() });
+      return { ok: true, messageId, text: d.save, note: CHAT_CUTOFF_NOTE };
+    }
     // Actionable, provider-aware hint (e.g. "Is Ollama running?") — same as "Test my brain".
     // If the failure is "no usable brain + no built-in to fall back to", also offer setup.
     return { ok: false, messageId, message: brainFailureMessage(), offerSetup: needsSetup };
@@ -772,9 +790,12 @@ app
     // Start a pull; progress streams back on `local:pullProgress` (reuse the 016
     // main→renderer channel). We forward derived, pre-validated fields only.
     registerTrusted(TRUST, "local:pull", async (rawId: unknown): Promise<LocalActionResult> => {
-      const modelId = typeof rawId === "string" ? rawId.trim() : "";
-      // Ollama model ids are short tags — cap so a bad renderer can't send a blob.
-      if (!modelId || modelId.length > 200) return { ok: false, message: "That model name doesn't look right." };
+      // Validate the name (untrusted free text from pull-by-name) to a safe Ollama-name shape
+      // BEFORE any /api/pull — a specific reason, not a bare "doesn't look right". Embedded
+      // catalog ids (qwen2.5:3b) pass this too.
+      const v = validateOllamaName(typeof rawId === "string" ? rawId : "");
+      if (!v.ok) return { ok: false, message: v.reason };
+      const modelId = v.name;
       const send = (view: PullProgressView): void => mainWindow?.webContents.send("local:pullProgress", view);
       try {
         await pullModel(modelId, (p: PullProgress) => {

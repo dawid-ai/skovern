@@ -158,6 +158,7 @@ test("no-Ollama user downloads and runs an embedded private brain", async () => 
       ...process.env,
       SKOVERN_API_URL: server.url,
       SKOVERN_OLLAMA_URL: "http://127.0.0.1:1", // nothing listening → Ollama is DOWN
+      SKOVERN_OLLAMA_INSTALLED: "0", // deterministic: Ollama not installed (Dawid's box has it) → no start-prompt
       SKOVERN_CATALOG_URL: catalogUrl,
       SKOVERN_HARDWARE: GPU_HARDWARE,
       SKOVERN_LLAMA_FAKE: "1", // fake the native child (canned reply)

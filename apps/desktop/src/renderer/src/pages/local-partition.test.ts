@@ -30,4 +30,26 @@ describe("partitionModels — actionable-now split (embedded-first)", () => {
     expect(partitionModels([], false).here).toEqual([]);
     expect(partitionModels([], true).advanced).toEqual([]);
   });
+
+  it("U5: Ollama UP — a user's OWN pulled model (group 'have', not embedded) is actionable in 'here'", () => {
+    const models = [
+      model({ id: "gemma2:9b", group: "have", embedded: false, downloaded: true }), // his own pull
+      model({ id: "qwen2.5:3b", group: "suggested", embedded: true }), // curated embedded pick
+    ];
+    const { here, advanced } = partitionModels(models, true);
+    expect(here.map((m) => m.id)).toEqual(["gemma2:9b", "qwen2.5:3b"]); // both usable now
+    expect(advanced).toEqual([]);
+  });
+
+  it("U6: Ollama DOWN — no non-embedded model is actionable in 'here'; embedded picks stay", () => {
+    const models = [
+      model({ id: "gemma2:9b", group: "have", embedded: false, downloaded: true }),
+      model({ id: "mixtral:8x7b", group: "suggested", embedded: false }),
+      model({ id: "qwen2.5:3b", group: "suggested", embedded: true }),
+    ];
+    const { here, advanced } = partitionModels(models, false);
+    expect(here.map((m) => m.id)).toEqual(["qwen2.5:3b"]); // only the embedded pick is actionable
+    expect(here.every((m) => m.embedded)).toBe(true); // NOTHING non-embedded in the main list
+    expect(advanced.map((m) => m.id)).toEqual(["gemma2:9b", "mixtral:8x7b"]);
+  });
 });
