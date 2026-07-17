@@ -39,6 +39,18 @@ const DEFAULT_PULL_IDLE_MS = 60_000;
 const MAX_BODY_BYTES = 32 * 1024 * 1024; // 32 MiB whole-body JSON (a real model list / reply is KB)
 const MAX_LINE_BYTES = 1 * 1024 * 1024; // 1 MiB per NDJSON line (a real progress/token line is <1 KB)
 
+// A body cap must be a finite positive number, else the `bytes > cap` guard silently no-ops
+// (NaN/Infinity → never trips; 0/negative → rejects everything). Clamp to the default so a
+// bad injected value can't disable — or invert — the protection. (SECURE hardening note 1.)
+function clampCap(v: number | undefined, dflt: number): number {
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : dflt;
+}
+
+// A body-read failure we've ALREADY turned into plain-language copy (cap exceeded, empty body).
+// `getJson` re-throws these as-is; any OTHER read rejection (a raw undici stream error like
+// "terminated") gets the generic florist message instead of leaking a technical string to the UI.
+class BodyReadError extends Error {}
+
 const TOO_SLOW = "The local brain took too long to answer and was stopped.";
 const PULL_STALLED = "The download stalled — check your connection and try again.";
 
@@ -75,7 +87,7 @@ export async function ollamaResidentModels(
     const res = await fetchImpl(`${origin}/api/ps`, { signal: controller.signal });
     if (!res.ok) return [];
     // Capped read: an over-cap body throws here and degrades to [] (below), never buffers whole.
-    const body = JSON.parse(await readCappedText(res.body, maxBytes, "checking loaded models")) as {
+    const body = JSON.parse(await readCappedText(res.body, clampCap(maxBytes, MAX_BODY_BYTES), "checking loaded models")) as {
       models?: unknown;
     };
     if (!Array.isArray(body.models)) return [];
@@ -129,8 +141,8 @@ export function ollamaEngine(opts: OllamaOptions): LocalEngine {
   const doFetch = opts.fetchImpl ?? fetch;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const pullIdleMs = opts.pullIdleMs ?? DEFAULT_PULL_IDLE_MS;
-  const maxBodyBytes = opts.maxBodyBytes ?? MAX_BODY_BYTES;
-  const maxLineBytes = opts.maxLineBytes ?? MAX_LINE_BYTES;
+  const maxBodyBytes = clampCap(opts.maxBodyBytes, MAX_BODY_BYTES);
+  const maxLineBytes = clampCap(opts.maxLineBytes, MAX_LINE_BYTES);
   const origin = base.origin;
 
   // Fetch AND read the whole JSON body under ONE deadline. The AbortController
@@ -154,10 +166,12 @@ export function ollamaEngine(opts: OllamaOptions): LocalEngine {
       try {
         text = await readCappedText(res.body, maxBodyBytes, what);
       } catch (cause) {
-        // An abort during the body read → report the timeout. An over-cap read is a
-        // specific Error (not an abort) → surface its own reason, not a generic one.
+        // An abort during the body read → report the timeout. Our own already-friendly
+        // BodyReadError (cap exceeded / empty) surfaces as-is; anything else (a raw undici
+        // stream error) gets the generic message, not a technical string leaked to the UI.
         if (isAbort(cause) || controller.signal.aborted) throw new Error(TOO_SLOW);
-        throw cause instanceof Error ? cause : new Error(`Ollama sent back something we couldn't read while ${what}.`);
+        if (cause instanceof BodyReadError) throw cause;
+        throw new Error(`Ollama sent back something we couldn't read while ${what}.`);
       }
       try {
         return JSON.parse(text) as unknown;
@@ -363,7 +377,7 @@ async function readCappedText(
   cap: number,
   what: string,
 ): Promise<string> {
-  if (!body) throw new Error(`Ollama sent an empty response while ${what}.`);
+  if (!body) throw new BodyReadError(`Ollama sent an empty response while ${what}.`);
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let out = "";
@@ -374,7 +388,7 @@ async function readCappedText(
       if (value) {
         bytes += value.byteLength;
         if (bytes > cap) {
-          throw new Error(`Ollama sent back too much data while ${what} — stopped to protect this computer.`);
+          throw new BodyReadError(`Ollama sent back too much data while ${what} — stopped to protect this computer.`);
         }
         out += decoder.decode(value, { stream: true });
       }

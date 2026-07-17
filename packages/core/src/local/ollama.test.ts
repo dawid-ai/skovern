@@ -356,6 +356,21 @@ describe("ollamaEngine — loopback body byte caps (OOM guard)", () => {
     await expect(engine.generateStream!("m", "hi", () => {})).rejects.toThrow(/too large/i);
   });
 
+  it("a non-finite / zero injected cap is clamped to the default (guard can't be silently disabled)", async () => {
+    // cap 0 would reject EVERY body if used literally; NaN would DISABLE the guard (bytes > NaN
+    // is always false). Both must clamp to the safe default: a normal small body still parses.
+    const base = await startFixture((_m, url) =>
+      url === "/api/tags" ? { status: 200, body: JSON.stringify({ models: [{ name: "qwen2.5:3b" }] }) } : { status: 404, body: "{}" },
+    );
+    expect(await ollamaEngine({ baseUrl: base, maxBodyBytes: 0 }).listModels()).toHaveLength(1);
+    expect(await ollamaEngine({ baseUrl: base, maxBodyBytes: Number.NaN }).listModels()).toHaveLength(1);
+    // Same for the /api/ps cap arg.
+    const psBase = await startFixture((_m, url) =>
+      url === "/api/ps" ? { status: 200, body: JSON.stringify({ models: [{ name: "gemma2:27b" }] }) } : { status: 404, body: "{}" },
+    );
+    expect(await ollamaResidentModels(psBase, undefined, 0)).toEqual(["gemma2:27b"]);
+  });
+
   it("§4 consumePull: a single newline-less line past maxLineBytes rejects (distinct from stalled)", async () => {
     const base = await startRawServer((req, res) => {
       if (req.url === "/api/pull") {
