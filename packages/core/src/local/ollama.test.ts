@@ -309,17 +309,24 @@ describe("ollamaEngine — loopback body byte caps (OOM guard)", () => {
     expect(models.map((m) => m.id)).toEqual(["qwen2.5:3b"]);
   });
 
-  it("§2 /api/ps: an over-cap body degrades to [] (the cap lets it stop)", async () => {
+  it("§2 /api/ps: an over-cap body degrades to [] — and the cap is the SOLE cause", async () => {
+    // A VALID-JSON body (real model names) that is well over the 64-byte cap. Using valid
+    // JSON is the point: if [] came from an unparseable body instead of the cap, removing the
+    // cap wouldn't change the result. Because this body parses fine, [] can ONLY be the cap.
+    const body = JSON.stringify({ models: [{ name: "gemma2:27b" }, { name: "pad-" + "x".repeat(200) }] });
     const base = await startRawServer((req, res) => {
       if (req.url === "/api/ps") {
         res.writeHead(200, { "content-type": "application/json" });
-        res.end("x".repeat(500));
+        res.end(body); // ~230 bytes ≫ the 64-byte cap
         return;
       }
       res.writeHead(404);
       res.end("{}");
     });
+    // Same server, same valid body: a tiny cap → [] (cap fired mid-read); a large cap → the
+    // real names parse. So [] is attributable to the cap alone, not to a parse failure.
     expect(await ollamaResidentModels(base, undefined, 64)).toEqual([]);
+    expect(await ollamaResidentModels(base, undefined, 1_000_000)).toEqual(["gemma2:27b", "pad-" + "x".repeat(200)]);
   });
 
   it("§2b /api/ps: an under-cap body returns the real resident model names", async () => {
