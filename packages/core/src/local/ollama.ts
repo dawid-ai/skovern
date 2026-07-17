@@ -22,11 +22,34 @@ export interface OllamaOptions {
   /** Idle cap for a streamed pull: if NO progress chunk arrives for this long, the
    *  download is treated as stalled. A steadily-progressing pull never trips it. */
   pullIdleMs?: number;
+  /** Byte ceiling for a whole-body JSON read (`/api/tags`, `/api/generate` non-stream).
+   *  A body past this is rejected so a hostile loopback squatter can't OOM main. */
+  maxBodyBytes?: number;
+  /** Byte ceiling for a SINGLE newline-less NDJSON line in a stream (`consumePull` /
+   *  `consumeGenerate`). A legitimate progress/token line is tiny; a flood is rejected. */
+  maxLineBytes?: number;
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 // A healthy pull emits progress frequently; a minute of total silence means stalled.
 const DEFAULT_PULL_IDLE_MS = 60_000;
+// Size ceilings. Both sit far above any legitimate Ollama body/line — they exist only to
+// bound an unbounded/newline-less flood from a process squatting on 127.0.0.1 before Ollama
+// (needs local code execution first, so defense-in-depth, not a live-disclosure fix).
+const MAX_BODY_BYTES = 32 * 1024 * 1024; // 32 MiB whole-body JSON (a real model list / reply is KB)
+const MAX_LINE_BYTES = 1 * 1024 * 1024; // 1 MiB per NDJSON line (a real progress/token line is <1 KB)
+
+// A body cap must be a finite positive number, else the `bytes > cap` guard silently no-ops
+// (NaN/Infinity → never trips; 0/negative → rejects everything). Clamp to the default so a
+// bad injected value can't disable — or invert — the protection. (SECURE hardening note 1.)
+function clampCap(v: number | undefined, dflt: number): number {
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : dflt;
+}
+
+// A body-read failure we've ALREADY turned into plain-language copy (cap exceeded, empty body).
+// `getJson` re-throws these as-is; any OTHER read rejection (a raw undici stream error like
+// "terminated") gets the generic florist message instead of leaking a technical string to the UI.
+class BodyReadError extends Error {}
 
 const TOO_SLOW = "The local brain took too long to answer and was stopped.";
 const PULL_STALLED = "The download stalled — check your connection and try again.";
@@ -47,7 +70,11 @@ const PS_TIMEOUT_MS = 3_000;
  *  brain chip green (loaded) vs gray (unloaded). Any failure — Ollama down, timeout, odd
  *  shape — returns `[]` (treated as "nothing loaded"), never throws. Loopback-only, same as
  *  the engine. */
-export async function ollamaResidentModels(baseUrl: string, fetchImpl: typeof fetch = fetch): Promise<string[]> {
+export async function ollamaResidentModels(
+  baseUrl: string,
+  fetchImpl: typeof fetch = fetch,
+  maxBytes: number = MAX_BODY_BYTES,
+): Promise<string[]> {
   let origin: string;
   try {
     origin = assertLoopback(baseUrl).origin;
@@ -59,7 +86,10 @@ export async function ollamaResidentModels(baseUrl: string, fetchImpl: typeof fe
   try {
     const res = await fetchImpl(`${origin}/api/ps`, { signal: controller.signal });
     if (!res.ok) return [];
-    const body = (await res.json()) as { models?: unknown };
+    // Capped read: an over-cap body throws here and degrades to [] (below), never buffers whole.
+    const body = JSON.parse(await readCappedText(res.body, clampCap(maxBytes, MAX_BODY_BYTES), "checking loaded models")) as {
+      models?: unknown;
+    };
     if (!Array.isArray(body.models)) return [];
     return body.models
       .map((raw) => {
@@ -111,6 +141,8 @@ export function ollamaEngine(opts: OllamaOptions): LocalEngine {
   const doFetch = opts.fetchImpl ?? fetch;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const pullIdleMs = opts.pullIdleMs ?? DEFAULT_PULL_IDLE_MS;
+  const maxBodyBytes = clampCap(opts.maxBodyBytes, MAX_BODY_BYTES);
+  const maxLineBytes = clampCap(opts.maxLineBytes, MAX_LINE_BYTES);
   const origin = base.origin;
 
   // Fetch AND read the whole JSON body under ONE deadline. The AbortController
@@ -130,12 +162,20 @@ export function ollamaEngine(opts: OllamaOptions): LocalEngine {
       if (!res.ok) {
         throw new Error(`Ollama answered with an error (${res.status}) while ${what}.`);
       }
+      let text: string;
       try {
-        return await res.json();
+        text = await readCappedText(res.body, maxBodyBytes, what);
       } catch (cause) {
-        // An abort during the body read lands here — report the timeout, not a
-        // generic parse error.
+        // An abort during the body read → report the timeout. Our own already-friendly
+        // BodyReadError (cap exceeded / empty) surfaces as-is; anything else (a raw undici
+        // stream error) gets the generic message, not a technical string leaked to the UI.
         if (isAbort(cause) || controller.signal.aborted) throw new Error(TOO_SLOW);
+        if (cause instanceof BodyReadError) throw cause;
+        throw new Error(`Ollama sent back something we couldn't read while ${what}.`);
+      }
+      try {
+        return JSON.parse(text) as unknown;
+      } catch {
         throw new Error(`Ollama sent back something we couldn't read while ${what}.`);
       }
     } finally {
@@ -253,6 +293,7 @@ export function ollamaEngine(opts: OllamaOptions): LocalEngine {
               rawOut = outV;
             },
             arm,
+            maxLineBytes,
           );
         } catch (cause) {
           if (userAborted) return { text }; // user Stop mid-stream → keep the partial
@@ -307,7 +348,7 @@ export function ollamaEngine(opts: OllamaOptions): LocalEngine {
         }
         try {
           // `arm` resets the idle timer each time a chunk arrives.
-          await consumePull(res.body, onProgress, arm);
+          await consumePull(res.body, onProgress, arm, maxLineBytes);
         } catch (cause) {
           // A stall abort surfaces here as an AbortError; report it plainly.
           if (stalled || isAbort(cause)) throw new Error(PULL_STALLED);
@@ -324,6 +365,48 @@ export function ollamaEngine(opts: OllamaOptions): LocalEngine {
 // otherwise (missing field, or a garbage value we won't show as a real count).
 function countOf(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined;
+}
+
+// Read a whole response body as text under a BYTE ceiling: once accumulated bytes pass
+// `cap`, reject (a specific, plain-language reason) instead of buffering an unbounded body.
+// Used for the two whole-body JSON reads (`getJson`, `ollamaResidentModels`). A `null` body
+// (no stream) is an empty-response failure. The caller's abort/timeout still errors the
+// reader as before.
+async function readCappedText(
+  body: ReadableStream<Uint8Array> | null,
+  cap: number,
+  what: string,
+): Promise<string> {
+  if (!body) throw new BodyReadError(`Ollama sent an empty response while ${what}.`);
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let out = "";
+  let bytes = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (value) {
+        bytes += value.byteLength;
+        if (bytes > cap) {
+          throw new BodyReadError(`Ollama sent back too much data while ${what} — stopped to protect this computer.`);
+        }
+        out += decoder.decode(value, { stream: true });
+      }
+      if (done) break;
+    }
+    out += decoder.decode();
+    return out;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+// Guard a pending (newline-less) NDJSON buffer against unbounded growth. `reason` names the
+// stream so the user sees a specific, plain-language message.
+function assertLineCap(buffer: string, cap: number, reason: string): void {
+  if (buffer.length > cap) {
+    throw new Error(`${reason} (a single line was too large) — stopped to protect this computer.`);
+  }
 }
 
 // "3.2B", "1.5B", "500M" → billions of params. Best-effort; undefined if unparseable.
@@ -343,6 +426,7 @@ async function consumePull(
   body: ReadableStream<Uint8Array>,
   onProgress?: (p: PullProgress) => void,
   onChunk?: () => void,
+  maxLineBytes: number = MAX_LINE_BYTES,
 ): Promise<void> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -360,6 +444,10 @@ async function consumePull(
         buffer = buffer.slice(nl + 1);
         if (line.length > 0) handlePullLine(line, onProgress);
       }
+      // After flushing complete lines, a pending (newline-less) buffer past the cap is a
+      // flood — reject rather than grow it unbounded. ponytail: buffer.length is UTF-16
+      // code units, a sound proxy for the byte cap (each unit ≥1 source byte).
+      assertLineCap(buffer, maxLineBytes, "The download progress came back malformed");
       if (done) break;
     }
     const tail = buffer.trim();
@@ -399,6 +487,7 @@ async function consumeGenerate(
   onDelta: (delta: string) => void,
   onCounts: (tokensIn: unknown, tokensOut: unknown) => void,
   onChunk?: () => void,
+  maxLineBytes: number = MAX_LINE_BYTES,
 ): Promise<void> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -416,6 +505,8 @@ async function consumeGenerate(
         buffer = buffer.slice(nl + 1);
         if (line.length > 0) handleGenerateLine(line, onDelta, onCounts);
       }
+      // A pending newline-less buffer past the cap is a flood — reject (same as consumePull).
+      assertLineCap(buffer, maxLineBytes, "The local brain's reply came back malformed");
       if (done) break;
     }
     const tail = buffer.trim();
