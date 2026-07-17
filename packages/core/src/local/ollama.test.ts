@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
-import { ollamaEngine } from "./ollama.js";
+import { ollamaEngine, ollamaResidentModels } from "./ollama.js";
 import type { PullProgress } from "./types.js";
 
 // O1 — the Ollama backend against a FIXTURE server (no real Ollama in CI): detect,
@@ -278,6 +278,89 @@ describe("ollamaEngine — descriptive failures", () => {
     }));
     const engine = ollamaEngine({ baseUrl: base });
     await expect(engine.pull("nope")).rejects.toThrow(/couldn't get that model.*not found/i);
+  });
+});
+
+// Byte caps (loop 036, `local-pull-stream-buffer-cap`): a process squatting on the loopback
+// Ollama port before Ollama could stream an unbounded / newline-less body into main. Every
+// reader that consumes a body has a ceiling. Caps are injected tiny so a flood is exercised
+// deterministically (no megabytes streamed). Under-cap companions prove no false-positive.
+describe("ollamaEngine — loopback body byte caps (OOM guard)", () => {
+  it("§1 getJson: a whole-body reply past maxBodyBytes rejects with a specific reason (listModels)", async () => {
+    const base = await startRawServer((req, res) => {
+      if (req.url === "/api/tags") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end("x".repeat(500)); // 500 bytes ≫ the 64-byte injected cap
+        return;
+      }
+      res.writeHead(404);
+      res.end("{}");
+    });
+    const engine = ollamaEngine({ baseUrl: base, maxBodyBytes: 64 });
+    await expect(engine.listModels()).rejects.toThrow(/too much data/i);
+  });
+
+  it("§1b getJson: a normal body UNDER the cap still parses (no false-positive)", async () => {
+    const base = await startFixture((_m, url) =>
+      url === "/api/tags" ? { status: 200, body: JSON.stringify({ models: [{ name: "qwen2.5:3b" }] }) } : { status: 404, body: "{}" },
+    );
+    // Default 32 MiB cap — a real KB-sized list is nowhere near it.
+    const models = await ollamaEngine({ baseUrl: base }).listModels();
+    expect(models.map((m) => m.id)).toEqual(["qwen2.5:3b"]);
+  });
+
+  it("§2 /api/ps: an over-cap body degrades to [] (the cap lets it stop)", async () => {
+    const base = await startRawServer((req, res) => {
+      if (req.url === "/api/ps") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end("x".repeat(500));
+        return;
+      }
+      res.writeHead(404);
+      res.end("{}");
+    });
+    expect(await ollamaResidentModels(base, undefined, 64)).toEqual([]);
+  });
+
+  it("§2b /api/ps: an under-cap body returns the real resident model names", async () => {
+    const base = await startFixture((_m, url) =>
+      url === "/api/ps"
+        ? { status: 200, body: JSON.stringify({ models: [{ name: "gemma2:27b" }, { model: "mixtral:latest" }] }) }
+        : { status: 404, body: "{}" },
+    );
+    // Same tiny-cap function, a body that fits → names come back, proving §2's [] is caused
+    // by the cap, not by ignoring the body.
+    expect(await ollamaResidentModels(base, undefined, 64)).toEqual(["gemma2:27b", "mixtral:latest"]);
+  });
+
+  it("§3 consumeGenerate: a single newline-less line past maxLineBytes rejects (not a partial, not a stall)", async () => {
+    const base = await startRawServer((req, res) => {
+      if (req.url === "/api/generate") {
+        res.writeHead(200, { "content-type": "application/x-ndjson" });
+        // One un-terminated line far past the 64-byte cap: no newline ever arrives.
+        res.end('{"response":"' + "x".repeat(500));
+        return;
+      }
+      res.writeHead(404);
+      res.end("{}");
+    });
+    const engine = ollamaEngine({ baseUrl: base, maxLineBytes: 64 });
+    // No abort signal (not a user Stop) and not idle (data DID arrive) → it rejects.
+    await expect(engine.generateStream!("m", "hi", () => {})).rejects.toThrow(/too large/i);
+  });
+
+  it("§4 consumePull: a single newline-less line past maxLineBytes rejects (distinct from stalled)", async () => {
+    const base = await startRawServer((req, res) => {
+      if (req.url === "/api/pull") {
+        res.writeHead(200, { "content-type": "application/x-ndjson" });
+        res.end('{"status":"downloading"' + "x".repeat(500));
+        return;
+      }
+      res.writeHead(404);
+      res.end("{}");
+    });
+    const engine = ollamaEngine({ baseUrl: base, maxLineBytes: 64 });
+    await expect(engine.pull("m")).rejects.toThrow(/too large/i);
   });
 });
 
