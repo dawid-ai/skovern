@@ -228,22 +228,23 @@ describe("validateCatalog — gguf block (embedded runtime, untrusted input)", (
 // C-SNAP — the BUNDLED snapshot (real shipped catalog data) must yield the embedded
 // models we promise, through the real validator. Guards a bad catalog edit (a filename
 // the validator drops, a split-file name, a truncated hash) from silently shrinking the
-// no-Ollama model set. Loop 028 added 7B + 14B embedded.
-describe("bundled snapshot — real embedded catalog (028)", () => {
-  it("validates and exposes exactly the 3B/7B/14B embedded models with safe filenames", () => {
+// no-Ollama model set. Loop 028 added 7B + 14B embedded; loop 038 added the 0.5B + 1.5B floor.
+describe("bundled snapshot — real embedded catalog (028, 038)", () => {
+  it("validates and exposes exactly the 0.5B/1.5B/3B/7B/14B embedded models with safe filenames", () => {
     const models = snapshotCatalog();
     const embedded = models.filter((m) => m.gguf);
-    expect(embedded.map((m) => m.id).sort()).toEqual(["qwen2.5:14b", "qwen2.5:3b", "qwen2.5:7b"]);
+    expect(embedded.map((m) => m.id).sort()).toEqual(["qwen2.5:0.5b", "qwen2.5:1.5b", "qwen2.5:14b", "qwen2.5:3b", "qwen2.5:7b"]);
     for (const m of embedded) {
       expect(m.gguf!.filename).toMatch(/^[A-Za-z0-9][A-Za-z0-9._-]*\.gguf$/); // single safe file, no split/traversal
       expect(m.gguf!.sha256).toMatch(/^[a-f0-9]{64}$/); // full sha256
       expect(m.gguf!.url).toMatch(/^https:\/\/huggingface\.co\//); // https HF source
       expect(m.gguf!.sizeBytes).toBeGreaterThan(0);
     }
-    // The two new ones carry the verified hashes (a truncation/typo trips this).
-    const b7 = embedded.find((m) => m.id === "qwen2.5:7b")!;
-    const b14 = embedded.find((m) => m.id === "qwen2.5:14b")!;
-    expect(b7.gguf!.sha256).toBe("65b8fcd92af6b4fefa935c625d1ac27ea29dcb6ee14589c55a8f115ceaaa1423");
-    expect(b14.gguf!.sha256).toBe("e47ad95dad6ff848b431053b375adb5d39321290ea2c638682577dafca87c008");
+    // Each carries its verified hash (a truncation/typo trips this).
+    const sha = (id: string) => embedded.find((m) => m.id === id)!.gguf!.sha256;
+    expect(sha("qwen2.5:0.5b")).toBe("74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db");
+    expect(sha("qwen2.5:1.5b")).toBe("6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e");
+    expect(sha("qwen2.5:7b")).toBe("65b8fcd92af6b4fefa935c625d1ac27ea29dcb6ee14589c55a8f115ceaaa1423");
+    expect(sha("qwen2.5:14b")).toBe("e47ad95dad6ff848b431053b375adb5d39321290ea2c638682577dafca87c008");
   });
 });
