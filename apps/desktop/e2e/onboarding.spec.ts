@@ -600,8 +600,8 @@ test.describe("loop 038 — built-in floor: weak machines get a real pick", () =
     models: [
       built("qwen2.5:0.5b", "Qwen2.5 0.5B", 0.5, 491400032, "qwen2.5-0.5b-instruct-q4_k_m.gguf"),
       built("qwen2.5:1.5b", "Qwen2.5 1.5B", 1.5, 1117320736, "qwen2.5-1.5b-instruct-q4_k_m.gguf"),
-      built("qwen2.5:3b", "Qwen2.5 3B", 3, 1960000000, "qwen2.5-3b-instruct-q4_k_m.gguf"),
-      built("qwen2.5:7b", "Qwen2.5 7B", 7, 4680000000, "Qwen2.5-7B-Instruct-Q4_K_M.gguf"),
+      built("qwen2.5:3b", "Qwen2.5 3B", 3, 2104932768, "qwen2.5-3b-instruct-q4_k_m.gguf"),
+      built("qwen2.5:7b", "Qwen2.5 7B", 7, 4683074240, "Qwen2.5-7B-Instruct-Q4_K_M.gguf"),
       built("qwen2.5:14b", "Qwen2.5 14B", 14, 8988110976, "Qwen2.5-14B-Instruct-Q4_K_M.gguf"),
     ],
   };
