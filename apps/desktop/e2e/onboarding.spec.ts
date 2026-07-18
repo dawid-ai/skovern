@@ -174,11 +174,14 @@ test("Issue 5: after onboarding sets up a brain, the app lands in Chat — not W
     const page = await app.firstWindow();
     await signIn(page, "land@shop.test");
     await setUpBuiltInBrain(page); // download + activate → onConfigured fires
-    // E6: we're on the CHAT page now (its heading + "New chat" + the no-chat empty state), NOT
-    // dumped on "What's new".
+    // E6 + loop 040: we land on the CHAT page in a READY, empty chat — the message box is present
+    // and focused, no "New chat" click and no empty-history gate — NOT dumped on "What's new".
     await expect(page.getByRole("heading", { name: "Chat", exact: true })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole("button", { name: "New chat" })).toBeVisible();
-    await expect(page.getByText("Start a new chat to begin.")).toBeVisible();
+    const box = page.getByLabel("Message your brain");
+    await expect(box).toBeEnabled();
+    await expect(box).toBeFocused();
+    await expect(page.getByText("Start a new chat to begin.")).toHaveCount(0);
   } finally {
     await app.close();
     rmSync(userDataDir, { recursive: true, force: true });
