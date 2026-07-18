@@ -9,6 +9,46 @@ const state = { dir: "" };
 vi.mock("electron", () => ({ app: { getPath: () => state.dir } }));
 
 import { listDownloadedModels, deleteDownloadedModel, modelsDir } from "./download.js";
+import { modelDeletionPlan } from "./model-manage.js";
+
+const EMBEDDED = [
+  { id: "qwen2.5:3b", filename: "qwen2.5-3b-instruct-q4_k_m.gguf" },
+  { id: "qwen2.5:0.5b", filename: "qwen2.5-0.5b-instruct-q4_k_m.gguf" },
+];
+
+describe("model deletion plan — never leave a dangling active brain (loop 041, U3)", () => {
+  it("deleting the ACTIVE model that's WARM → unload its VRAM AND clear the brain pointer", () => {
+    expect(modelDeletionPlan("qwen2.5-3b-instruct-q4_k_m.gguf", "qwen2.5:3b", true, EMBEDDED)).toEqual({
+      isActive: true,
+      unload: true,
+      clearBrain: true,
+    });
+  });
+
+  it("deleting the ACTIVE model that's COLD → clear the brain, but no unload (nothing resident)", () => {
+    expect(modelDeletionPlan("qwen2.5-3b-instruct-q4_k_m.gguf", "qwen2.5:3b", false, EMBEDDED)).toEqual({
+      isActive: true,
+      unload: false,
+      clearBrain: true,
+    });
+  });
+
+  it("deleting a NON-active model → touch neither the brain nor the engine, even if warm", () => {
+    expect(modelDeletionPlan("qwen2.5-0.5b-instruct-q4_k_m.gguf", "qwen2.5:3b", true, EMBEDDED)).toEqual({
+      isActive: false,
+      unload: false,
+      clearBrain: false,
+    });
+  });
+
+  it("no brain configured → nothing is active, nothing cleared", () => {
+    expect(modelDeletionPlan("qwen2.5-3b-instruct-q4_k_m.gguf", null, true, EMBEDDED)).toEqual({
+      isActive: false,
+      unload: false,
+      clearBrain: false,
+    });
+  });
+});
 
 describe("model management — list + delete (loop 041)", () => {
   beforeEach(() => {

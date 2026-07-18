@@ -14,6 +14,7 @@ import { fileFetchSink } from "./receipts.js";
 import { scanHardware } from "./hardware.js";
 import { createCachedCatalogLoader, snapshotCatalog } from "./catalog.js";
 import { modelDownloaded, listDownloadedModels, deleteDownloadedModel } from "./download.js";
+import { modelDeletionPlan } from "./model-manage.js";
 import { loadBrain, clearBrain } from "./keys.js";
 import { ollamaInstalled } from "./ollama-launch.js";
 import { llamaEngine, type ChildLike, type EmbeddedModel, type FromChild, type LlamaEngine } from "./llama-engine.js";
@@ -281,12 +282,11 @@ export function freeMemory(): { freed: boolean } {
  *  app degrades to the honest no-brain state (033's fallback / setup CTA). The filename is
  *  validated + confined to the models dir inside `deleteDownloadedModel` (path-sink guard). */
 export async function deleteLocalModel(filename: string): Promise<LocalActionResult> {
-  const cat = latestEmbedded.find((m) => m.gguf.filename === filename);
-  const active = activeLocalModelId();
-  const isActive = cat !== undefined && cat.id === active;
-  if (isActive && (llama?.isWarm() ?? false)) llama?.unload(); // free its VRAM before it's gone
+  const embedded = latestEmbedded.map((m) => ({ id: m.id, filename: m.gguf.filename }));
+  const plan = modelDeletionPlan(filename, activeLocalModelId(), llama?.isWarm() ?? false, embedded);
+  if (plan.unload) llama?.unload(); // free its VRAM before it's gone (the warm child holds the weights)
   const removed = await deleteDownloadedModel(filename); // validates the name + confines, then unlinks
-  if (removed && isActive) clearBrain(); // no dangling active pointer to a deleted file
+  if (removed && plan.clearBrain) clearBrain(); // no dangling active pointer to a deleted file
   return { ok: removed, message: removed ? "" : "That model file was already gone." };
 }
 

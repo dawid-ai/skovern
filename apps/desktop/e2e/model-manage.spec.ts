@@ -149,6 +149,9 @@ test("Your models: list downloaded, free memory, and delete to reclaim disk", as
     await expect(row).toHaveCount(0, { timeout: 15_000 });
     expect(existsSync(modelFile)).toBe(false); // disk reclaimed
     await expect(your.getByText(/haven't downloaded any brains/i)).toBeVisible();
+    // U3/E2: deleting the ACTIVE model cleared the brain — no dangling pointer at a deleted file.
+    const status = await page.evaluate(() => window.skovern.brain.status());
+    expect(status.configured).toBe(false);
   } finally {
     await app.close();
     rmSync(userDataDir, { recursive: true, force: true });
