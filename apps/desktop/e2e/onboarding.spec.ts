@@ -576,3 +576,126 @@ test.describe("loop 037 — guided onboarding: one stable built-in pick, no Olla
     }
   });
 });
+
+// ── Loop 038 — the built-in floor: the smallest machines get a runnable pick. The guided
+// screen (037) surfaces whatever the recommendation is, so adding the 0.5B/1.5B floor to the
+// catalog just changes which model is the hero. Fixtured hardware/catalog/download bytes.
+test.describe("loop 038 — built-in floor: weak machines get a real pick", () => {
+  const MODEL_BODY = Buffer.from("FAKE-GGUF-BYTES-for-the-floor-e2e".repeat(50));
+  const MODEL_SHA = createHash("sha256").update(MODEL_BODY).digest("hex");
+  const gg = (filename: string, sizeBytes: number) => ({
+    url: `https://huggingface.co/Qwen/x/resolve/main/${filename}`,
+    sha256: MODEL_SHA, // matches the fixtured download bytes — the e2e never transfers real GB
+    sizeBytes, filename, contextSize: 4096,
+  });
+  const built = (id: string, label: string, params: number, sizeBytes: number, filename: string) => ({
+    id, label, params, sizeBytes, quant: "Q4_K_M", creator: "Alibaba (Qwen team)",
+    homepage: "https://huggingface.co/Qwen/x", license: "Apache 2.0 — free to use.",
+    licenseUrl: "https://www.apache.org/licenses/LICENSE-2.0",
+    tradeoff: "A private brain that runs right here.", gguf: gg(filename, sizeBytes),
+  });
+  // Mirror the REAL built-in ladder (0.5/1.5/3/7/14B) with the real sizeBytes (so the verdict
+  // fit matches production), only the sha swapped to the fixtured bytes.
+  const CATALOG_038 = {
+    models: [
+      built("qwen2.5:0.5b", "Qwen2.5 0.5B", 0.5, 491400032, "qwen2.5-0.5b-instruct-q4_k_m.gguf"),
+      built("qwen2.5:1.5b", "Qwen2.5 1.5B", 1.5, 1117320736, "qwen2.5-1.5b-instruct-q4_k_m.gguf"),
+      built("qwen2.5:3b", "Qwen2.5 3B", 3, 1960000000, "qwen2.5-3b-instruct-q4_k_m.gguf"),
+      built("qwen2.5:7b", "Qwen2.5 7B", 7, 4680000000, "Qwen2.5-7B-Instruct-Q4_K_M.gguf"),
+      built("qwen2.5:14b", "Qwen2.5 14B", 14, 8988110976, "Qwen2.5-14B-Instruct-Q4_K_M.gguf"),
+    ],
+  };
+  const WEAK = JSON.stringify({ ramBytes: 2 * 1024 ** 3, cpuCores: 4, gpus: [], bestVramBytes: null, unifiedMemory: false, diskFreeBytes: 60 * 1024 ** 3, notes: [] });
+  const GPU_24 = JSON.stringify({ ramBytes: 64 * 1024 ** 3, cpuCores: 16, gpus: [{ model: "GPU 24GB", vramBytes: 24 * 1024 ** 3 }], bestVramBytes: 24 * 1024 ** 3, unifiedMemory: false, diskFreeBytes: 500 * 1024 ** 3, notes: [] });
+
+  let cat: Server | null = null;
+  let dl: Server | null = null;
+  let catUrl = "";
+  let dlUrl = "";
+
+  test.beforeAll(async () => {
+    catUrl = await new Promise<string>((r) => {
+      cat = createServer((_q, s) => { s.writeHead(200, { "content-type": "application/json" }); s.end(JSON.stringify(CATALOG_038)); });
+      cat.listen(0, "127.0.0.1", () => r(`http://127.0.0.1:${(cat!.address() as AddressInfo).port}/catalog/models.json`));
+    });
+    dlUrl = await new Promise<string>((r) => {
+      dl = createServer((_q, s) => { s.writeHead(200, { "content-type": "application/octet-stream" }); s.end(MODEL_BODY); });
+      dl.listen(0, "127.0.0.1", () => r(`http://127.0.0.1:${(dl!.address() as AddressInfo).port}/model.gguf`));
+    });
+  });
+
+  test.afterAll(() => {
+    cat?.close();
+    dl?.close();
+  });
+
+  function env(hw: string) {
+    return {
+      ...process.env,
+      SKOVERN_API_URL: server.url,
+      SKOVERN_CATALOG_URL: catUrl,
+      SKOVERN_HARDWARE: hw,
+      SKOVERN_OLLAMA_INSTALLED: "0",
+      SKOVERN_OLLAMA_URL: "http://127.0.0.1:1",
+      SKOVERN_LLAMA_FAKE: "1",
+      SKOVERN_MODEL_DOWNLOAD_URL: dlUrl,
+    };
+  }
+
+  async function toGuided(page: Page, email: string): Promise<void> {
+    await signIn(page, email);
+    await expect(page.getByText(/Set up your brain to get started/i)).toBeVisible({ timeout: 30_000 });
+    await page.getByRole("button", { name: "Set it up →" }).click();
+    await page.getByRole("button", { name: "Set up my private brain →" }).click();
+    await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator(".local-verdict")).toBeVisible({ timeout: 30_000 });
+  }
+
+  test("E-floor: a weak machine's guided pick is the 1.5B floor, and it's actionable", async () => {
+    test.setTimeout(120_000);
+    const dir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
+    const app = await electron.launch({ args: [".", `--user-data-dir=${dir}`], env: env(WEAK) });
+    try {
+      const page = await app.firstWindow();
+      await toGuided(page, "a-weak@shop.test");
+      await expect(page.locator(".local-callouts .callout")).toHaveCount(1);
+      await expect(page.locator(".local-callouts .callout h3")).toHaveText("Qwen2.5 1.5B"); // the floor is the pick
+      await expect(page.locator(".local-callouts .callout .callout-action button")).toBeEnabled(); // live, not a dead hero
+    } finally {
+      await app.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("E-floor-download: 'Get this one' downloads the 1.5B floor and activates it", async () => {
+    test.setTimeout(120_000);
+    const dir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
+    const app = await electron.launch({ args: [".", `--user-data-dir=${dir}`], env: env(WEAK) });
+    try {
+      const page = await app.firstWindow();
+      await toGuided(page, "a-dl@shop.test");
+      await page.locator(".local-callouts .callout .callout-action button").click();
+      await expect(page.getByText("Local: qwen2.5:1.5b")).toBeVisible({ timeout: 30_000 }); // a weak machine now has a working built-in
+    } finally {
+      await app.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("E-regression: a 24 GB machine still picks the 14B — the floor is present, not the pick", async () => {
+    test.setTimeout(120_000);
+    const dir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
+    const app = await electron.launch({ args: [".", `--user-data-dir=${dir}`], env: env(GPU_24) });
+    try {
+      const page = await app.firstWindow();
+      await toGuided(page, "a-24@shop.test");
+      await expect(page.locator(".local-callouts .callout h3")).toHaveText("Qwen2.5 14B"); // adding the floor didn't move the pick
+      const details = page.locator("details.local-other-options");
+      await details.locator("summary").click();
+      await expect(details.getByText("Qwen2.5 1.5B")).toBeVisible(); // the floor lives under "see other options"
+    } finally {
+      await app.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

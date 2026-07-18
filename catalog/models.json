@@ -5,25 +5,39 @@
       "id": "qwen2.5:0.5b",
       "label": "Qwen2.5 0.5B",
       "params": 0.5,
-      "sizeBytes": 397000000,
+      "sizeBytes": 491400032,
       "quant": "Q4_K_M",
       "creator": "Alibaba (Qwen team)",
       "homepage": "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct",
       "license": "Apache 2.0 — free to use, even for your business.",
       "licenseUrl": "https://www.apache.org/licenses/LICENSE-2.0",
-      "tradeoff": "The lightest and fastest. Great for quick, simple jobs on almost any computer; not the deepest thinker."
+      "tradeoff": "The lightest and fastest. Great for quick, simple jobs on almost any computer; not the deepest thinker.",
+      "gguf": {
+        "url": "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+        "sha256": "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db",
+        "sizeBytes": 491400032,
+        "filename": "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+        "contextSize": 4096
+      }
     },
     {
       "id": "qwen2.5:1.5b",
       "label": "Qwen2.5 1.5B",
       "params": 1.5,
-      "sizeBytes": 986000000,
+      "sizeBytes": 1117320736,
       "quant": "Q4_K_M",
       "creator": "Alibaba (Qwen team)",
       "homepage": "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct",
       "license": "Apache 2.0 — free to use, even for your business.",
       "licenseUrl": "https://www.apache.org/licenses/LICENSE-2.0",
-      "tradeoff": "Still light and quick, a step smarter than the 0.5B. A good starting point on a modest computer."
+      "tradeoff": "Still light and quick, a step smarter than the 0.5B. A good starting point on a modest computer.",
+      "gguf": {
+        "url": "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+        "sha256": "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e",
+        "sizeBytes": 1117320736,
+        "filename": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+        "contextSize": 4096
+      }
     },
     {
       "id": "qwen2.5:3b",
