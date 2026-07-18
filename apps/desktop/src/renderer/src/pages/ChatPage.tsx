@@ -26,6 +26,11 @@ export function ChatPage({ brain, onSetup }: { brain: BrainStatusView | null; on
   const activeIdRef = useRef<string | null>(null);
   activeIdRef.current = activeId;
 
+  // The message box — kept focused so a user can type the next message with the keyboard alone
+  // (no mouse click after sending). `didInit` guards the once-only first-load (auto-open a chat).
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const didInit = useRef(false);
+
   // --- Scroll: auto-follow the newest content while pinned to the bottom; pause the moment
   // the user scrolls up; the four jump buttons navigate a long conversation (loop 034). ---
   const threadRef = useRef<HTMLDivElement>(null);
@@ -81,13 +86,35 @@ export function ChatPage({ brain, onSetup }: { brain: BrainStatusView | null; on
     setMessages(view?.messages ?? []);
   }, []);
 
-  // First load: show the newest chat, if any.
+  const newChat = useCallback(async (): Promise<void> => {
+    const meta = await window.skovern.chat.new();
+    await loadList();
+    setActiveId(meta.id);
+    setMessages([]);
+    setStreaming(null);
+    setDraft("");
+    pinnedRef.current = true;
+  }, [loadList]);
+
+  // First load: open the newest chat, or start a ready EMPTY one so the user lands straight in a
+  // typeable box — no "New chat" click before they can talk (Dawid, 2026-07-18). Ref-guarded so
+  // a re-run (e.g. dev strict-mode double-mount) can't create two empty chats.
   useEffect(() => {
     void (async () => {
+      if (didInit.current) return;
+      didInit.current = true;
       const list = await loadList();
-      if (list.length > 0 && list[0]) void openChat(list[0].id);
+      if (list.length > 0 && list[0]) await openChat(list[0].id);
+      else await newChat();
     })();
-  }, [loadList, openChat]);
+  }, [loadList, openChat, newChat]);
+
+  // Keep the cursor in the message box: focus it whenever a chat becomes active (arrival / switch /
+  // auto-created) and when a send finishes (`sending` → false) — so the next message is typeable
+  // with the keyboard alone, no mouse click. Skipped while `sending` and when no brain is configured.
+  useEffect(() => {
+    if (activeId && configured && !sending) textareaRef.current?.focus();
+  }, [activeId, configured, sending]);
 
   // Stream tokens into the in-progress reply for the active chat.
   useEffect(() => {
@@ -105,15 +132,6 @@ export function ChatPage({ brain, onSetup }: { brain: BrainStatusView | null; on
       setPrepare(e.phase);
     });
   }, []);
-
-  async function newChat(): Promise<void> {
-    const meta = await window.skovern.chat.new();
-    await loadList();
-    setActiveId(meta.id);
-    setMessages([]);
-    setStreaming(null);
-    setDraft("");
-  }
 
   async function send(): Promise<void> {
     const id = activeId;
@@ -180,7 +198,9 @@ export function ChatPage({ brain, onSetup }: { brain: BrainStatusView | null; on
     await loadList();
   }
 
-  const titleOf = (m: ChatMeta): string => (m.title.trim().length > 0 ? m.title : "New chat");
+  // An untitled (empty) chat reads "Untitled chat" in the list — NOT "New chat", which would
+  // collide with the "New chat" button now that we auto-open an empty chat on arrival.
+  const titleOf = (m: ChatMeta): string => (m.title.trim().length > 0 ? m.title : "Untitled chat");
 
   // Jump buttons. Scrolling up any of these ways stops auto-follow; jumping to the bottom
   // re-pins it. After moving, remeasure so the buttons' disabled states stay honest.
@@ -343,6 +363,7 @@ export function ChatPage({ brain, onSetup }: { brain: BrainStatusView | null; on
 
             <div className="form chat-composer">
               <textarea
+                ref={textareaRef}
                 aria-label="Message your brain"
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
@@ -354,7 +375,7 @@ export function ChatPage({ brain, onSetup }: { brain: BrainStatusView | null; on
                 }}
                 placeholder={configured ? "Type your message…" : "Connect a brain in Settings first"}
                 rows={3}
-                disabled={!configured || sending}
+                disabled={!configured}
               />
               {sending ? (
                 <button className="primary" onClick={stop}>

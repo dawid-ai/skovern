@@ -833,3 +833,61 @@ test("brain chip goes gray when the model idle-unloads and green again on the ne
     rmSync(userDataDir, { recursive: true, force: true });
   }
 });
+
+// ── Loop 040: Chat opens ready to type, and the box keeps focus after sending ──────────────
+test("Chat opens in a ready empty chat and the box stays focused after sending (keyboard-only)", async () => {
+  test.setTimeout(180_000);
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
+  const app = await electron.launch({
+    args: [".", `--user-data-dir=${userDataDir}`],
+    env: {
+      ...process.env,
+      SKOVERN_API_URL: server.url,
+      SKOVERN_OLLAMA_URL: "http://127.0.0.1:1",
+      SKOVERN_OLLAMA_INSTALLED: "0",
+      SKOVERN_CATALOG_URL: catalogUrl,
+      SKOVERN_HARDWARE: GPU_HARDWARE,
+      SKOVERN_LLAMA_FAKE: "1",
+      SKOVERN_LLAMA_FAKE_DELAY_MS: "200",
+      SKOVERN_MODEL_DOWNLOAD_URL: downloadUrl,
+    },
+  });
+  try {
+    const page = await app.firstWindow();
+    await signIn(page, "chat-040@shop.test");
+    // set up a local embedded brain
+    await page.getByRole("button", { name: "Settings" }).click();
+    await page.getByLabel("Your brain").selectOption("local");
+    await page.getByRole("button", { name: "Set up the local brain →" }).click();
+    await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible();
+    await page.getByRole("button", { name: "Get this one" }).first().click();
+    await expect(page.getByText("Local: qwen2.5:3b")).toBeVisible({ timeout: 60_000 });
+
+    // E-ready: open Chat → a ready, empty chat: the box is present + FOCUSED, no
+    // "Start a new chat to begin." gate, and we did NOT click "New chat".
+    await page.getByRole("button", { name: "Chat", exact: true }).click();
+    const box = page.getByLabel("Message your brain");
+    await expect(box).toBeEnabled();
+    await expect(box).toBeFocused();
+    await expect(page.getByText("Start a new chat to begin.")).toHaveCount(0);
+
+    // Send by KEYBOARD only (type + Enter, no Send click).
+    await box.fill("hello brain");
+    await box.press("Enter");
+    // E-active-during-gen: while the reply streams, the box is NOT disabled (still typeable).
+    await expect(page.getByRole("button", { name: "Stop" })).toBeVisible({ timeout: 15_000 });
+    await expect(box).toBeEnabled();
+    await expect(lastBrainP(page)).toHaveText(FAKE_REPLY, { timeout: 30_000 });
+
+    // E-focus-after-send: box still enabled + focused → type the NEXT message with no mouse click.
+    await expect(box).toBeEnabled();
+    await expect(box).toBeFocused();
+    await page.keyboard.type("and again");
+    await box.press("Enter");
+    await expect(page.locator(".chat-thread .from-you").last()).toContainText("and again");
+    await expect(lastBrainP(page)).toHaveText(FAKE_REPLY, { timeout: 30_000 });
+  } finally {
+    await app.close();
+    rmSync(userDataDir, { recursive: true, force: true });
+  }
+});
