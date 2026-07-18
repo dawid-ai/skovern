@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { LocalModelView, LocalStatusView, PullProgressView } from "../../../shared/local.js";
 import { partitionModels } from "./local-partition.js";
+import { YourModels } from "./YourModels.js";
 
 // "On this computer — free & private": the local-brain setup view, reached from
 // Settings (its own place, per the IA rule). Full-width: two callout cards up top —
@@ -34,6 +35,7 @@ export function LocalBrainSetup({ onBack, onSaved, guided = false }: { onBack: (
   const [pulling, setPulling] = useState<Record<string, PullProgressView>>({});
   const [startingOllama, setStartingOllama] = useState(false); // "Start Ollama" in flight
   const [pullName, setPullName] = useState(""); // the "pull by name" box (Advanced)
+  const [version, setVersion] = useState(0); // bumps on each refresh → re-fetches "Your models"
   const unsubPull = useRef<(() => void) | null>(null);
 
   const refresh = useCallback(async () => {
@@ -49,6 +51,7 @@ export function LocalBrainSetup({ onBack, onSaved, guided = false }: { onBack: (
     // Mark the model you're actually using ("This is your brain"), even before you
     // click anything this session.
     setSavedId(b.provider === "local" ? b.model : null);
+    setVersion((v) => v + 1); // signal "Your models" to re-fetch (a download may have just landed)
     setBusy(false);
   }, []);
 
@@ -435,6 +438,9 @@ export function LocalBrainSetup({ onBack, onSaved, guided = false }: { onBack: (
               )}
             </>
           )}
+
+          {/* Your models — see/delete downloaded brains + free memory (loop 041). */}
+          <YourModels refreshKey={version} onChanged={() => void refresh()} />
         </>
       )}
     </section>

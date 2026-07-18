@@ -73,6 +73,24 @@ export interface LocalActionResult {
   message: string;
 }
 
+/** One downloaded model in the "Your models" manager. */
+export interface DownloadedModelView {
+  filename: string;
+  id: string;
+  label: string;
+  /** Human size, e.g. "0.5 GB". */
+  size: string;
+  /** Is this the configured (active) brain? */
+  active: boolean;
+}
+
+/** `local:downloadedModels` — the "Your models" view: what's on disk + what's in memory now. */
+export interface YourModelsView {
+  models: DownloadedModelView[];
+  /** The embedded model resident in VRAM right now (for the Memory row), or null. */
+  loadedLabel: string | null;
+}
+
 /** A pull-progress tick pushed main→renderer on the `local:pullProgress` channel. */
 export interface PullProgressView {
   modelId: string;

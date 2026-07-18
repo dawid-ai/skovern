@@ -75,7 +75,7 @@ export interface LlamaEngineOptions {
 
 /** The embedded engine plus lifecycle extras main owns: `dispose` (quit) and `isWarm`
  *  (the load-state chip — is a model actually resident right now). */
-export type LlamaEngine = LocalEngine & { dispose(): void; isWarm(): boolean };
+export type LlamaEngine = LocalEngine & { dispose(): void; isWarm(): boolean; unload(): boolean };
 
 // Re-fork the Electron binary as plain Node (ELECTRON_RUN_AS_NODE), same mechanism as
 // the plugin host. The child (llama-child.js, a separate build output) dynamically imports
@@ -333,6 +333,16 @@ export function llamaEngine(opts: LlamaEngineOptions): LlamaEngine {
     // Is a model actually resident right now? Drives the sidebar chip (green vs gray).
     isWarm(): boolean {
       return ready;
+    },
+
+    // Free the warm model's VRAM on demand ("Free memory"). ONLY when idle — never yank the
+    // model out from under an in-flight reply (returns false, leaving it loaded). The next
+    // generate respawns via ensureReady, so this is a memory reclaim, not a shutdown.
+    unload(): boolean {
+      if (pending.size > 0) return false;
+      cancelIdle();
+      idleUnload();
+      return true;
     },
 
     dispose(): void {
