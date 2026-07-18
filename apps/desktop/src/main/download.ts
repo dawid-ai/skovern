@@ -1,6 +1,6 @@
 import { app } from "electron";
 import { createReadStream, createWriteStream, existsSync, statSync } from "node:fs";
-import { mkdir, readdir, rename, statfs, unlink } from "node:fs/promises";
+import { mkdir, readdir, rename, stat, statfs, unlink } from "node:fs/promises";
 import { createHash, type Hash } from "node:crypto";
 import path from "node:path";
 import type { FetchSink, GgufSource } from "@skovern/core";
@@ -92,6 +92,43 @@ export async function ensureDiskSpace(needBytes: number, probeFreeBytes: () => P
   const free = await probeFreeBytes();
   if (free < needBytes + DISK_MARGIN_BYTES) {
     throw new Error("There isn't enough free space on this computer for this model. Free up some room and try again.");
+  }
+}
+
+/** Every finished (`.gguf`) model on disk, with its byte size — for the "Your models" list.
+ *  Ignores `.part` temps and non-gguf files. Best-effort: a missing models dir yields []. */
+export async function listDownloadedModels(): Promise<{ filename: string; sizeBytes: number }[]> {
+  let entries: string[];
+  try {
+    entries = await readdir(modelsDir());
+  } catch {
+    return [];
+  }
+  const out: { filename: string; sizeBytes: number }[] = [];
+  for (const name of entries) {
+    // SAFE_GGUF_FILENAME requires a `.gguf` suffix, so a `.gguf.part` temp is already excluded.
+    if (!SAFE_GGUF_FILENAME.test(name) || PART_SUFFIX.test(name)) continue;
+    try {
+      const s = await stat(path.join(modelsDir(), name));
+      if (s.isFile()) out.push({ filename: name, sizeBytes: s.size });
+    } catch {
+      // vanished between readdir and stat — skip it
+    }
+  }
+  return out;
+}
+
+/** Delete a downloaded model file to reclaim disk. `modelPath` validates the name (safe charset,
+ *  no `..`, confined to `modelsDir`) and THROWS on anything else BEFORE any unlink — so a
+ *  traversal/absolute path can never remove a file outside the models dir. Returns whether a file
+ *  was actually removed (false = already gone / locked). */
+export async function deleteDownloadedModel(filename: string): Promise<boolean> {
+  const p = modelPath(filename); // throws on a bad/traversing name before we touch the disk
+  try {
+    await unlink(p);
+    return true;
+  } catch {
+    return false;
   }
 }
 

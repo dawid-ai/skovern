@@ -1100,7 +1100,8 @@ footer {
 
 /* The full-width model table — every model in one place, no fold. Reuses the
    receipt-table shell; these tune the local-brain columns. */
-.local-table .receipt-who {
+.local-table .receipt-who,
+.your-models-table .receipt-who {
   font-size: 14px;
 }
 
@@ -1556,4 +1557,18 @@ footer {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+/* ── Your models (loop 041): manage downloaded brains + free memory ──────────────── */
+.your-models-memory {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 0 14px;
+}
+.link.danger {
+  color: #b23b3b;
+}
+.link.danger:hover {
+  color: #8a2a2a;
 }

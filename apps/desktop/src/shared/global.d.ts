@@ -2,7 +2,7 @@ import type { AppInfo } from "@skovern/core";
 import type { CurrentAccount, RequestResult, VerifyResult } from "./account.js";
 import type { DmSendResult, DmThreadView, NewsPostView, PublishResultView, PublishVisibilityInput } from "./cloud.js";
 import type { BrainStatusView, SaveBrainInput, SaveBrainResult, TestBrainResult } from "./brain.js";
-import type { LocalActionResult, LocalModelsView, LocalStatusView, PullProgressView } from "./local.js";
+import type { LocalActionResult, LocalModelsView, LocalStatusView, PullProgressView, YourModelsView } from "./local.js";
 import type { RunSkillResult, SandboxCheckResult, SkillView } from "./plugin.js";
 import type { ActivitySummary, DateRange, ReceiptView } from "./receipts.js";
 import type { ChatMeta, ChatSendResult, ChatStatusEvent, ChatTokenEvent, ChatView } from "./chat.js";
@@ -48,6 +48,9 @@ declare global {
         pull(modelId: string): Promise<LocalActionResult>;
         /** Listen for live pull progress. Returns an unsubscribe. */
         onPullProgress(cb: (p: PullProgressView) => void): () => void;
+        downloadedModels(): Promise<YourModelsView>;
+        deleteModel(filename: string): Promise<LocalActionResult>;
+        freeMemory(): Promise<{ freed: boolean }>;
       };
       receipts: {
         list(range?: DateRange): Promise<ReceiptView[]>;

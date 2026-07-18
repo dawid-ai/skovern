@@ -141,4 +141,31 @@ describe("embedded idle-unload", () => {
     expect(fakes).toHaveLength(2); // a fresh child was spawned
     expect(engine.isWarm()).toBe(true);
   });
+
+  // Loop 041 — manual "Free memory": unload() reclaims VRAM on demand (like idle, but now), and
+  // the model respawns on next use. It REFUSES while a reply is in flight so nothing is yanked.
+  it("U4: unload() frees the warm child on demand; the next generate respawns", async () => {
+    const { engine, fakes } = await warmup();
+    expect(engine.isWarm()).toBe(true);
+    expect(engine.unload()).toBe(true); // freed
+    expect(fakes[0]!.killed()).toBe(1);
+    expect(engine.isWarm()).toBe(false);
+    const p = engine.generate("m", "again"); // respawns
+    await vi.advanceTimersByTimeAsync(0);
+    fakes[fakes.length - 1]!.finish(2);
+    await p;
+    expect(fakes).toHaveLength(2);
+    expect(engine.isWarm()).toBe(true);
+  });
+
+  it("U4: unload() REFUSES while a reply is in flight — never yanks the model mid-answer", async () => {
+    const { engine, fakes } = await warmup();
+    const p = engine.generate("m", "long"); // in flight
+    await vi.advanceTimersByTimeAsync(0);
+    expect(engine.unload()).toBe(false); // refused
+    expect(fakes[0]!.killed()).toBe(0);
+    expect(engine.isWarm()).toBe(true);
+    fakes[0]!.finish(2); // settle so nothing hangs
+    await p;
+  });
 });

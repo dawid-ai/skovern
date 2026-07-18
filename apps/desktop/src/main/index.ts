@@ -27,7 +27,7 @@ import { fileFetchSink, fileReceiptSink, readActivityIndex, readReceipts, readRe
 import { toCsv } from "./csv.js";
 import { runPlugin, sandboxCheck } from "./plugin-host.js";
 import { claudeCliProvider } from "./claude-cli.js";
-import { disposeLocal, downloadedEmbeddedModelId, embeddedFilenames, engineForModel, isEmbeddedModel, localModels, localStatus, makeEngine, modelLoaded, pullModel } from "./local.js";
+import { deleteLocalModel, disposeLocal, downloadedEmbeddedModelId, downloadedModelsView, embeddedFilenames, engineForModel, freeMemory, isEmbeddedModel, localModels, localStatus, makeEngine, modelLoaded, pullModel } from "./local.js";
 import { appendMessage, createTokenCoalescer, deleteChat, getChat, listChats, newChat, renameChat, sendChatStatus, sendChatToken } from "./chat-store.js";
 import { resolveChatReply } from "./chat-reply.js";
 import { validateOllamaName } from "./ollama-name.js";
@@ -40,7 +40,7 @@ import { aiVisibilityManifest } from "../plugins/ai-visibility/manifest.js";
 import type { CurrentAccount, RequestResult, VerifyResult } from "../shared/account.js";
 import type { DmSendResult, DmThreadView, NewsPostView, PublishResultView } from "../shared/cloud.js";
 import type { BrainStatusView, SaveBrainResult, TestBrainResult } from "../shared/brain.js";
-import type { LocalActionResult, LocalModelsView, LocalStatusView, PullProgressView } from "../shared/local.js";
+import type { LocalActionResult, LocalModelsView, LocalStatusView, PullProgressView, YourModelsView } from "../shared/local.js";
 import type { RunSkillResult, SandboxCheckResult, SkillView } from "../shared/plugin.js";
 import type { ActivitySummary, ReceiptView } from "../shared/receipts.js";
 import type { ChatMessage, ChatMeta, ChatSendResult, ChatView } from "../shared/chat.js";
@@ -808,6 +808,21 @@ app
         const message = err instanceof Error ? err.message : "The download didn't finish. Try again.";
         send({ modelId, percent: 0, status: message, done: true, ok: false });
         return { ok: false, message };
+      }
+    });
+
+    // "Your models" (loop 041): see what's downloaded + loaded, delete to reclaim disk, free
+    // memory to reclaim VRAM. All main-owned; the renderer only reads/drives by IPC.
+    registerTrusted(TRUST, "local:downloadedModels", (): Promise<YourModelsView> => downloadedModelsView());
+    registerTrusted(TRUST, "local:freeMemory", (): { freed: boolean } => freeMemory());
+    registerTrusted(TRUST, "local:deleteModel", async (rawFile: unknown): Promise<LocalActionResult> => {
+      const filename = typeof rawFile === "string" ? rawFile : "";
+      try {
+        return await deleteLocalModel(filename);
+      } catch (err) {
+        // deleteLocalModel throws (via modelPath) on a traversing/bad name BEFORE any unlink —
+        // surface the safe plain-language reason, never delete outside the models dir.
+        return { ok: false, message: err instanceof Error ? err.message : "That model couldn't be deleted." };
       }
     });
 
