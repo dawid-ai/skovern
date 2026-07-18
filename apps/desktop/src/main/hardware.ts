@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import si from "systeminformation";
 import type { GpuInfo, HardwareProfile } from "@skovern/core";
 
@@ -7,6 +9,8 @@ import type { GpuInfo, HardwareProfile } from "@skovern/core";
 // `null` + an honest note, never a guessed number and never a crash.
 
 const MB = 1024 * 1024;
+
+const execFileP = promisify(execFile);
 
 async function safe<T>(fn: () => Promise<T>): Promise<T | null> {
   try {
@@ -23,14 +27,60 @@ function vramBytesOf(raw: unknown): number | null {
   return Math.round(raw * MB);
 }
 
-export async function scanHardware(): Promise<HardwareProfile> {
+/** Parse the powershell max-`qwMemorySize` output (bytes) into a positive integer, or null. */
+export function parseVramBytes(stdout: string): number | null {
+  const n = Number(stdout.trim());
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+}
+
+/** The best VRAM to trust: the LARGER of the two sources so whichever one read successfully
+ *  wins (si returned null VRAM in a real Electron run on a 24 GB AMD card; the registry is the
+ *  authoritative backstop, and vice-versa). Null only when BOTH failed. */
+export function bestVram(siVram: number | null, registryVram: number | null): number | null {
+  const vals = [siVram, registryVram].filter((v): v is number => typeof v === "number" && v > 0);
+  return vals.length > 0 ? Math.max(...vals) : null;
+}
+
+// Windows: read dedicated VRAM authoritatively from the registry. `si.graphics().vram` is flaky
+// inside Electron main (it returned null on a real 24 GB AMD card → the machine read as CPU-only
+// and every model showed "runs slowly"). The dedicated VRAM is the 64-bit `qwMemorySize` under
+// each display adapter's class key; take the max across adapters (the strong dGPU beats an iGPU).
+// Shell-free `execFile` of a CONSTANT script (no interpolated input → no injection), 5s timeout,
+// window hidden. Non-Windows / any failure → null (the si path stands).
+async function registryVramBytes(): Promise<number | null> {
+  if (process.platform !== "win32") return null;
+  const script =
+    "$k='HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}';" +
+    "$max=0;" +
+    "Get-ChildItem $k -ErrorAction SilentlyContinue | ForEach-Object {" +
+    "$v=(Get-ItemProperty $_.PSPath -Name 'HardwareInformation.qwMemorySize' -ErrorAction SilentlyContinue).'HardwareInformation.qwMemorySize';" +
+    "if($v -and $v -gt $max){$max=$v}" +
+    "};" +
+    "Write-Output $max";
+  try {
+    const { stdout } = await execFileP("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+      timeout: 5000,
+      windowsHide: true,
+    });
+    return parseVramBytes(stdout);
+  } catch {
+    return null;
+  }
+}
+
+/** The hardware scan. `readRegistryVram` is injectable so tests stay deterministic (the real read
+ *  shells out to a platform tool — machine-coupled, not fixturable); production uses the default. */
+export async function scanHardware(
+  readRegistryVram: () => Promise<number | null> = registryVramBytes,
+): Promise<HardwareProfile> {
   const notes: string[] = [];
 
-  const [mem, graphics, cpu, fs] = await Promise.all([
+  const [mem, graphics, cpu, fs, registryVram] = await Promise.all([
     safe(() => si.mem()),
     safe(() => si.graphics()),
     safe(() => si.cpu()),
     safe(() => si.fsSize()),
+    readRegistryVram(),
   ]);
 
   const ramBytes = mem && typeof mem.total === "number" && mem.total > 0 ? mem.total : null;
@@ -52,8 +102,17 @@ export async function scanHardware(): Promise<HardwareProfile> {
     vendor: typeof c.vendor === "string" ? c.vendor : undefined,
   }));
 
-  const vramValues = gpus.map((g) => g.vramBytes).filter((v): v is number => v !== null);
-  const bestVramBytes = vramValues.length > 0 ? Math.max(...vramValues) : null;
+  const siVramValues = gpus.map((g) => g.vramBytes).filter((v): v is number => v !== null);
+  const siBestVram = siVramValues.length > 0 ? Math.max(...siVramValues) : null;
+  // The authoritative registry value backstops si's flaky read (and vice-versa): use the larger,
+  // so a null or capped source can never silently downgrade a real GPU to CPU-only.
+  const bestVramBytes = bestVram(siBestVram, registryVram);
+
+  // Dev-only diagnostic: what each VRAM source actually returned in THIS process (the definitive
+  // confirmation of the Electron `si`-null failure + the registry fix). Dev builds only.
+  if (process.env["NODE_ENV"] === "development") {
+    console.log(`[hardware] VRAM sources — si=${siBestVram ?? "null"} registry=${registryVram ?? "null"} → chosen=${bestVramBytes ?? "null"}`);
+  }
 
   if (graphics === null) {
     notes.push("We couldn't check your graphics — we'll estimate from your memory instead.");
