@@ -22,7 +22,10 @@ function safeHref(url: string | undefined): string | undefined {
   return /^https?:\/\//i.test(url) ? url : undefined;
 }
 
-export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSaved: () => void }) {
+// `guided` (onboarding, loop 037): the florist-first path — ONE recommended built-in pick plus
+// a quiet "see other options" reveal, and NO Ollama surfaces at all. Settings (guided=false)
+// keeps the full view (Ollama Advanced section, start-prompt, pull-by-name) until Loop D.
+export function LocalBrainSetup({ onBack, onSaved, guided = false }: { onBack: () => void; onSaved: () => void; guided?: boolean }) {
   const [status, setStatus] = useState<LocalStatusView | null>(null);
   const [models, setModels] = useState<LocalModelView[] | null>(null);
   const [notice, setNotice] = useState("");
@@ -114,6 +117,8 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
   const { here, advanced } = partitionModels(all, status?.ollamaReady ?? false);
   const active = savedId ? all.find((m) => m.id === savedId) ?? null : null;
   const recommended = all.find((m) => m.recommended) ?? null;
+  // The guided "see other options" list: the OTHER built-in (embedded) brains, minus the hero.
+  const otherBuiltIns = all.filter((m) => m.embedded && m.id !== recommended?.id);
   // Embedded models run WITHOUT Ollama, so the actionable UI shows whenever Ollama is
   // ready OR at least one embedded model exists (the no-Ollama private-brain path).
   const hasEmbedded = all.some((m) => m.embedded);
@@ -263,7 +268,7 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
     <section className="page">
       <header className="page-head">
         <button className="page-back" onClick={onBack}>
-          ← Back to Settings
+          {guided ? "← Back" : "← Back to Settings"}
         </button>
         <h1>On this computer</h1>
         <p>A private brain that runs right here — free, and nothing you type ever leaves your machine.</p>
@@ -274,6 +279,50 @@ export function LocalBrainSetup({ onBack, onSaved }: { onBack: () => void; onSav
           <span className="spinner" aria-hidden="true" />
           <p>Checking your computer — finding the best private brain for it…</p>
         </div>
+      ) : guided ? (
+        // Guided (onboarding): ONE recommended pick + a quiet "see other options" reveal of the
+        // other built-in brains. No Ollama surfaces — a first-run florist never meets that word.
+        <>
+          <div className="card local-verdict">
+            <p className="local-headline">{status.verdict.headline}</p>
+            <ul className="hint local-specs">
+              <li>{status.hardware.gpu}</li>
+              <li>{status.hardware.ram}</li>
+              <li>{status.hardware.cpu}</li>
+              <li>{status.hardware.disk}</li>
+            </ul>
+            {status.hardware.notes.map((n, i) => (
+              <p key={i} className="hint">
+                {n}
+              </p>
+            ))}
+            <div className="row">
+              <button className="link" onClick={() => void refresh()} disabled={busy}>
+                {busy ? "Checking…" : "Check my computer again"}
+              </button>
+            </div>
+          </div>
+
+          {notice.length > 0 && <p className="notice">{notice}</p>}
+
+          {recommended ? (
+            <>
+              <div className="local-callouts">{callout(recommended, "pick")}</div>
+              {otherBuiltIns.length > 0 && (
+                <details className="local-other-options">
+                  <summary>See other options</summary>
+                  <p className="hint">Other private brains for this computer — pick any one.</p>
+                  {modelTable(otherBuiltIns)}
+                </details>
+              )}
+            </>
+          ) : (
+            <p className="hint">
+              No private brain runs well on this computer yet — your free cloud brain or your
+              subscription will serve you better.
+            </p>
+          )}
+        </>
       ) : (
         <>
           <div className="card local-verdict">

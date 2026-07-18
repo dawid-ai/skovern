@@ -359,3 +359,220 @@ test("O4: onboarding always offers an escape to an online brain — never a dead
     rmSync(userDataDir, { recursive: true, force: true });
   }
 });
+
+// ── Loop 037 — guided onboarding: ONE stable built-in pick, and the word "Ollama" never
+// appears on the guided screen. The recommendation scores our built-in (gguf) catalog only,
+// so it can't lurch when a background Ollama starts. Every environment input (hardware, catalog,
+// Ollama reachability) is fixtured, so PASS/FAIL is a pure function of the diff.
+test.describe("loop 037 — guided onboarding: one stable built-in pick, no Ollama", () => {
+  const HASH = "a".repeat(64); // well-formed sha (models are inspected, never downloaded here)
+  const gguf = (filename: string, sizeBytes: number) => ({
+    url: `https://huggingface.co/x/resolve/main/${filename}`,
+    sha256: HASH,
+    sizeBytes,
+    filename,
+    contextSize: 4096,
+  });
+  const built = (id: string, label: string, params: number, sizeBytes: number, filename: string) => ({
+    id, label, params, sizeBytes, quant: "Q4_K_M",
+    creator: "Alibaba (Qwen team)", homepage: "https://huggingface.co/x",
+    license: "Apache 2.0 — free to use.", licenseUrl: "https://www.apache.org/licenses/LICENSE-2.0",
+    tradeoff: "A private brain that runs right here.", gguf: gguf(filename, sizeBytes),
+  });
+  // Fixture-realism: our built-in 3/7/14B (gguf) PLUS a bigger Ollama-only catalog entry (no
+  // gguf) — the exact composition that used to flip the pick when Ollama woke.
+  const CATALOG_037 = {
+    models: [
+      built("qwen2.5:3b", "Qwen2.5 3B", 3, 2_000_000_000, "qwen2.5-3b.gguf"),
+      built("qwen2.5:7b", "Qwen2.5 7B", 7, 4_700_000_000, "qwen2.5-7b.gguf"),
+      built("qwen2.5:14b", "Qwen2.5 14B", 14, 9_000_000_000, "qwen2.5-14b.gguf"),
+      { id: "gemma2:27b", label: "Gemma2 27B (Ollama)", params: 27, sizeBytes: 16_000_000_000,
+        quant: "Q4_K_M", creator: "Google", homepage: "https://huggingface.co/x",
+        license: "Gemma license.", licenseUrl: "https://www.apache.org/licenses/LICENSE-2.0",
+        tradeoff: "A big one." },
+    ],
+  };
+  const GPU_24 = JSON.stringify({
+    ramBytes: 64 * 1024 ** 3, cpuCores: 16,
+    gpus: [{ model: "Test GPU 24GB", vramBytes: 24 * 1024 ** 3 }],
+    bestVramBytes: 24 * 1024 ** 3, unifiedMemory: false, diskFreeBytes: 500 * 1024 ** 3, notes: [],
+  });
+  const WEAK = JSON.stringify({
+    ramBytes: 2 * 1024 ** 3, cpuCores: 2, gpus: [], bestVramBytes: null,
+    unifiedMemory: false, diskFreeBytes: 60 * 1024 ** 3, notes: [],
+  });
+
+  let cat: Server | null = null;
+  let ollamaUp: Server | null = null;
+  let catUrl = "";
+  let ollamaUpUrl = "";
+
+  test.beforeAll(async () => {
+    catUrl = await new Promise<string>((resolve) => {
+      cat = createServer((_req, res) => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(CATALOG_037));
+      });
+      cat.listen(0, "127.0.0.1", () => resolve(`http://127.0.0.1:${(cat!.address() as AddressInfo).port}/catalog/models.json`));
+    });
+    // Ollama UP, serving a pulled 22B NOT in the catalog — green on 24 GB and bigger than the top
+    // built-in, i.e. exactly what USED to steal the recommendation once Ollama came up.
+    ollamaUpUrl = await new Promise<string>((resolve) => {
+      ollamaUp = createServer((req, res) => {
+        if ((req.url ?? "") === "/api/tags") {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ models: [{ name: "codestral:22b", size: 13_000_000_000, details: { quantization_level: "Q4_K_M", parameter_size: "22B" } }] }));
+          return;
+        }
+        res.writeHead(404);
+        res.end("{}");
+      });
+      ollamaUp.listen(0, "127.0.0.1", () => resolve(`http://127.0.0.1:${(ollamaUp!.address() as AddressInfo).port}`));
+    });
+  });
+
+  test.afterAll(() => {
+    cat?.close();
+    ollamaUp?.close();
+  });
+
+  function env037(over: Record<string, string>) {
+    return {
+      ...process.env,
+      SKOVERN_API_URL: server.url,
+      SKOVERN_CATALOG_URL: catUrl,
+      SKOVERN_HARDWARE: GPU_24,
+      SKOVERN_OLLAMA_INSTALLED: "0",
+      SKOVERN_OLLAMA_URL: "http://127.0.0.1:1", // down by default
+      ...over,
+    };
+  }
+
+  // Sign in and walk to the guided "On this computer" screen; wait for the scan to resolve.
+  async function toGuided(page: Page, email: string): Promise<void> {
+    await signIn(page, email);
+    await expect(page.getByText(/Set up your brain to get started/i)).toBeVisible({ timeout: 30_000 });
+    await page.getByRole("button", { name: "Set it up →" }).click();
+    await page.getByRole("button", { name: "Set up my private brain →" }).click();
+    await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator(".local-verdict")).toBeVisible({ timeout: 30_000 }); // scan resolved
+  }
+
+  const heroLabel = (page: Page) => page.locator(".local-callouts .callout h3").first().innerText();
+
+  test("E1: exactly ONE recommended pick, with its size and a get action", async () => {
+    test.setTimeout(120_000);
+    const dir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
+    const app = await electron.launch({ args: [".", `--user-data-dir=${dir}`], env: env037({}) });
+    try {
+      const page = await app.firstWindow();
+      await toGuided(page, "b-one@shop.test");
+      await expect(page.locator(".local-callouts .callout")).toHaveCount(1);
+      const hero = page.locator(".local-callouts .callout").first();
+      await expect(hero.getByText(/Our pick for your computer/i)).toBeVisible();
+      await expect(hero.locator(".callout-action button")).toBeVisible(); // actionable get
+      await expect(hero).toContainText(/GB/); // its size is shown
+    } finally {
+      await app.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("E2: the pick is IDENTICAL with Ollama down vs up-with-a-bigger-pulled-model (the flip case)", async () => {
+    test.setTimeout(180_000);
+    const d1 = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
+    const a1 = await electron.launch({ args: [".", `--user-data-dir=${d1}`], env: env037({}) });
+    let downPick = "";
+    try {
+      const p = await a1.firstWindow();
+      await toGuided(p, "b-down@shop.test");
+      downPick = (await heroLabel(p)).trim();
+    } finally {
+      await a1.close();
+      rmSync(d1, { recursive: true, force: true });
+    }
+
+    const d2 = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
+    const a2 = await electron.launch({ args: [".", `--user-data-dir=${d2}`], env: env037({ SKOVERN_OLLAMA_INSTALLED: "1", SKOVERN_OLLAMA_URL: ollamaUpUrl }) });
+    let upPick = "";
+    try {
+      const p = await a2.firstWindow();
+      await toGuided(p, "b-up@shop.test");
+      upPick = (await heroLabel(p)).trim();
+    } finally {
+      await a2.close();
+      rmSync(d2, { recursive: true, force: true });
+    }
+
+    expect(downPick).toBe("Qwen2.5 14B"); // biggest built-in that runs great on 24 GB
+    expect(upPick).toBe(downPick); // no flip — a background Ollama can't move the pick
+  });
+
+  test("E3: the word 'Ollama' never appears on the guided screen (even with Ollama up)", async () => {
+    test.setTimeout(120_000);
+    const dir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
+    const app = await electron.launch({ args: [".", `--user-data-dir=${dir}`], env: env037({ SKOVERN_OLLAMA_INSTALLED: "1", SKOVERN_OLLAMA_URL: ollamaUpUrl }) });
+    try {
+      const page = await app.firstWindow();
+      await toGuided(page, "b-noword@shop.test");
+      const more = page.locator("details.local-other-options > summary");
+      if (await more.count()) await more.click(); // include the revealed content in the check
+      const text = await page.locator(".page").innerText();
+      expect(text.toLowerCase()).not.toContain("ollama");
+    } finally {
+      await app.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("E4: 'see other options' is a collapsed reveal of the OTHER built-ins, honestly fit-labelled", async () => {
+    test.setTimeout(120_000);
+    const dir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
+    const app = await electron.launch({ args: [".", `--user-data-dir=${dir}`], env: env037({}) });
+    try {
+      const page = await app.firstWindow();
+      await toGuided(page, "b-more@shop.test");
+      const details = page.locator("details.local-other-options");
+      await expect(details).toBeVisible();
+      expect(await details.evaluate((d) => (d as HTMLDetailsElement).open)).toBe(false); // collapsed → hero is the focus
+      await details.locator("summary").click();
+      await expect(details.getByText("Qwen2.5 7B")).toBeVisible(); // an other built-in
+      await expect(details.getByText(/Runs great here|Runs, but slowly|Too big for this computer/).first()).toBeVisible();
+      await expect(details.getByText("Qwen2.5 14B")).toHaveCount(0); // the hero isn't duplicated
+    } finally {
+      await app.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("E5: the headline and the hero name the SAME model (single source of truth)", async () => {
+    test.setTimeout(120_000);
+    const dir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
+    const app = await electron.launch({ args: [".", `--user-data-dir=${dir}`], env: env037({}) });
+    try {
+      const page = await app.firstWindow();
+      await toGuided(page, "b-sot@shop.test");
+      const hero = (await heroLabel(page)).trim();
+      const headline = await page.locator(".local-headline").innerText();
+      expect(headline).toContain(hero); // headline names the same model as the hero
+    } finally {
+      await app.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("E6: weak hardware — honest guidance and NO dead 'download' hero", async () => {
+    test.setTimeout(120_000);
+    const dir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
+    const app = await electron.launch({ args: [".", `--user-data-dir=${dir}`], env: env037({ SKOVERN_HARDWARE: WEAK }) });
+    try {
+      const page = await app.firstWindow();
+      await toGuided(page, "b-weak@shop.test");
+      await expect(page.locator(".local-callouts")).toHaveCount(0); // no recommended hero at all
+      await expect(page.getByText(/No private brain runs well on this computer/i)).toBeVisible();
+    } finally {
+      await app.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

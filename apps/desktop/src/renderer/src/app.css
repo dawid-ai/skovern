@@ -1308,13 +1308,15 @@ footer {
   margin: 0 0 2px;
 }
 
-.local-advanced {
+.local-advanced,
+.local-other-options {
   margin-top: 20px;
   border-top: 1px solid #ece3d7;
   padding-top: 14px;
 }
 
-.local-advanced > summary {
+.local-advanced > summary,
+.local-other-options > summary {
   cursor: pointer;
   font-weight: 700;
   color: var(--ink);
@@ -1322,20 +1324,24 @@ footer {
   list-style: none;
 }
 
-.local-advanced > summary::-webkit-details-marker {
+.local-advanced > summary::-webkit-details-marker,
+.local-other-options > summary::-webkit-details-marker {
   display: none;
 }
 
-.local-advanced > summary::before {
+.local-advanced > summary::before,
+.local-other-options > summary::before {
   content: "▸ ";
   color: var(--muted);
 }
 
-.local-advanced[open] > summary::before {
+.local-advanced[open] > summary::before,
+.local-other-options[open] > summary::before {
   content: "▾ ";
 }
 
-.local-advanced > summary:hover {
+.local-advanced > summary:hover,
+.local-other-options > summary:hover {
   color: var(--accent);
 }
 
