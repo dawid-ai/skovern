@@ -15,7 +15,7 @@ export function Onboarding({ onConfigured, onSkip }: { onConfigured: () => void;
     // so without this the tall setup page clips at the bottom (Issue 1).
     return (
       <div className="content">
-        <LocalBrainSetup onBack={() => setShowLocal(false)} onSaved={onConfigured} />
+        <LocalBrainSetup guided onBack={() => setShowLocal(false)} onSaved={onConfigured} />
       </div>
     );
   }

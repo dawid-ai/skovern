@@ -1,5 +1,6 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -23,11 +24,18 @@ import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningSer
 
 const LOCAL_REPLY = "Hello from your private local brain.";
 
+// The embedded built-in that becomes the recommendation (loop 037 flip-kill: the pick is a
+// built-in gguf model, never a pulled Ollama model). Its bytes come from the download fixture.
+const GGUF_FILENAME = "qwen2.5-3b-instruct-q4_k_m.gguf";
+const MODEL_BODY = Buffer.from("FAKE-GGUF-BYTES-for-the-local-brain-e2e".repeat(50));
+const MODEL_SHA256 = createHash("sha256").update(MODEL_BODY).digest("hex");
+
 // A fixed CPU-only machine so the verdict is deterministic on ANY runner (CI is
-// CPU-only; a dev box may have a big GPU). With 16 GB RAM and no usable GPU:
-// mistral:7b + qwen2.5:3b are amber (usable), qwen2.5:235b is red — so the pulled
-// mistral:7b is always the biggest-usable recommendation. Fed via the SKOVERN_HARDWARE
-// dev/test seam (inert when packaged).
+// CPU-only; a dev box may have a big GPU). With 16 GB RAM and no usable GPU the built-in
+// qwen2.5:3b is amber (usable) and qwen2.5:235b is red — so the built-in 3B is the
+// recommendation. The pulled Ollama models (mistral:7b, gemma:2b) are NOT scored for the
+// pick (037 flip-kill), so the recommendation never lurches when Ollama is up. Fed via the
+// SKOVERN_HARDWARE dev/test seam (inert when packaged).
 const CPU_HARDWARE = JSON.stringify({
   ramBytes: 16 * 1024 ** 3,
   cpuCores: 8,
@@ -55,7 +63,13 @@ function startOllama(): Promise<string> {
         res.writeHead(200, { "content-type": "application/json" });
         res.end(
           JSON.stringify({
-            models: [{ name: "mistral:7b", size: 4_700_000_000, details: { quantization_level: "Q4_K_M", parameter_size: "7B" } }],
+            // Two pulled Ollama models NOT in the catalog: mistral reports token counts, gemma
+            // returns a bare reply (no tokens) — so the test exercises BOTH receipt renderings.
+            // Neither is the recommendation post-037 (they're not built-ins).
+            models: [
+              { name: "mistral:7b", size: 4_700_000_000, details: { quantization_level: "Q4_K_M", parameter_size: "7B" } },
+              { name: "gemma:2b", size: 1_600_000_000, details: { quantization_level: "Q4_K_M", parameter_size: "2B" } },
+            ],
           }),
         );
         return;
@@ -96,9 +110,10 @@ function startOllama(): Promise<string> {
   });
 }
 
-// A fake catalog: a smaller green suggestion (needs a download → exercises
-// "Get this one" download-and-use) + an always-red huge one. Neither is the user's
-// own model, so the best fit is the pulled `mistral:7b` above — that's the point.
+// A fake catalog of BUILT-IN (gguf) models: a smaller one that's usable here (the
+// recommendation, and a real "Get this one" download-and-use) + an always-red huge one.
+// The pulled Ollama models above are NOT in the catalog and are NOT built-ins, so post-037
+// the recommendation is always the built-in 3B — never a pulled Ollama model.
 function startCatalog(): Promise<string> {
   return new Promise((resolve) => {
     catalog = createServer((_req, res) => {
@@ -110,18 +125,26 @@ function startCatalog(): Promise<string> {
               id: "qwen2.5:3b",
               label: "Qwen2.5 3B",
               params: 3,
-              sizeBytes: 2_000_000_000,
+              sizeBytes: MODEL_BODY.length,
               quant: "Q4_K_M",
               creator: "Alibaba (Qwen team)",
-              homepage: "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct",
+              homepage: "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF",
               license: "Apache 2.0 — free to use.",
               licenseUrl: "https://www.apache.org/licenses/LICENSE-2.0",
               tradeoff: "A solid everyday pick — good balance of speed and smarts.",
+              gguf: {
+                url: `https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/${GGUF_FILENAME}`,
+                sha256: MODEL_SHA256,
+                sizeBytes: MODEL_BODY.length,
+                filename: GGUF_FILENAME,
+                contextSize: 4096,
+              },
             },
             {
-              // Deliberately enormous (235B, ~140 GB) so its footprint exceeds any
-              // realistic machine's memory → RED everywhere (CPU CI and big dGPU hosts
-              // alike), so it's always an "Other options" pick, never the recommendation.
+              // Deliberately enormous (235B, ~140 GB) so its footprint exceeds any realistic
+              // machine's memory → RED everywhere (CPU CI and big dGPU hosts alike), so it's
+              // never the recommendation. A built-in (gguf) so it scores red properly; its
+              // dummy hash is fine because the test never downloads it.
               id: "qwen2.5:235b",
               label: "Qwen2.5 235B",
               params: 235,
@@ -132,6 +155,13 @@ function startCatalog(): Promise<string> {
               license: "Apache 2.0 — free to use.",
               licenseUrl: "https://www.apache.org/licenses/LICENSE-2.0",
               tradeoff: "The smartest of these, but it needs a lot of memory.",
+              gguf: {
+                url: "https://huggingface.co/Qwen/Qwen2.5-235B-Instruct-GGUF/resolve/main/qwen2.5-235b.gguf",
+                sha256: "b".repeat(64),
+                sizeBytes: 140_000_000_000,
+                filename: "qwen2.5-235b-instruct-q4_k_m.gguf",
+                contextSize: 4096,
+              },
             },
           ],
         }),
@@ -141,12 +171,26 @@ function startCatalog(): Promise<string> {
   });
 }
 
+// The model-download fixture: streams the built-in 3B's bytes (sha matches the catalog) so
+// "Get this one" exercises the real downloader without a large transfer.
+let download: Server | null = null;
+function startDownload(): Promise<string> {
+  return new Promise((resolve) => {
+    download = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/octet-stream" });
+      res.end(MODEL_BODY);
+    });
+    download.listen(0, "127.0.0.1", () => resolve(`http://127.0.0.1:${(download!.address() as AddressInfo).port}/${GGUF_FILENAME}`));
+  });
+}
+
 let container: StartedPostgreSqlContainer;
 let pool: pg.Pool;
 let server: RunningServer;
 let mailer: ConsoleMailer;
 let ollamaUrl: string;
 let catalogUrl: string;
+let downloadUrl: string;
 
 test.beforeAll(async () => {
   test.setTimeout(180_000);
@@ -158,6 +202,7 @@ test.beforeAll(async () => {
   server = await startAuthServer({ service: auth });
   ollamaUrl = await startOllama();
   catalogUrl = await startCatalog();
+  downloadUrl = await startDownload();
 });
 
 test.afterAll(async () => {
@@ -166,6 +211,7 @@ test.afterAll(async () => {
   await container?.stop();
   ollama?.close();
   catalog?.close();
+  download?.close();
 });
 
 // A strong-GPU machine (24 GB) so bigger models fit — the profile Dawid actually has.
@@ -320,9 +366,9 @@ test("user sets up a private on-computer brain, always sees which brain is activ
       SKOVERN_OLLAMA_URL: ollamaUrl,
       SKOVERN_CATALOG_URL: catalogUrl,
       SKOVERN_HARDWARE: CPU_HARDWARE,
-      // Ollama NOT installed (deterministic): so the degraded case below shows the honest
-      // "isn't running" line, not the loop-035 "Start Ollama" prompt (which needs it installed).
-      SKOVERN_OLLAMA_INSTALLED: "0",
+      SKOVERN_OLLAMA_INSTALLED: "0", // deterministic: not installed → no start-prompt
+      SKOVERN_LLAMA_FAKE: "1", // fake the embedded child so "Get this one" runs the built-in
+      SKOVERN_MODEL_DOWNLOAD_URL: downloadUrl, // stream the built-in's bytes from the fixture
     },
   });
 
@@ -351,27 +397,28 @@ test("user sets up a private on-computer brain, always sees which brain is activ
     await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible();
     await expect(page.getByText(/private brain|cloud brain|subscription/i).first()).toBeVisible({ timeout: 30_000 });
 
-    // CONSISTENCY (regression for the 019 contradiction): the verdict headline names the
-    // SAME model as the "Our pick" callout. The user's own mistral:7b outranks the catalog
-    // picks, so it's the recommendation. Asserted wording-independently (headline copy
-    // differs green vs amber, but the MODEL it names must match the pick callout).
+    // CONSISTENCY (regression for the 019 contradiction) + FLIP-KILL (037): the verdict
+    // headline names the SAME model as the "Our pick" callout, AND that model is the built-in
+    // qwen2.5:3b — NOT the pulled Ollama mistral:7b, even though Ollama is up and mistral is
+    // a bigger fit. The recommendation scores built-ins only, so a background Ollama can't
+    // move it. Asserted wording-independently (headline copy differs green vs amber).
     const pickCallout = page.locator(".callout-pick");
     await expect(pickCallout.getByText("Our pick for your computer")).toBeVisible({ timeout: 30_000 });
-    await expect(pickCallout.getByRole("heading", { name: "mistral:7b" })).toBeVisible();
-    await expect(page.locator(".local-headline")).toContainText("mistral:7b");
+    await expect(pickCallout.getByRole("heading", { name: "Qwen2.5 3B" })).toBeVisible();
+    await expect(page.locator(".local-headline")).toContainText("Qwen2.5 3B");
     // no brain picked yet → no "This is your brain" callout dangling
     await expect(page.locator(".callout-brain")).toHaveCount(0);
 
-    // NEW LAYOUT — EVERY model is in ONE table, nothing behind a fold: the always-red
-    // Qwen2.5 235B (previously hidden under "Other options") is visible immediately, and
-    // there is no "Other options" disclosure at all.
+    // EVERY model in ONE table (024): the built-ins (3B pick, always-red 235B) AND the pulled
+    // Ollama models (mistral:7b, gemma:2b) are all visible, no fold.
     await expect(page.getByText("Other options")).toHaveCount(0);
     const table = page.locator("table.local-table");
     await expect(table.locator("tr.receipt-row", { hasText: "mistral:7b" })).toBeVisible();
     await expect(table.locator("tr.receipt-row", { hasText: "Qwen2.5 3B" })).toBeVisible();
     await expect(table.locator("tr.receipt-row", { hasText: "Qwen2.5 235B" })).toBeVisible();
-    // the recommended row is marked "Our pick" in the table; transparency is present
-    await expect(table.locator("tr.receipt-row", { hasText: "mistral:7b" }).getByText("Our pick", { exact: true })).toBeVisible();
+    // the built-in 3B carries "Our pick"; the pulled Ollama mistral does NOT (flip-kill).
+    await expect(table.locator("tr.receipt-row", { hasText: "Qwen2.5 3B" }).getByText("Our pick", { exact: true })).toBeVisible();
+    await expect(table.locator("tr.receipt-row", { hasText: "mistral:7b" }).getByText("Our pick", { exact: true })).toHaveCount(0);
     await expect(page.getByText(/by Alibaba/).first()).toBeVisible();
 
     // DOUBLE-FETCH FIXED (closes local-catalog-double-fetch): first + only open so far;
@@ -382,52 +429,42 @@ test("user sets up a private on-computer brain, always sees which brain is activ
       .filter((l) => l.includes('"task":"Skovern: model list"') && l.includes('"phase":"sent"'));
     expect(modelListSent).toHaveLength(1);
 
-    // DOWNLOAD-AND-USE from the table: "Get this one" on Qwen2.5 3B (NOT the recommended
-    // model) pulls AND selects it → the active brain is now DIFFERENT from the recommended.
-    await table.locator("tr.receipt-row", { hasText: "Qwen2.5 3B" }).getByRole("button", { name: "Get this one" }).click();
-    await expect(page.getByText("Local: qwen2.5:3b")).toBeVisible({ timeout: 30_000 });
-
-    // THE FIX (this loop): active ≠ recommended → BOTH callouts are obvious with NO clicking.
-    // "This is your brain" names the active qwen (shown by its catalog label "Qwen2.5 3B");
-    // "Our pick" still names mistral.
+    // ACTIVE ≠ RECOMMENDED, no-token receipt path (022): pick the pulled Ollama gemma:2b
+    // (NOT the recommendation) → BOTH callouts show, naming DIFFERENT models. gemma returns a
+    // bare reply (no token counts), so its receipt falls back to the plain "stayed on your
+    // computer" line.
+    await table.locator("tr.receipt-row", { hasText: "gemma:2b" }).getByRole("button", { name: "Use this one" }).click();
+    await expect(page.getByText("Local: gemma:2b")).toBeVisible({ timeout: 30_000 });
     await expect(page.locator(".callout-brain")).toContainText("This is your brain");
-    await expect(page.locator(".callout-brain")).toContainText("Qwen2.5 3B");
+    await expect(page.locator(".callout-brain")).toContainText("gemma:2b");
     await expect(page.locator(".callout-pick")).toContainText("Our pick for your computer");
-    await expect(page.locator(".callout-pick")).toContainText("mistral:7b");
-    // the table marks the active one "Your brain ✓" and the recommended one "Our pick"
-    // (exact: the status span, not the disabled "This is your brain ✓" action button).
-    await expect(table.locator("tr.receipt-row", { hasText: "Qwen2.5 3B" }).getByText("Your brain ✓", { exact: true })).toBeVisible();
-    await expect(table.locator("tr.receipt-row", { hasText: "mistral:7b" }).getByText("Our pick", { exact: true })).toBeVisible();
+    await expect(page.locator(".callout-pick")).toContainText("Qwen2.5 3B");
+    await expect(table.locator("tr.receipt-row", { hasText: "gemma:2b" }).getByText("Your brain ✓", { exact: true })).toBeVisible();
+    await expect(table.locator("tr.receipt-row", { hasText: "Qwen2.5 3B" }).getByText("Our pick", { exact: true })).toBeVisible();
 
-    // run a call on the ACTIVE qwen brain — it reports NO token counts in the fixture, so
-    // the receipt falls back to the plain "stayed on your computer" line (022 degraded path).
     await page.getByRole("button", { name: "← Back to Settings" }).click();
     await page.getByRole("button", { name: "Test my brain" }).click();
     await expect(page.getByText(LOCAL_REPLY)).toBeVisible({ timeout: 30_000 });
     await page.getByRole("button", { name: "Receipts" }).click();
     await expect(page.getByText("stayed on your computer — nothing left").first()).toBeVisible({ timeout: 30_000 });
 
-    // switch to the recommended mistral from the table → active == recommended → ONE
-    // combined callout (no confusing duplicate), and the sidebar flips.
+    // TOKEN receipt path (022): switch to the pulled Ollama mistral:7b (reports token counts).
+    // Still ≠ the recommendation, so the dual callouts persist (brain=mistral, pick=3B).
     await page.getByRole("button", { name: "Settings" }).click();
     await page.getByRole("button", { name: "Set up the local brain →" }).click();
     await table.locator("tr.receipt-row", { hasText: "mistral:7b" }).getByRole("button", { name: "Use this one" }).click();
     await expect(page.getByText("Local: mistral:7b")).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText("Your brain — our pick, too")).toBeVisible();
-    await expect(page.locator(".callout-pick")).toHaveCount(0); // no separate pick card when they're the same
+    await expect(page.locator(".callout-brain")).toContainText("mistral:7b");
+    await expect(page.locator(".callout-pick")).toContainText("Qwen2.5 3B");
 
-    // back to Settings: the "right now you're using" line names the active provider+model
     await page.getByRole("button", { name: "← Back to Settings" }).click();
     await expect(page.locator(".active-brain")).toContainText("On this computer");
     await expect(page.locator(".active-brain")).toContainText("mistral:7b");
-
-    // run a real call on the mistral brain (reports tokens)
     await page.getByRole("button", { name: "Test my brain" }).click();
     await expect(page.getByText(LOCAL_REPLY)).toBeVisible({ timeout: 30_000 });
 
-    // Receipts page (loop 022): the local mistral run shows the TOKENS it used ("all
-    // on your computer"), NOT bytes; and the routine catalog poll is GROUPED under
-    // "Routine background checks", never a row in the main table.
+    // Receipts (022): the mistral run shows the TOKENS it used ("all on your computer"), NOT
+    // bytes; the routine catalog poll is GROUPED, never a table row.
     await page.getByRole("button", { name: "Receipts" }).click();
     await expect(page.getByText(/7 tokens in, 42 out/).first()).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText(/all on your computer/).first()).toBeVisible();
@@ -446,24 +483,28 @@ test("user sets up a private on-computer brain, always sees which brain is activ
     expect(modelListLine).toContain('"routine":true');
     expect(log).not.toContain(LOCAL_REPLY);
 
-    // IN-USE MARKER ON LOAD: reopening the local setup shows the active mistral as in use
-    // (the combined "your brain — our pick" callout, since active == recommended) WITHOUT
-    // clicking anything.
+    // ACTIVE == RECOMMENDED, combined callout (021): download the built-in 3B (the pick) →
+    // active == recommended → ONE combined "your brain — our pick" callout, no separate pick.
     await page.getByRole("button", { name: "Settings" }).click();
     await page.getByRole("button", { name: "Set up the local brain →" }).click();
-    await expect(page.getByText("Your brain — our pick, too")).toBeVisible({ timeout: 30_000 });
+    await table.locator("tr.receipt-row", { hasText: "Qwen2.5 3B" }).getByRole("button", { name: "Get this one" }).click();
+    await expect(page.getByText("Local: qwen2.5:3b")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText("Your brain — our pick, too")).toBeVisible();
+    await expect(page.locator(".callout-pick")).toHaveCount(0); // no separate pick card when they're the same
     await expect(page.getByRole("button", { name: "This is your brain ✓" }).first()).toBeVisible();
 
-    // DEGRADED — Ollama unreachable: stop the fake server, reopen → plain-language "isn't
-    // running", and NO callouts/table (nothing actionable dangles — the 020 no-dead-pick rule).
+    // FLIP-KILL under Ollama loss (037): stop the fake Ollama and reopen. The built-in
+    // recommendation is UNCHANGED and the embedded active brain keeps working — the combined
+    // callout persists, the 3B row stays actionable, and the pulled Ollama models simply drop
+    // out (they're only reachable through Ollama). A background Ollama going down can't move
+    // or break the built-in pick.
     await new Promise<void>((resolve) => (ollama ? ollama.close(() => resolve()) : resolve()));
     ollama = null;
     await page.getByRole("button", { name: "← Back to Settings" }).click();
     await page.getByRole("button", { name: "Set up the local brain →" }).click();
-    await expect(page.getByText(/Ollama isn't running/i).first()).toBeVisible({ timeout: 30_000 });
-    await expect(page.locator(".callout-pick")).toHaveCount(0);
-    await expect(page.locator(".callout-brain")).toHaveCount(0);
-    await expect(page.locator("table.local-table")).toHaveCount(0);
+    await expect(page.getByText("Your brain — our pick, too")).toBeVisible({ timeout: 30_000 });
+    await expect(table.locator("tr.receipt-row", { hasText: "Qwen2.5 3B" })).toBeVisible();
+    await expect(table.locator("tr.receipt-row", { hasText: "mistral:7b" })).toHaveCount(0); // gone with Ollama
   } finally {
     await app.close();
     rmSync(userDataDir, { recursive: true, force: true });
