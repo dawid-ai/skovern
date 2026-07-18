@@ -8,8 +8,10 @@ services:
       POSTGRES_PASSWORD: skovern
       POSTGRES_DB: skovern
     # Host port 5442 (not the crowded 5432) to avoid clashing with other local DBs.
+    # Bind to loopback only — a dev DB must never be reachable from an untrusted network
+    # (ledger compose-bind-localhost, origin 004).
     ports:
-      - "5442:5432"
+      - "127.0.0.1:5442:5432"
     volumes:
       - skovern-pgdata:/var/lib/postgresql/data
 
