@@ -41,6 +41,15 @@ export function bestVram(siVram: number | null, registryVram: number | null): nu
   return vals.length > 0 ? Math.max(...vals) : null;
 }
 
+// A discrete GPU by name (best-effort): the registry's max VRAM belongs to it, not an iGPU. Used
+// only to attribute a registry-supplied VRAM to the right card when si couldn't read it, so the
+// setup screen names the card instead of a generic "Graphics card".
+export function isDiscreteGpu(model: string): boolean {
+  const m = model.toLowerCase();
+  if (/\buhd\b|\biris\b|integrated|\(r\) graphics|vega \d+ graphics|radeon graphics/.test(m)) return false;
+  return /radeon rx|radeon pro|geforce|\brtx\b|\bgtx\b|nvidia|intel arc|\barc\b|instinct|quadro|firepro/.test(m);
+}
+
 // Windows: read dedicated VRAM authoritatively from the registry. `si.graphics().vram` is flaky
 // inside Electron main (it returned null on a real 24 GB AMD card → the machine read as CPU-only
 // and every model showed "runs slowly"). The dedicated VRAM is the 64-bit `qwMemorySize` under
@@ -107,6 +116,14 @@ export async function scanHardware(
   // The authoritative registry value backstops si's flaky read (and vice-versa): use the larger,
   // so a null or capped source can never silently downgrade a real GPU to CPU-only.
   const bestVramBytes = bestVram(siBestVram, registryVram);
+
+  // When the registry supplied the VRAM that si couldn't read, attribute it to the strongest
+  // discrete GPU so the profile is consistent — the setup screen can then name the actual card
+  // (matches by vramBytes) instead of falling back to a generic "Graphics card".
+  if (bestVramBytes !== null && !siVramValues.includes(bestVramBytes)) {
+    const idx = gpus.findIndex((g) => g.vramBytes === null && isDiscreteGpu(g.model));
+    if (idx >= 0) gpus[idx] = { ...gpus[idx]!, vramBytes: bestVramBytes };
+  }
 
   // Dev-only diagnostic: what each VRAM source actually returned in THIS process (the definitive
   // confirmation of the Electron `si`-null failure + the registry fix). Dev builds only.

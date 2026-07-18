@@ -87,5 +87,7 @@ describe("scanHardware", () => {
     const p = await scanHardware(() => Promise.resolve(24 * GB)); // registry backstops the null si vram
     expect(p.bestVramBytes).toBe(24 * GB); // not null → not CPU-only → models show "runs great"
     expect(p.notes.some((n) => /graphics memory/i.test(n))).toBe(false);
+    // the registry VRAM is attributed to the discrete card, so the screen names it (not "Graphics card")
+    expect(p.gpus.find((g) => g.model.includes("7900 XTX"))?.vramBytes).toBe(24 * GB);
   });
 });

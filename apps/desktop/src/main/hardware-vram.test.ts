@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { verdict, type HardwareProfile } from "@skovern/core";
-import { parseVramBytes, bestVram } from "./hardware.js";
+import { parseVramBytes, bestVram, isDiscreteGpu } from "./hardware.js";
 
 // Loop 039 — a discrete GPU must never read as CPU-only. Dawid's 24 GB AMD card came back from
 // si.graphics().vram as null inside Electron, so the verdict used the CPU-only budget and called a
@@ -41,5 +41,14 @@ describe("VRAM detection helpers (loop 039)", () => {
     expect(verdict(base, small).fits[0]!.tier).toBe("amber");
     // the SAME machine with its real 24 GB read → "runs great" (green)
     expect(verdict({ ...base, bestVramBytes: 24 * GB }, small).fits[0]!.tier).toBe("green");
+  });
+
+  it("U4: isDiscreteGpu tells a real dGPU from an iGPU (so registry VRAM attaches to the right card)", () => {
+    expect(isDiscreteGpu("AMD Radeon RX 7900 XTX")).toBe(true);
+    expect(isDiscreteGpu("NVIDIA GeForce RTX 4090")).toBe(true);
+    expect(isDiscreteGpu("Intel Arc A770")).toBe(true);
+    expect(isDiscreteGpu("Intel(R) UHD Graphics 770")).toBe(false);
+    expect(isDiscreteGpu("AMD Radeon Graphics")).toBe(false); // an iGPU, not a discrete RX
+    expect(isDiscreteGpu("Microsoft Basic Display Adapter")).toBe(false);
   });
 });
