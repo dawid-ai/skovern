@@ -9,7 +9,7 @@ import {
   type LocalModelInfo,
   type PullProgress,
 } from "@skovern/core";
-import { builtInCandidates } from "./guided-verdict.js";
+import { allCandidates, builtInCandidates } from "./guided-verdict.js";
 import { fileFetchSink } from "./receipts.js";
 import { scanHardware } from "./hardware.js";
 import { createCachedCatalogLoader, snapshotCatalog } from "./catalog.js";
@@ -371,10 +371,16 @@ export async function localModels(): Promise<LocalModelsView> {
   const catalogIds = new Set(catalog.models.map((m) => m.id));
   const ownHave = det.have.filter((m) => !catalogIds.has(m.id));
 
-  // Same candidate set as `localStatus` — so the headline and the hero name the
-  // SAME recommendation (see builtInCandidates).
-  const v = verdict(profile, builtInCandidates(catalog.models));
-  const tierOf = (id: string) => v.fits.find((f) => f.modelId === id);
+  // Two passes, one per concern:
+  //  - DISPLAY tier of EVERY row (built-in + Ollama catalog suggestions + own pulled models)
+  //    comes from a verdict over ALL of them, so an Ollama model shows its REAL fit — a small
+  //    one on a big card is green, not a default amber (BUG A / loop 042).
+  //  - The RECOMMENDATION comes from a separate built-in-only pass — the SAME call as
+  //    `localStatus`, so the headline and the hero still name the same model, and a background
+  //    Ollama can never become the pick (037 flip-kill preserved).
+  const vDisplay = verdict(profile, allCandidates([...catalog.models, ...ownHave]));
+  const tierOf = (id: string) => vDisplay.fits.find((f) => f.modelId === id);
+  const recommendedModelId = verdict(profile, builtInCandidates(catalog.models)).recommendedModelId;
 
   const suggested: LocalModelView[] = catalog.models.map((c: CatalogModel) => {
     const fit = tierOf(c.id);
@@ -391,7 +397,7 @@ export async function localModels(): Promise<LocalModelsView> {
       tier: fit?.tier ?? "amber",
       usable: fit?.usable ?? true,
       note: fit?.note ?? "",
-      recommended: v.recommendedModelId === c.id,
+      recommended: recommendedModelId === c.id,
       creator: c.creator,
       homepage: c.homepage,
       license: c.license,
@@ -411,7 +417,7 @@ export async function localModels(): Promise<LocalModelsView> {
       tier: fit?.tier ?? "amber",
       usable: fit?.usable ?? true,
       note: fit?.note ?? "",
-      recommended: v.recommendedModelId === m.id,
+      recommended: recommendedModelId === m.id,
       size: m.sizeBytes ? fmtGB(m.sizeBytes) ?? undefined : undefined,
     };
   });
