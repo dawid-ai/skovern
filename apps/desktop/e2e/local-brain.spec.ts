@@ -334,6 +334,13 @@ test("Ollama installed-but-down: honest loading, consented Start reveals your pu
     await expect(table.locator("tr.receipt-row", { hasText: "gemma2:9b" })).toBeVisible();
     await expect(startBtn).toHaveCount(0);
 
+    // BUG A / loop 042: the revealed Ollama models show their REAL fit on this 24 GB card, not a
+    // default amber. gemma2:9b (9B, ~5.4 GB) fits the card → "Runs great here"; mixtral:8x7b
+    // (47B, ~26 GB, bigger than 24 GB VRAM) → "Runs, but slowly". Two different tiers on ONE
+    // machine prove the display is per-model, not the old all-amber default (pre-fix both amber).
+    await expect(table.locator("tr.receipt-row", { hasText: "gemma2:9b" })).toContainText("Runs great here");
+    await expect(table.locator("tr.receipt-row", { hasText: "mixtral:8x7b" })).toContainText("Runs, but slowly");
+
     // E5: pull ANY Ollama model by name (Advanced). A malformed name is rejected BEFORE any
     // pull; a valid one pulls and becomes the active brain.
     await page.locator("details.local-advanced summary").click();

@@ -29,3 +29,11 @@ function toVerdictModel(m: CandidateInput): VerdictModel {
 export function builtInCandidates(catalogModels: CandidateInput[]): VerdictModel[] {
   return catalogModels.filter((m) => m.gguf !== undefined).map(toVerdictModel);
 }
+
+/** Every listed model as a scorable `VerdictModel` — built-in AND Ollama (catalog suggestions,
+ *  the user's own pulled models). Feeds the DISPLAYED fit tier of each row, so an Ollama model
+ *  shows its REAL fit instead of a default amber. The RECOMMENDATION still uses builtInCandidates
+ *  only (037 flip-kill), so widening the DISPLAY set can never widen what becomes the pick. */
+export function allCandidates(models: CandidateInput[]): VerdictModel[] {
+  return models.map(toVerdictModel);
+}
