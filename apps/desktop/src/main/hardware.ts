@@ -67,7 +67,10 @@ async function registryVramBytes(): Promise<number | null> {
     "};" +
     "Write-Output $max";
   try {
-    const { stdout } = await execFileP("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+    // Invoke the interpreter by its absolute system path, not bare "powershell.exe", so a
+    // PATH/CWD-planted binary can't be the spawn target (defense-in-depth — SECURE note 039).
+    const powershell = `${process.env["SystemRoot"] ?? "C:\\Windows"}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+    const { stdout } = await execFileP(powershell, ["-NoProfile", "-NonInteractive", "-Command", script], {
       timeout: 5000,
       windowsHide: true,
     });
