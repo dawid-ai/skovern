@@ -1,0 +1,110 @@
+{
+  "meta": {
+    "purpose": "A reference map of local, freely-downloadable models across every modality a Skovern tool/plugin might need. A tool picks a model by (a) the job it's doing and (b) the user's hardware. Seed to curate + expand — not complete, not verified.",
+    "hosting": "We do NOT host models and store NO file hashes here. Every entry points upstream via `source`. Acquisition + verification is the job of the runtime/plugin that uses the model. The separate catalog/models.json (chat brains the app itself downloads + sha256-gates directly from Hugging Face) is unrelated and unchanged.",
+    "status": "seed — 2026-07-19, awaiting curation",
+    "fields": {
+      "id": "stable kebab-case slug",
+      "name": "display name",
+      "family": "model family",
+      "task": "one of `tasks` below — the modality/job",
+      "useCases": "plain-language jobs this is good for",
+      "params": "parameter count (e.g. '8B'), or 'n/a' for diffusion / classic-CV models",
+      "minVramGB": "minimum GPU VRAM to run at the recommended quant; a smaller quant lowers it; 0 = no GPU needed",
+      "cpuOk": "true = runs on CPU with no GPU (slower, but does the job) — e.g. Whisper, embeddings, OCR",
+      "quants": "quantisations available (lower = smaller + less VRAM, slightly worse)",
+      "runtime": "one of `runtimes` below — decides which plugin can host it",
+      "source": "upstream repo / home (Hugging Face id or URL) — where to GET it",
+      "license": "license + freedom note",
+      "free": "true = free to use (incl. local commercial); false entries are excluded per policy",
+      "gated": "true = the upstream repo requires accepting a license / login before download",
+      "licenseClass": "'standard' = plain OSI/permissive (Apache/MIT/BSD/CC-BY); 'custom' = open weights but bespoke terms (Gemma/Llama/Stability/OpenRAIL) — show a '*' and link the terms; it's the model maker's legal surface, not ours",
+      "notes": "anything a curator should know"
+    },
+    "tasks": {
+      "text": "general writing / chat / summarising",
+      "agentic": "reasoning, planning, tool-use, 'think it through'",
+      "code": "code generation / completion / explanation",
+      "vision": "understand an image — describe, VQA, tag",
+      "ocr": "scan / photo of a document -> text",
+      "image-gen": "text -> image",
+      "image-edit": "upscale, inpaint, background removal, edit",
+      "stt": "speech -> text (transcription)",
+      "tts": "text -> speech",
+      "embedding": "text -> vector, for local search / RAG",
+      "rerank": "reorder search results by relevance",
+      "translation": "translate between languages",
+      "moderation": "classify content for safety / policy",
+      "_reserved": "future, no seed yet: video understanding, audio/music generation, speaker diarization"
+    },
+    "runtimes": {
+      "gguf": "llama.cpp / node-llama-cpp — text, agentic, code, vision(+mmproj); Skovern's built-in engine",
+      "whisper.cpp": "ggml Whisper — stt",
+      "ctranslate2": "faster-whisper / NeMo-exported — stt",
+      "sd.cpp": "stable-diffusion.cpp (quantised, GPU) — image-gen/-edit",
+      "diffusers": "python diffusers/ComfyUI (full-fat) — image-gen/-edit",
+      "onnx": "ONNX Runtime (cross-platform, CPU-friendly) — ocr, embedding, tts, rerank, translation",
+      "native": "classic CV / purpose tool (Tesseract, PaddleOCR, Piper, Real-ESRGAN)"
+    },
+    "vramTiersGB": [0, 1, 2, 4, 6, 8, 12, 16, 24, 32, 48, 80],
+    "hardwareNotes": "Tiers are common dedicated-GPU VRAM sizes; 0 = integrated/no GPU (see cpuOk). Apple unified memory shares system RAM as VRAM (a 16 GB Mac ~= a 10-12 GB card after the OS). Multi-GPU / dedicated rigs sum VRAM. New cards keep raising the ceiling — the ladder is open-ended (add 48/80/128+ as they land). The real question is never 'good enough computer?' but 'good enough for THIS job?' — a weak box runs Whisper + OCR + embeddings fine while being hopeless at image-gen."
+  },
+  "models": [
+    { "id": "gemma-3-1b", "name": "Gemma 3 1B", "family": "Gemma 3", "task": "text", "useCases": ["quick replies on any machine", "short summaries"], "params": "1B", "minVramGB": 1, "cpuOk": true, "quants": ["Q4_K_M", "Q8_0"], "runtime": "gguf", "source": "google/gemma-3-1b-it", "license": "Gemma (free, terms)", "free": true, "gated": true, "licenseClass": "custom", "notes": "Smallest of the Gemma 3 line; runs on a potato." },
+    { "id": "gemma-3-4b", "name": "Gemma 3 4B", "family": "Gemma 3", "task": "text", "useCases": ["everyday writing on a modest laptop"], "params": "4B", "minVramGB": 4, "cpuOk": true, "quants": ["Q4_K_M", "Q5_K_M", "Q8_0"], "runtime": "gguf", "source": "google/gemma-3-4b-it", "license": "Gemma (free, terms)", "free": true, "gated": true, "licenseClass": "custom", "notes": "Also vision-capable with the mmproj file." },
+    { "id": "gemma-3-12b", "name": "Gemma 3 12B", "family": "Gemma 3", "task": "text", "useCases": ["strong general writing on a good GPU"], "params": "12B", "minVramGB": 8, "cpuOk": false, "quants": ["Q4_K_M", "Q5_K_M"], "runtime": "gguf", "source": "google/gemma-3-12b-it", "license": "Gemma (free, terms)", "free": true, "gated": true, "licenseClass": "custom", "notes": "" },
+    { "id": "gemma-3-27b", "name": "Gemma 3 27B", "family": "Gemma 3", "task": "text", "useCases": ["best local writing on a 24 GB card"], "params": "27B", "minVramGB": 16, "cpuOk": false, "quants": ["Q4_K_M"], "runtime": "gguf", "source": "google/gemma-3-27b-it", "license": "Gemma (free, terms)", "free": true, "gated": true, "licenseClass": "custom", "notes": "The 24 GB hero for a writing-first florist." },
+    { "id": "qwen3-1.7b", "name": "Qwen3 1.7B", "family": "Qwen3", "task": "text", "useCases": ["fast replies, low-end hardware"], "params": "1.7B", "minVramGB": 2, "cpuOk": true, "quants": ["Q4_K_M", "Q8_0"], "runtime": "gguf", "source": "Qwen/Qwen3-1.7B", "license": "Apache-2.0 (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "Ungated — one-click download." },
+    { "id": "qwen3-8b", "name": "Qwen3 8B", "family": "Qwen3", "task": "text", "useCases": ["general writing + light reasoning"], "params": "8B", "minVramGB": 6, "cpuOk": true, "quants": ["Q4_K_M", "Q8_0"], "runtime": "gguf", "source": "Qwen/Qwen3-8B", "license": "Apache-2.0 (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "Has a switchable thinking mode (see agentic)." },
+    { "id": "llama-3.1-8b", "name": "Llama 3.1 8B", "family": "Llama 3", "task": "text", "useCases": ["general writing", "broad knowledge"], "params": "8B", "minVramGB": 6, "cpuOk": true, "quants": ["Q4_K_M", "Q8_0"], "runtime": "gguf", "source": "meta-llama/Llama-3.1-8B-Instruct", "license": "Llama 3.1 (free, terms)", "free": true, "gated": true, "licenseClass": "custom", "notes": "" },
+    { "id": "phi-4", "name": "Phi-4", "family": "Phi", "task": "text", "useCases": ["punchy small-footprint writing + reasoning"], "params": "14B", "minVramGB": 10, "cpuOk": false, "quants": ["Q4_K_M"], "runtime": "gguf", "source": "microsoft/phi-4", "license": "MIT (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "Strong for its size; MIT + ungated." },
+    { "id": "mistral-nemo-12b", "name": "Mistral Nemo 12B", "family": "Mistral", "task": "text", "useCases": ["general writing, long context"], "params": "12B", "minVramGB": 8, "cpuOk": false, "quants": ["Q4_K_M", "Q5_K_M"], "runtime": "gguf", "source": "mistralai/Mistral-Nemo-Instruct-2407", "license": "Apache-2.0 (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "128k context." },
+
+    { "id": "qwen3-4b-think", "name": "Qwen3 4B (thinking)", "family": "Qwen3", "task": "agentic", "useCases": ["step-by-step reasoning on a modest GPU"], "params": "4B", "minVramGB": 4, "cpuOk": true, "quants": ["Q4_K_M"], "runtime": "gguf", "source": "Qwen/Qwen3-4B", "license": "Apache-2.0 (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "Thinking mode toggled at prompt time." },
+    { "id": "qwen3-30b-a3b", "name": "Qwen3 30B-A3B (MoE)", "family": "Qwen3", "task": "agentic", "useCases": ["fast reasoning on a 24 GB card"], "params": "30B (3B active)", "minVramGB": 18, "cpuOk": false, "quants": ["Q4_K_M"], "runtime": "gguf", "source": "Qwen/Qwen3-30B-A3B", "license": "Apache-2.0 (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "MoE: 30B weights but only ~3B active per token → fast." },
+    { "id": "deepseek-r1-distill-8b", "name": "DeepSeek-R1 Distill 8B", "family": "DeepSeek-R1", "task": "agentic", "useCases": ["reasoning traces on a mid GPU"], "params": "8B", "minVramGB": 6, "cpuOk": true, "quants": ["Q4_K_M"], "runtime": "gguf", "source": "deepseek-ai/DeepSeek-R1-Distill-Llama-8B", "license": "MIT (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "" },
+    { "id": "qwq-32b", "name": "QwQ 32B", "family": "Qwen", "task": "agentic", "useCases": ["hard reasoning, workstation-class"], "params": "32B", "minVramGB": 20, "cpuOk": false, "quants": ["Q4_K_M"], "runtime": "gguf", "source": "Qwen/QwQ-32B", "license": "Apache-2.0 (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "" },
+
+    { "id": "qwen2.5-coder-1.5b", "name": "Qwen2.5-Coder 1.5B", "family": "Qwen2.5-Coder", "task": "code", "useCases": ["code completion on a laptop"], "params": "1.5B", "minVramGB": 2, "cpuOk": true, "quants": ["Q4_K_M", "Q8_0"], "runtime": "gguf", "source": "Qwen/Qwen2.5-Coder-1.5B-Instruct", "license": "Apache-2.0 (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "" },
+    { "id": "qwen2.5-coder-7b", "name": "Qwen2.5-Coder 7B", "family": "Qwen2.5-Coder", "task": "code", "useCases": ["writing + explaining code on a mid GPU"], "params": "7B", "minVramGB": 6, "cpuOk": true, "quants": ["Q4_K_M", "Q8_0"], "runtime": "gguf", "source": "Qwen/Qwen2.5-Coder-7B-Instruct", "license": "Apache-2.0 (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "" },
+    { "id": "qwen2.5-coder-32b", "name": "Qwen2.5-Coder 32B", "family": "Qwen2.5-Coder", "task": "code", "useCases": ["strong local coding, 24 GB+"], "params": "32B", "minVramGB": 20, "cpuOk": false, "quants": ["Q4_K_M"], "runtime": "gguf", "source": "Qwen/Qwen2.5-Coder-32B-Instruct", "license": "Apache-2.0 (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "" },
+
+    { "id": "moondream2", "name": "Moondream 2", "family": "Moondream", "task": "vision", "useCases": ["describe a photo on a small GPU", "quick image Q&A"], "params": "~1.8B", "minVramGB": 2, "cpuOk": true, "quants": ["Q4", "Q8"], "runtime": "gguf", "source": "vikhyatk/moondream2", "license": "Apache-2.0 (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "Tiny, fast vision model." },
+    { "id": "qwen2.5-vl-7b", "name": "Qwen2.5-VL 7B", "family": "Qwen2.5-VL", "task": "vision", "useCases": ["detailed image understanding", "tag inventory photos"], "params": "7B", "minVramGB": 8, "cpuOk": false, "quants": ["Q4_K_M"], "runtime": "gguf", "source": "Qwen/Qwen2.5-VL-7B-Instruct", "license": "Apache-2.0 (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "Needs the mmproj vision file alongside." },
+    { "id": "minicpm-v-2.6", "name": "MiniCPM-V 2.6", "family": "MiniCPM-V", "task": "vision", "useCases": ["strong image + document understanding"], "params": "8B", "minVramGB": 8, "cpuOk": false, "quants": ["Q4_K_M"], "runtime": "gguf", "source": "openbmb/MiniCPM-V-2_6", "license": "MiniCPM model license (free, terms)", "free": true, "gated": false, "licenseClass": "custom", "notes": "" },
+    { "id": "smolvlm-2.2b", "name": "SmolVLM 2.2B", "family": "SmolVLM", "task": "vision", "useCases": ["lightweight vision on modest hardware"], "params": "2.2B", "minVramGB": 4, "cpuOk": true, "quants": ["Q4_K_M", "Q8_0"], "runtime": "gguf", "source": "HuggingFaceTB/SmolVLM-Instruct", "license": "Apache-2.0 (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "" },
+
+    { "id": "tesseract-5", "name": "Tesseract 5", "family": "Tesseract", "task": "ocr", "useCases": ["read printed text from a scan, any computer"], "params": "n/a", "minVramGB": 0, "cpuOk": true, "quants": ["n/a"], "runtime": "native", "source": "tesseract-ocr/tesseract", "license": "Apache-2.0 (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "Classic CPU OCR; per-language data packs." },
+    { "id": "paddle-ocr-v4", "name": "PP-OCRv4", "family": "PaddleOCR", "task": "ocr", "useCases": ["fast CPU OCR incl. handwriting/photos"], "params": "n/a", "minVramGB": 0, "cpuOk": true, "quants": ["n/a"], "runtime": "onnx", "source": "PaddlePaddle/PaddleOCR", "license": "Apache-2.0 (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "ONNX export runs cross-platform." },
+    { "id": "got-ocr-2", "name": "GOT-OCR 2.0", "family": "GOT-OCR", "task": "ocr", "useCases": ["general OCR incl. formulas/tables"], "params": "~0.6B", "minVramGB": 2, "cpuOk": true, "quants": ["Q4", "Q8"], "runtime": "onnx", "source": "stepfun-ai/GOT-OCR2_0", "license": "Apache-2.0 (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "" },
+    { "id": "olmocr-7b", "name": "olmOCR 7B", "family": "olmOCR", "task": "ocr", "useCases": ["messy document -> clean text on a mid GPU"], "params": "7B", "minVramGB": 8, "cpuOk": false, "quants": ["Q4_K_M"], "runtime": "gguf", "source": "allenai/olmOCR-7B-0225-preview", "license": "Apache-2.0 (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "Vision-LM OCR (needs mmproj)." },
+
+    { "id": "sd-1.5", "name": "Stable Diffusion 1.5", "family": "Stable Diffusion", "task": "image-gen", "useCases": ["basic image generation on a modest GPU"], "params": "n/a", "minVramGB": 4, "cpuOk": true, "quants": ["fp16", "Q8"], "runtime": "sd.cpp", "source": "runwayml/stable-diffusion-v1-5", "license": "CreativeML OpenRAIL-M (free)", "free": true, "gated": false, "licenseClass": "custom", "notes": "CPU works but is slow." },
+    { "id": "sdxl-turbo", "name": "SDXL Turbo", "family": "Stable Diffusion", "task": "image-gen", "useCases": ["fast 1-4 step images on a mid GPU"], "params": "n/a", "minVramGB": 8, "cpuOk": false, "quants": ["fp16"], "runtime": "sd.cpp", "source": "stabilityai/sdxl-turbo", "license": "Stability community (free under threshold)", "free": true, "gated": false, "licenseClass": "custom", "notes": "" },
+    { "id": "sd-3.5-medium", "name": "SD 3.5 Medium", "family": "Stable Diffusion", "task": "image-gen", "useCases": ["higher-quality images on a good GPU"], "params": "n/a", "minVramGB": 8, "cpuOk": false, "quants": ["fp16", "Q8"], "runtime": "diffusers", "source": "stabilityai/stable-diffusion-3.5-medium", "license": "Stability community (free under threshold)", "free": true, "gated": true, "licenseClass": "custom", "notes": "" },
+    { "id": "flux-1-schnell", "name": "FLUX.1 schnell", "family": "FLUX", "task": "image-gen", "useCases": ["top-tier local images, 24 GB card"], "params": "n/a", "minVramGB": 12, "cpuOk": false, "quants": ["Q4", "Q8"], "runtime": "sd.cpp", "source": "black-forest-labs/FLUX.1-schnell", "license": "Apache-2.0 (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "Quantised GGUF cuts VRAM a lot." },
+
+    { "id": "real-esrgan", "name": "Real-ESRGAN", "family": "Real-ESRGAN", "task": "image-edit", "useCases": ["upscale / sharpen an image"], "params": "n/a", "minVramGB": 2, "cpuOk": true, "quants": ["fp16", "n/a"], "runtime": "native", "source": "xinntao/Real-ESRGAN", "license": "BSD-3 (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "" },
+    { "id": "birefnet", "name": "BiRefNet", "family": "BiRefNet", "task": "image-edit", "useCases": ["remove an image background", "cut out a subject"], "params": "n/a", "minVramGB": 2, "cpuOk": true, "quants": ["onnx", "fp16"], "runtime": "onnx", "source": "ZhengPeng7/BiRefNet", "license": "MIT (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "MIT background removal (picked over the non-commercial BRIA RMBG per the free-only policy)." },
+
+    { "id": "whisper-tiny", "name": "Whisper tiny", "family": "Whisper", "task": "stt", "useCases": ["quick transcription on any computer"], "params": "~39M", "minVramGB": 0, "cpuOk": true, "quants": ["Q5_0", "Q8_0", "F16"], "runtime": "whisper.cpp", "source": "ggerganov/whisper.cpp", "license": "MIT (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "Runs on CPU comfortably." },
+    { "id": "whisper-small", "name": "Whisper small", "family": "Whisper", "task": "stt", "useCases": ["good accuracy transcription, still CPU-fine"], "params": "~244M", "minVramGB": 0, "cpuOk": true, "quants": ["Q5_0", "Q8_0", "F16"], "runtime": "whisper.cpp", "source": "ggerganov/whisper.cpp", "license": "MIT (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "" },
+    { "id": "whisper-large-v3", "name": "Whisper large-v3", "family": "Whisper", "task": "stt", "useCases": ["best accuracy transcription"], "params": "~1.5B", "minVramGB": 2, "cpuOk": true, "quants": ["Q5_0", "Q8_0", "F16"], "runtime": "whisper.cpp", "source": "ggerganov/whisper.cpp", "license": "MIT (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "CPU works but a GPU is much faster." },
+    { "id": "parakeet-tdt-0.6b", "name": "Parakeet TDT 0.6B", "family": "Parakeet", "task": "stt", "useCases": ["very fast English transcription"], "params": "0.6B", "minVramGB": 2, "cpuOk": false, "quants": ["fp16", "int8"], "runtime": "ctranslate2", "source": "nvidia/parakeet-tdt-0.6b-v2", "license": "CC-BY-4.0 (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "The 043-handoff example. English-only." },
+    { "id": "moonshine-base", "name": "Moonshine base", "family": "Moonshine", "task": "stt", "useCases": ["real-time / short-clip transcription on-device"], "params": "~60M", "minVramGB": 0, "cpuOk": true, "quants": ["onnx-int8", "fp16"], "runtime": "onnx", "source": "UsefulSensors/moonshine", "license": "MIT (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "" },
+
+    { "id": "piper", "name": "Piper", "family": "Piper", "task": "tts", "useCases": ["read text aloud on any computer"], "params": "tiny", "minVramGB": 0, "cpuOk": true, "quants": ["onnx-int8"], "runtime": "native", "source": "rhasspy/piper", "license": "MIT (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "Per-voice model files; very fast on CPU." },
+    { "id": "kokoro-82m", "name": "Kokoro 82M", "family": "Kokoro", "task": "tts", "useCases": ["natural-sounding speech on a laptop"], "params": "82M", "minVramGB": 0, "cpuOk": true, "quants": ["fp16", "onnx-int8"], "runtime": "onnx", "source": "hexgrad/Kokoro-82M", "license": "Apache-2.0 (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "High quality for the size." },
+
+    { "id": "all-minilm-l6-v2", "name": "all-MiniLM-L6-v2", "family": "Sentence-Transformers", "task": "embedding", "useCases": ["local search over notes/docs, any computer"], "params": "22M", "minVramGB": 0, "cpuOk": true, "quants": ["onnx-int8", "fp16"], "runtime": "onnx", "source": "sentence-transformers/all-MiniLM-L6-v2", "license": "Apache-2.0 (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "The default cheap embedder." },
+    { "id": "bge-small-en-v1.5", "name": "BGE small en v1.5", "family": "BGE", "task": "embedding", "useCases": ["better retrieval quality, still CPU-fine"], "params": "33M", "minVramGB": 0, "cpuOk": true, "quants": ["onnx", "fp16"], "runtime": "onnx", "source": "BAAI/bge-small-en-v1.5", "license": "MIT (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "" },
+    { "id": "nomic-embed-text-v1.5", "name": "Nomic Embed v1.5", "family": "Nomic Embed", "task": "embedding", "useCases": ["long-doc retrieval / RAG"], "params": "137M", "minVramGB": 0, "cpuOk": true, "quants": ["Q8", "F16"], "runtime": "gguf", "source": "nomic-ai/nomic-embed-text-v1.5", "license": "Apache-2.0 (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "Runs in llama.cpp too." },
+
+    { "id": "bge-reranker-v2-m3", "name": "BGE Reranker v2-m3", "family": "BGE", "task": "rerank", "useCases": ["sharpen search results before showing them"], "params": "568M", "minVramGB": 0, "cpuOk": true, "quants": ["onnx", "fp16"], "runtime": "onnx", "source": "BAAI/bge-reranker-v2-m3", "license": "Apache-2.0 (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "Multilingual." },
+
+    { "id": "madlad-400-3b", "name": "MADLAD-400 3B MT", "family": "MADLAD-400", "task": "translation", "useCases": ["translate between 400+ languages, offline"], "params": "3B", "minVramGB": 4, "cpuOk": true, "quants": ["int8", "fp16"], "runtime": "ctranslate2", "source": "google/madlad400-3b-mt", "license": "Apache-2.0 (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "Apache-licensed alternative to NLLB (which is non-commercial and excluded)." },
+    { "id": "opus-mt", "name": "Opus-MT (per pair)", "family": "Helsinki-NLP Opus-MT", "task": "translation", "useCases": ["fast single-language-pair translation on CPU"], "params": "~75M", "minVramGB": 0, "cpuOk": true, "quants": ["onnx-int8", "fp16"], "runtime": "onnx", "source": "Helsinki-NLP/opus-mt-*", "license": "Apache-2.0/CC-BY (free)", "free": true, "gated": false, "licenseClass": "standard", "notes": "One small model per language pair." },
+
+    { "id": "shieldgemma-2b", "name": "ShieldGemma 2B", "family": "ShieldGemma", "task": "moderation", "useCases": ["flag unsafe / off-policy content locally"], "params": "2B", "minVramGB": 2, "cpuOk": true, "quants": ["Q4_K_M", "Q8_0"], "runtime": "gguf", "source": "google/shieldgemma-2b", "license": "Gemma (free, terms)", "free": true, "gated": true, "licenseClass": "custom", "notes": "" }
+  ]
+}
