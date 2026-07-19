@@ -10,6 +10,9 @@ const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 export function normalizeEndpoint(raw: string): string | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
+  // A non-http URL scheme (with OR without `//`) must never be massaged into an http host — reject
+  // it outright so `file:/etc/passwd` can't normalize to `http://file`. host:port has no scheme.
+  if (/^(file|ftp|ftps|ws|wss|data|blob|javascript|mailto|about|view-source):/i.test(trimmed)) return null;
   // Prepend http:// ONLY when there's no scheme at all — never when the input already carries one,
   // so a `file://` / `ws://` keeps its scheme and gets rejected below instead of being mangled into
   // a valid-looking `http://file`. A bare `host:port` has no `scheme://` and gets the http:// added.

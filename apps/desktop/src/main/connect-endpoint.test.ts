@@ -15,8 +15,10 @@ describe("connect-endpoint — normalizeEndpoint (the pre-fetch gate)", () => {
   it("U-norm-2: refuses anything that isn't a valid http(s) host — before any fetch can happen", () => {
     expect(normalizeEndpoint("")).toBeNull();
     expect(normalizeEndpoint("   ")).toBeNull();
-    expect(normalizeEndpoint("file:///etc/passwd")).toBeNull(); // non-http scheme
+    expect(normalizeEndpoint("file:///etc/passwd")).toBeNull(); // non-http scheme (//)
+    expect(normalizeEndpoint("file:/etc/passwd")).toBeNull(); // non-http scheme (single slash — no http://file mangling)
     expect(normalizeEndpoint("ws://10.0.0.5:11434")).toBeNull(); // websocket scheme
+    expect(normalizeEndpoint("javascript:alert(1)")).toBeNull(); // never massaged into a host
     expect(normalizeEndpoint("http://")).toBeNull(); // no host
   });
 });
