@@ -104,6 +104,34 @@ export async function ollamaResidentModels(
   }
 }
 
+/** Tell Ollama to unload a model from memory NOW (`/api/generate` with `keep_alive: 0`) — the
+ *  "Free memory" reclaim for the Ollama path. Best-effort and NOT receipted: it carries no user
+ *  content (just the model name + the unload flag), it's a control ping like `/api/ps`, and it
+ *  stays on loopback (same guard as the engine). Any failure — Ollama down, non-200, timeout, bad
+ *  URL — resolves void, never throws. */
+export async function ollamaUnload(baseUrl: string, modelId: string, fetchImpl: typeof fetch = fetch): Promise<void> {
+  let origin: string;
+  try {
+    origin = assertLoopback(baseUrl).origin;
+  } catch {
+    return; // non-loopback / bad URL → never POST off-box
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PS_TIMEOUT_MS);
+  try {
+    await fetchImpl(`${origin}/api/generate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: modelId, keep_alive: 0 }),
+      signal: controller.signal,
+    });
+  } catch {
+    // best-effort: an unreachable Ollama just means nothing to free — no error surfaces to the user
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function assertLoopback(baseUrl: string): URL {
   let url: URL;
   try {

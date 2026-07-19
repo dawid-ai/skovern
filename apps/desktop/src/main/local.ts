@@ -1,7 +1,8 @@
-import { app } from "electron";
+import { app, shell } from "electron";
 import {
   ollamaEngine,
   ollamaResidentModels,
+  ollamaUnload,
   verdict,
   type CatalogModel,
   type HardwareProfile,
@@ -13,7 +14,7 @@ import { allCandidates, builtInCandidates } from "./guided-verdict.js";
 import { fileFetchSink } from "./receipts.js";
 import { scanHardware } from "./hardware.js";
 import { createCachedCatalogLoader, snapshotCatalog } from "./catalog.js";
-import { modelDownloaded, listDownloadedModels, deleteDownloadedModel } from "./download.js";
+import { modelDownloaded, listDownloadedModels, deleteDownloadedModel, modelsDir } from "./download.js";
 import { modelDeletionPlan } from "./model-manage.js";
 import { loadBrain, clearBrain } from "./keys.js";
 import { ollamaInstalled } from "./ollama-launch.js";
@@ -265,15 +266,35 @@ export async function downloadedModelsView(): Promise<YourModelsView> {
       active: cat !== undefined && cat.id === active,
     };
   });
-  // The warm embedded child holds the ACTIVE embedded model; show its label on the Memory row.
-  const warm = (llama?.isWarm() ?? false) && active !== null && isEmbeddedModel(active);
-  return { models, loadedLabel: warm ? models.find((m) => m.id === active)?.label ?? null : null };
+  // What's resident RIGHT NOW, for the Memory row. Prefer the warm embedded child's model; else
+  // ask Ollama what it has loaded (`/api/ps`) — so the button appears + frees for the Ollama path
+  // too, not only the embedded one (BUG B). Best-effort: an Ollama probe failure reads as nothing.
+  const warmEmbedded = (llama?.isWarm() ?? false) && active !== null && isEmbeddedModel(active);
+  let loadedLabel: string | null = warmEmbedded ? models.find((m) => m.id === active)?.label ?? null : null;
+  if (!loadedLabel) {
+    const resident = await ollamaResidentModels(ollamaBaseUrl());
+    if (resident.length > 0) loadedLabel = resident[0]!; // the model name Ollama reports it has loaded
+  }
+  return { models, loadedLabel, folder: modelsDir() };
 }
 
-/** `local:freeMemory` — unload the resident embedded model to reclaim VRAM on demand. Refuses
- *  (freed:false) while a reply is generating, so it never yanks the model mid-answer. */
-export function freeMemory(): { freed: boolean } {
-  return { freed: llama?.unload() ?? true }; // no engine → nothing loaded → already free
+/** `local:freeMemory` — reclaim VRAM on demand across BOTH runtimes: unload the resident embedded
+ *  model AND tell Ollama to unload whatever it has loaded (keep_alive:0). Refuses (freed:false)
+ *  while an embedded reply is generating, so it never yanks the model mid-answer — and in that case
+ *  it leaves Ollama alone (the active brain is embedded then). */
+export async function freeMemory(): Promise<{ freed: boolean }> {
+  if (llama && !llama.unload()) return { freed: false }; // embedded mid-reply — never yank it
+  // Embedded freed (or nothing embedded loaded). Now free any Ollama-resident model's VRAM too.
+  const base = ollamaBaseUrl();
+  const resident = await ollamaResidentModels(base);
+  await Promise.all(resident.map((id) => ollamaUnload(base, id)));
+  return { freed: true };
+}
+
+/** `local:revealModels` — open the folder where OUR downloaded brains live, in the OS file manager.
+ *  A FIXED app-owned path (userData/models), no renderer/user input — no traversal surface. */
+export async function openModelsFolder(): Promise<void> {
+  await shell.openPath(modelsDir());
 }
 
 /** `local:deleteModel` — delete a downloaded model file to reclaim disk. If it's the model

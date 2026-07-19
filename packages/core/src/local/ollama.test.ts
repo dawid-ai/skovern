@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
-import { ollamaEngine, ollamaResidentModels } from "./ollama.js";
+import { ollamaEngine, ollamaResidentModels, ollamaUnload } from "./ollama.js";
 import type { PullProgress } from "./types.js";
 
 // O1 — the Ollama backend against a FIXTURE server (no real Ollama in CI): detect,
@@ -465,5 +465,35 @@ describe("ollamaEngine — whole-operation timeouts (no hangs)", () => {
     // it ran longer than the idle cap (proving idle-based) and still completed
     expect(Date.now() - started).toBeGreaterThan(250);
     expect(ticks.map((t) => t.status)).toContain("success");
+  });
+});
+
+describe("ollamaUnload — free an Ollama model's VRAM (keep_alive:0)", () => {
+  it("O-unload-1: POSTs {model, keep_alive:0} to /api/generate on loopback and resolves void", async () => {
+    let seen: { method: string; url: string; body: string } | null = null;
+    const base = await startFixture((method, url, body) => {
+      seen = { method, url, body };
+      return { status: 200, body: "{}" };
+    });
+    await expect(ollamaUnload(base, "gemma2:27b")).resolves.toBeUndefined();
+    expect(seen).not.toBeNull();
+    expect(seen!.method).toBe("POST");
+    expect(seen!.url).toBe("/api/generate");
+    const parsed = JSON.parse(seen!.body) as { model?: string; keep_alive?: number };
+    expect(parsed.model).toBe("gemma2:27b"); // the model to unload
+    expect(parsed.keep_alive).toBe(0); // 0 = unload now, don't keep it warm
+  });
+
+  it("O-unload-2: a non-loopback URL never POSTs off-box, and any failure resolves void (best-effort)", async () => {
+    // Non-loopback base → guarded BEFORE any request: the injected fetch must never be called.
+    let called = 0;
+    const spyFetch = (async () => {
+      called++;
+      return new Response("{}");
+    }) as unknown as typeof fetch;
+    await expect(ollamaUnload("http://192.168.1.50:11434", "m", spyFetch)).resolves.toBeUndefined();
+    expect(called).toBe(0); // no off-box POST, ever
+    // Loopback but nothing listening (Ollama down) → best-effort, resolves void, never throws.
+    await expect(ollamaUnload("http://127.0.0.1:1", "m")).resolves.toBeUndefined();
   });
 });

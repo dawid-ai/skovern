@@ -39,14 +39,21 @@ export function YourModels({ onChanged, refreshKey }: { onChanged: () => void; r
   }
 
   if (!view) return null;
-  const { models, loadedLabel } = view;
+  const { models, loadedLabel, folder } = view;
 
   return (
     <div className="local-group your-models">
       <h2>Your models</h2>
       <p className="hint">
-        The brains you&apos;ve downloaded. Delete one to free up disk space — you can always download
-        it again later.
+        The brains Skovern has downloaded onto this computer. (Any brains you run through Ollama live
+        in Ollama&apos;s own folder — those aren&apos;t shown or managed here.) Delete one to free up
+        disk space — you can always download it again later.
+      </p>
+      <p className="hint your-models-folder">
+        They&apos;re stored in <code>{folder}</code>{" "}
+        <button className="link" onClick={() => void window.skovern.local.revealModels()}>
+          Show in folder
+        </button>
       </p>
 
       {/* Memory row: what's loaded in your graphics card right now, with a way to free it. */}

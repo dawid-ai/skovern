@@ -87,8 +87,12 @@ export interface DownloadedModelView {
 /** `local:downloadedModels` — the "Your models" view: what's on disk + what's in memory now. */
 export interface YourModelsView {
   models: DownloadedModelView[];
-  /** The embedded model resident in VRAM right now (for the Memory row), or null. */
+  /** The model resident in VRAM right now (for the Memory row) — the warm embedded child, or a
+   *  model Ollama has loaded — or null when nothing is loaded. */
   loadedLabel: string | null;
+  /** The folder on disk where these downloaded brains live (userData/models), so the UI can show
+   *  where they are and offer "Show in folder". */
+  folder: string;
 }
 
 /** A pull-progress tick pushed main→renderer on the `local:pullProgress` channel. */
