@@ -16,6 +16,10 @@ export interface BrainConfig {
   key: string;
   /** For `local`, this is the chosen Ollama model id (e.g. "qwen2.5:3b"). */
   model?: string;
+  /** For a `local` brain CONNECTED BY ADDRESS (loop 044): the server origin the user typed
+   *  (e.g. "http://192.168.1.5:11434"). Absent for the built-in / loopback-Ollama default path.
+   *  A host:port, never a secret. */
+  endpoint?: string;
 }
 
 function brainFile(): string {
@@ -41,7 +45,8 @@ export function loadBrain(): BrainConfig | null {
     if (
       !PROVIDERS.includes(parsed.provider) ||
       typeof parsed.key !== "string" ||
-      (parsed.model !== undefined && typeof parsed.model !== "string")
+      (parsed.model !== undefined && typeof parsed.model !== "string") ||
+      (parsed.endpoint !== undefined && typeof parsed.endpoint !== "string")
     ) {
       return null;
     }

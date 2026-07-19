@@ -2,7 +2,7 @@ import type { AppInfo } from "@skovern/core";
 import type { CurrentAccount, RequestResult, VerifyResult } from "./account.js";
 import type { DmSendResult, DmThreadView, NewsPostView, PublishResultView, PublishVisibilityInput } from "./cloud.js";
 import type { BrainStatusView, SaveBrainInput, SaveBrainResult, TestBrainResult } from "./brain.js";
-import type { LocalActionResult, LocalModelsView, LocalStatusView, PullProgressView, YourModelsView } from "./local.js";
+import type { ConnectProbeView, LocalActionResult, LocalModelsView, LocalStatusView, PullProgressView, YourModelsView } from "./local.js";
 import type { RunSkillResult, SandboxCheckResult, SkillView } from "./plugin.js";
 import type { ActivitySummary, DateRange, ReceiptView } from "./receipts.js";
 import type { ChatMeta, ChatSendResult, ChatStatusEvent, ChatTokenEvent, ChatView } from "./chat.js";
@@ -46,6 +46,8 @@ declare global {
         rescan(): Promise<LocalStatusView>;
         models(): Promise<LocalModelsView>;
         pull(modelId: string): Promise<LocalActionResult>;
+        connect(address: string): Promise<ConnectProbeView>;
+        classify(address: string): Promise<{ valid: boolean; offBox: boolean; endpoint: string | null }>;
         /** Listen for live pull progress. Returns an unsubscribe. */
         onPullProgress(cb: (p: PullProgressView) => void): () => void;
         downloadedModels(): Promise<YourModelsView>;

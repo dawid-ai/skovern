@@ -73,6 +73,19 @@ export interface LocalActionResult {
   message: string;
 }
 
+/** Result of `local:connect` (loop 044) — probing a typed address BEFORE saving a brain. */
+export interface ConnectProbeView {
+  /** Did the address answer as a compatible brain server? */
+  reachable: boolean;
+  /** Is it OFF this computer (→ egress warning + receipts) vs on-box (→ light confirm)? */
+  offBox: boolean;
+  /** The normalized http origin we'd save (e.g. "http://192.168.1.5:11434"), or null if the
+   *  address wasn't a valid http(s) host. */
+  endpoint: string | null;
+  /** The models the remote offers, to pick from. Empty when unreachable. */
+  models: { id: string; label: string }[];
+}
+
 /** One downloaded model in the "Your models" manager. */
 export interface DownloadedModelView {
   filename: string;

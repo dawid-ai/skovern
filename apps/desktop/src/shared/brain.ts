@@ -59,6 +59,9 @@ export interface SaveBrainInput {
   provider: ProviderId;
   key: string;
   model?: string;
+  /** For a `local` brain CONNECTED BY ADDRESS (loop 044): the server address (e.g.
+   *  "192.168.1.5:11434"). Re-validated + normalized in main before save. */
+  endpoint?: string;
 }
 
 export interface SaveBrainResult {
