@@ -1,6 +1,9 @@
+import type { FetchSink } from "@skovern/core";
+import { receiptedFetch } from "./receipted-fetch.js";
+
 // Pure endpoint helpers for the "connect your own brain by address" lane (loop 044) — kept out of
 // the electron-coupled local.ts so the trust-boundary logic (what's a valid address, what counts
-// as OFF this computer) is unit-testable on its own.
+// as OFF this computer, and the fail-closed receipting decision) is unit-testable on its own.
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 
@@ -37,4 +40,21 @@ export function hostIsOffBox(endpoint: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** The ollamaEngine construction options for a connected brain — the security-load-bearing wiring,
+ *  kept pure so a unit can prove it: OFF-BOX → relax the guard AND route through a receipted fetch
+ *  (a durable "sent" receipt lands before the first byte); ON-BOX → a plain fetch, no egress
+ *  receipt (nothing leaves the machine). The two are set together off the one `offBox` bit, so they
+ *  can never desynchronize (guard open without receipting, or vice-versa). */
+export function connectEngineOptions(
+  baseUrl: string,
+  offBox: boolean,
+  sink: FetchSink,
+): { baseUrl: string; allowOffBox: boolean; fetchImpl?: typeof fetch } {
+  return {
+    baseUrl,
+    allowOffBox: offBox,
+    fetchImpl: offBox ? receiptedFetch(sink, "Skovern: your connected brain", { direction: "out" }) : undefined,
+  };
 }

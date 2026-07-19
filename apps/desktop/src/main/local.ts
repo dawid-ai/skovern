@@ -11,8 +11,8 @@ import {
   type PullProgress,
 } from "@skovern/core";
 import { allCandidates, builtInCandidates } from "./guided-verdict.js";
-import { fileFetchSink, receiptedFetch } from "./receipts.js";
-import { hostIsOffBox, normalizeEndpoint } from "./connect-endpoint.js";
+import { fileFetchSink } from "./receipts.js";
+import { connectEngineOptions, hostIsOffBox, normalizeEndpoint } from "./connect-endpoint.js";
 import { scanHardware } from "./hardware.js";
 import { createCachedCatalogLoader, snapshotCatalog } from "./catalog.js";
 import { modelDownloaded, listDownloadedModels, deleteDownloadedModel, modelsDir } from "./download.js";
@@ -248,14 +248,7 @@ export function isOffBox(endpoint: string): boolean {
  *  THIS lane only AND every call rides a receipted fetch (a durable "sent" receipt lands before the
  *  first byte leaves). Loopback → a plain fetch, no egress receipt (nothing leaves the machine). */
 export function connectedEngine(endpoint: string): LocalEngine {
-  const offBox = isOffBox(endpoint);
-  return ollamaEngine({
-    baseUrl: endpoint,
-    allowOffBox: offBox,
-    fetchImpl: offBox
-      ? receiptedFetch(fileFetchSink(), "Skovern: your connected brain", { direction: "out" })
-      : undefined,
-  });
+  return ollamaEngine(connectEngineOptions(endpoint, isOffBox(endpoint), fileFetchSink()));
 }
 
 /** Classify a typed address WITHOUT touching the network — so the UI can show the off-box egress
