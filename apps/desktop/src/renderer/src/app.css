@@ -1566,6 +1566,15 @@ footer {
   gap: 12px;
   margin: 8px 0 14px;
 }
+.your-models-folder {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.your-models-folder code {
+  word-break: break-all;
+}
 .link.danger {
   color: #b23b3b;
 }

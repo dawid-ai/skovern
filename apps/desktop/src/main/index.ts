@@ -27,7 +27,7 @@ import { fileFetchSink, fileReceiptSink, readActivityIndex, readReceipts, readRe
 import { toCsv } from "./csv.js";
 import { runPlugin, sandboxCheck } from "./plugin-host.js";
 import { claudeCliProvider } from "./claude-cli.js";
-import { deleteLocalModel, disposeLocal, downloadedEmbeddedModelId, downloadedModelsView, embeddedFilenames, engineForModel, freeMemory, isEmbeddedModel, localModels, localStatus, makeEngine, modelLoaded, pullModel } from "./local.js";
+import { deleteLocalModel, disposeLocal, downloadedEmbeddedModelId, downloadedModelsView, embeddedFilenames, engineForModel, freeMemory, isEmbeddedModel, localModels, localStatus, makeEngine, modelLoaded, openModelsFolder, pullModel } from "./local.js";
 import { appendMessage, createTokenCoalescer, deleteChat, getChat, listChats, newChat, renameChat, sendChatStatus, sendChatToken } from "./chat-store.js";
 import { resolveChatReply } from "./chat-reply.js";
 import { validateOllamaName } from "./ollama-name.js";
@@ -814,7 +814,10 @@ app
     // "Your models" (loop 041): see what's downloaded + loaded, delete to reclaim disk, free
     // memory to reclaim VRAM. All main-owned; the renderer only reads/drives by IPC.
     registerTrusted(TRUST, "local:downloadedModels", (): Promise<YourModelsView> => downloadedModelsView());
-    registerTrusted(TRUST, "local:freeMemory", (): { freed: boolean } => freeMemory());
+    registerTrusted(TRUST, "local:freeMemory", (): Promise<{ freed: boolean }> => freeMemory());
+    // Open the folder where OUR downloaded brains live (userData/models) — a fixed app-owned path,
+    // no renderer input (BUG C: so the user sees where their models are, vs Ollama's separate store).
+    registerTrusted(TRUST, "local:revealModels", (): Promise<void> => openModelsFolder());
     registerTrusted(TRUST, "local:deleteModel", async (rawFile: unknown): Promise<LocalActionResult> => {
       const filename = typeof rawFile === "string" ? rawFile : "";
       try {

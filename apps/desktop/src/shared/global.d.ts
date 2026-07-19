@@ -51,6 +51,7 @@ declare global {
         downloadedModels(): Promise<YourModelsView>;
         deleteModel(filename: string): Promise<LocalActionResult>;
         freeMemory(): Promise<{ freed: boolean }>;
+        revealModels(): Promise<void>;
       };
       receipts: {
         list(range?: DateRange): Promise<ReceiptView[]>;

@@ -71,6 +71,7 @@ const api = {
     deleteModel: (filename: string): Promise<LocalActionResult> =>
       ipcRenderer.invoke("local:deleteModel", filename) as Promise<LocalActionResult>,
     freeMemory: (): Promise<{ freed: boolean }> => ipcRenderer.invoke("local:freeMemory") as Promise<{ freed: boolean }>,
+    revealModels: (): Promise<void> => ipcRenderer.invoke("local:revealModels") as Promise<void>,
     // Listen-only: the renderer subscribes to pull progress; it can never emit here.
     // Re-validate the shape so a malformed payload never reaches React. Returns an
     // unsubscribe the view calls on unmount.

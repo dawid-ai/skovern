@@ -157,3 +157,93 @@ test("Your models: list downloaded, free memory, and delete to reclaim disk", as
     rmSync(userDataDir, { recursive: true, force: true });
   }
 });
+
+// Loop 043 — BUG B + BUG C. Free memory must show + actually free for the OLLAMA path (not just
+// embedded), and "Your models" must say where the downloaded brains live.
+test("Your models: Free memory shows + frees an Ollama-loaded brain, and the models folder is shown", async () => {
+  test.setTimeout(180_000);
+  // A fake Ollama that has a model RESIDENT (/api/ps) until we unload it with keep_alive:0.
+  let residentModel: string | null = "mistral:7b";
+  const unloads: string[] = []; // models the app asked Ollama to unload
+  const ollama = createServer((req, res) => {
+    const url = req.url ?? "";
+    if (req.method === "GET" && url === "/api/ps") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ models: residentModel ? [{ name: residentModel }] : [] }));
+      return;
+    }
+    if (req.method === "GET" && url === "/api/tags") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ models: [] })); // no pulled models — residence is the only signal
+      return;
+    }
+    if (req.method === "POST" && url === "/api/generate") {
+      let raw = "";
+      req.on("data", (c) => (raw += c));
+      req.on("end", () => {
+        try {
+          const b = JSON.parse(raw) as { model?: string; keep_alive?: number };
+          if (b.keep_alive === 0) {
+            unloads.push(b.model ?? "");
+            if (b.model === residentModel) residentModel = null; // Ollama drops it from memory
+          }
+        } catch {
+          /* ignore */
+        }
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ response: "", done: true }));
+      });
+      return;
+    }
+    res.writeHead(404);
+    res.end("{}");
+  });
+  await new Promise<void>((r) => ollama.listen(0, "127.0.0.1", () => r()));
+  const ollamaUrl = `http://127.0.0.1:${(ollama.address() as AddressInfo).port}`;
+
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
+  const app = await electron.launch({
+    args: [".", `--user-data-dir=${userDataDir}`],
+    env: {
+      ...process.env,
+      SKOVERN_API_URL: server.url,
+      SKOVERN_OLLAMA_URL: ollamaUrl,
+      SKOVERN_OLLAMA_INSTALLED: "1",
+      SKOVERN_CATALOG_URL: catalogUrl,
+      SKOVERN_HARDWARE: GPU_HARDWARE,
+      // NO SKOVERN_LLAMA_FAKE: there is NO warm embedded child — the resident brain is Ollama's,
+      // exactly the pre-fix case where the Free memory button was invisible.
+    },
+  });
+  try {
+    const page = await app.firstWindow();
+    await signIn(page, "ollamafree@shop.test");
+    await page.getByRole("button", { name: "Settings" }).click();
+    await page.getByLabel("Your brain").selectOption("local");
+    await page.getByRole("button", { name: "Set up the local brain →" }).click();
+    await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible();
+
+    const your = page.locator(".your-models");
+
+    // BUG C (E-model-home): the panel says these are downloaded HERE (not Ollama's), shows the real
+    // models-folder path, and offers a "Show in folder" button.
+    await expect(your.getByText(/downloaded onto this computer/i)).toBeVisible();
+    await expect(your.getByText(/aren't shown or managed here/i)).toBeVisible();
+    await expect(your.locator(".your-models-folder code")).toContainText(path.join(userDataDir, "models"));
+    await expect(your.getByRole("button", { name: "Show in folder" })).toBeVisible();
+
+    // BUG B (E-ollama-free): Ollama has a model RESIDENT and NO embedded child is warm → the Memory
+    // row shows it + a Free memory button (pre-fix this was invisible for the Ollama path).
+    await expect(your.getByText(/In memory now/i)).toBeVisible({ timeout: 15_000 });
+    await expect(your.getByText("mistral:7b")).toBeVisible();
+    await your.getByRole("button", { name: "Free memory" }).click();
+
+    // The app told Ollama to unload it (keep_alive:0) and the row now reads nothing loaded.
+    await expect(your.getByText(/Nothing is loaded in memory/i)).toBeVisible({ timeout: 15_000 });
+    expect(unloads).toContain("mistral:7b");
+  } finally {
+    await app.close();
+    ollama.close();
+    rmSync(userDataDir, { recursive: true, force: true });
+  }
+});
