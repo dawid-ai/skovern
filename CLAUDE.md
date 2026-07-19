@@ -41,6 +41,24 @@ feature, not a finished one.
 - The bar: after `pnpm --filter @skovern/site dev` + `pnpm --filter
   @skovern/desktop dev`, a person can click to the new thing and it works.
 
+## Hand-validation checklists ("HWs") — mandatory format
+
+When work needs Dawid to hand-validate on his hardware (the OWED(HW/VM) items — real
+GPU, a LAN box, a fresh-VM install), give him a **numbered checklist he works through
+one item at a time**, written to an annotatable doc (`docs/loops/HAND-VAL-CHECKLIST.md`),
+not a vague "go try it."
+
+Every numbered item MUST carry:
+- **What was done** — the change/feature in plain terms (which loop, what it fixes).
+- **How to check** — exact steps + real UI navigation (the actual clicks/paths).
+- **Expected** — precisely what he should see if it works (exact copy/behavior/numbers);
+  for a diagnosis item, ask him to "report what you observe" instead of pass/fail.
+- A blank `RESULT:` line for his answer.
+
+Group items by **physical setup** (on-box / LAN box / fresh VM / eyeball) so he can clear
+a whole setup in one sitting. He answers in detail per item; a failed item becomes the
+next loop's BUILD.
+
 ## UI information architecture (mandatory)
 
 Every feature gets its **own place, properly named and correctly located** — not
