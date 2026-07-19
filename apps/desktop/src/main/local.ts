@@ -11,7 +11,8 @@ import {
   type PullProgress,
 } from "@skovern/core";
 import { allCandidates, builtInCandidates } from "./guided-verdict.js";
-import { fileFetchSink } from "./receipts.js";
+import { fileFetchSink, receiptedFetch } from "./receipts.js";
+import { hostIsOffBox, normalizeEndpoint } from "./connect-endpoint.js";
 import { scanHardware } from "./hardware.js";
 import { createCachedCatalogLoader, snapshotCatalog } from "./catalog.js";
 import { modelDownloaded, listDownloadedModels, deleteDownloadedModel, modelsDir } from "./download.js";
@@ -226,10 +227,52 @@ export async function modelLoaded(modelId: string | null): Promise<boolean> {
   return resident.includes(modelId);
 }
 
-/** Dispatch a chosen model to its backend: a model with a catalog `gguf` block runs on
- *  the EMBEDDED runtime (no Ollama needed); anything else runs on Ollama. */
-export function engineForModel(modelId: string): LocalEngine {
-  return isEmbeddedModel(modelId) ? makeLlamaEngine() : makeEngine();
+/** Dispatch a chosen model to its backend: a model with a catalog `gguf` block runs on the
+ *  EMBEDDED runtime (no Ollama needed); a brain CONNECTED BY ADDRESS (loop 044) runs on that remote
+ *  endpoint; anything else runs on the loopback Ollama. */
+export function engineForModel(modelId: string, endpoint?: string): LocalEngine {
+  if (isEmbeddedModel(modelId)) return makeLlamaEngine();
+  if (endpoint) return connectedEngine(endpoint);
+  return makeEngine();
+}
+
+/** Is this endpoint OFF this computer (→ egress warning + receipts + the relaxed guard)? Layers a
+ *  dev seam (unpackaged only, mirrors SKOVERN_HARDWARE — lets the e2e drive the off-box branch
+ *  against a loopback fixture) over the pure `hostIsOffBox` classification. */
+export function isOffBox(endpoint: string): boolean {
+  if (!app.isPackaged && process.env["SKOVERN_FORCE_OFFBOX"] === "1") return true;
+  return hostIsOffBox(endpoint);
+}
+
+/** Build the engine for a brain CONNECTED BY ADDRESS. Off-box → the loopback guard is relaxed for
+ *  THIS lane only AND every call rides a receipted fetch (a durable "sent" receipt lands before the
+ *  first byte leaves). Loopback → a plain fetch, no egress receipt (nothing leaves the machine). */
+export function connectedEngine(endpoint: string): LocalEngine {
+  const offBox = isOffBox(endpoint);
+  return ollamaEngine({
+    baseUrl: endpoint,
+    allowOffBox: offBox,
+    fetchImpl: offBox
+      ? receiptedFetch(fileFetchSink(), "Skovern: your connected brain", { direction: "out" })
+      : undefined,
+  });
+}
+
+/** Probe a connect-by-address endpoint BEFORE saving it: reachable? off-box? which models? Never
+ *  throws across IPC — a failure (bad address, unreachable, non-http) is `{reachable:false}`. For an
+ *  off-box endpoint this makes the first off-box call, so it is receipted via `connectedEngine`. */
+export async function connectProbe(rawEndpoint: string): Promise<{ reachable: boolean; offBox: boolean; endpoint: string | null; models: { id: string; label: string }[] }> {
+  const endpoint = normalizeEndpoint(rawEndpoint);
+  if (!endpoint) return { reachable: false, offBox: false, endpoint: null, models: [] };
+  const offBox = isOffBox(endpoint);
+  try {
+    const engine = connectedEngine(endpoint);
+    if (!(await engine.detect())) return { reachable: false, offBox, endpoint, models: [] };
+    const models = (await engine.listModels()).map((m) => ({ id: m.id, label: m.label }));
+    return { reachable: true, offBox, endpoint, models };
+  } catch {
+    return { reachable: false, offBox, endpoint, models: [] };
+  }
 }
 
 /** Does this model run on the embedded runtime (vs Ollama)? Lets callers phrase an

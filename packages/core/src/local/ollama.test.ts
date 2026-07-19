@@ -403,6 +403,35 @@ describe("ollamaEngine — loopback-only guard (O2)", () => {
   });
 });
 
+// Loop 044 — the connect-by-address lane. `allowOffBox` relaxes the loopback guard for exactly
+// this one explicit, consent-gated, receipted lane; everything else stays hard loopback-only.
+describe("ollamaEngine — off-box lane (allowOffBox, loop 044)", () => {
+  it("O-offbox-1: allowOffBox is off by default — a non-loopback base URL still throws at construction", () => {
+    // The default path can never go off-box: same refusal as before, unchanged.
+    expect(() => ollamaEngine({ baseUrl: "http://10.0.0.5:11434" })).toThrow(/only talk to this computer/i);
+    expect(() => ollamaEngine({ baseUrl: "http://10.0.0.5:11434", allowOffBox: false })).toThrow(/only talk to this computer/i);
+  });
+
+  it("O-offbox-2: allowOffBox accepts a non-loopback host AND routes through the injected fetch — but STILL refuses a non-http scheme", () => {
+    // Accepted at construction (the lane is open)…
+    expect(() => ollamaEngine({ baseUrl: "http://10.0.0.5:11434", allowOffBox: true })).not.toThrow();
+    // …and a call actually goes to that host through the injected (receipted, in prod) fetch.
+    let seenUrl = "";
+    const spyFetch = (async (input: Parameters<typeof fetch>[0]) => {
+      seenUrl = typeof input === "string" ? input : (input as URL | Request).toString();
+      return new Response(JSON.stringify({ models: [{ name: "remote-model", size: 1, details: {} }] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const engine = ollamaEngine({ baseUrl: "http://10.0.0.5:11434", allowOffBox: true, fetchImpl: spyFetch });
+    return engine.listModels().then((models) => {
+      expect(seenUrl).toContain("10.0.0.5:11434"); // the off-box call went out through the injected fetch
+      expect(models.map((m) => m.id)).toEqual(["remote-model"]);
+      // http(s) is still enforced even on the off-box lane — no file://, ws://, etc.
+      expect(() => ollamaEngine({ baseUrl: "file:///etc/passwd", allowOffBox: true })).toThrow(/must use http/i);
+      expect(() => ollamaEngine({ baseUrl: "ws://10.0.0.5:11434", allowOffBox: true })).toThrow(/must use http/i);
+    });
+  });
+});
+
 // The timeout must bound the WHOLE operation (connect + body/stream), not just the
 // connect/header phase — a 200 with a stalled body, or a pull whose stream goes
 // silent, must fail fast with a descriptive message, never hang. Short injected

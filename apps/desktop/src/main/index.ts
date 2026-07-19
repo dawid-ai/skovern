@@ -27,7 +27,8 @@ import { fileFetchSink, fileReceiptSink, readActivityIndex, readReceipts, readRe
 import { toCsv } from "./csv.js";
 import { runPlugin, sandboxCheck } from "./plugin-host.js";
 import { claudeCliProvider } from "./claude-cli.js";
-import { deleteLocalModel, disposeLocal, downloadedEmbeddedModelId, downloadedModelsView, embeddedFilenames, engineForModel, freeMemory, isEmbeddedModel, localModels, localStatus, makeEngine, modelLoaded, openModelsFolder, pullModel } from "./local.js";
+import { connectProbe, deleteLocalModel, disposeLocal, downloadedEmbeddedModelId, downloadedModelsView, embeddedFilenames, engineForModel, freeMemory, isEmbeddedModel, localModels, localStatus, makeEngine, modelLoaded, openModelsFolder, pullModel } from "./local.js";
+import { normalizeEndpoint } from "./connect-endpoint.js";
 import { appendMessage, createTokenCoalescer, deleteChat, getChat, listChats, newChat, renameChat, sendChatStatus, sendChatToken } from "./chat-store.js";
 import { resolveChatReply } from "./chat-reply.js";
 import { validateOllamaName } from "./ollama-name.js";
@@ -40,7 +41,7 @@ import { aiVisibilityManifest } from "../plugins/ai-visibility/manifest.js";
 import type { CurrentAccount, RequestResult, VerifyResult } from "../shared/account.js";
 import type { DmSendResult, DmThreadView, NewsPostView, PublishResultView } from "../shared/cloud.js";
 import type { BrainStatusView, SaveBrainResult, TestBrainResult } from "../shared/brain.js";
-import type { LocalActionResult, LocalModelsView, LocalStatusView, PullProgressView, YourModelsView } from "../shared/local.js";
+import type { ConnectProbeView, LocalActionResult, LocalModelsView, LocalStatusView, PullProgressView, YourModelsView } from "../shared/local.js";
 import type { RunSkillResult, SandboxCheckResult, SkillView } from "../shared/plugin.js";
 import type { ActivitySummary, ReceiptView } from "../shared/receipts.js";
 import type { ChatMessage, ChatMeta, ChatSendResult, ChatView } from "../shared/chat.js";
@@ -163,9 +164,10 @@ function buildRouter(): Router | null {
   if (!brain) return null;
   const provider: Provider =
     brain.provider === "local"
-      ? // A local model has no model id → no brain to run; guard with a clear id. The
-        // dispatcher picks the embedded runtime for a gguf model, Ollama otherwise.
-        localProvider(engineForModel(brain.model ?? ""), brain.model ?? "")
+      ? // A local model has no model id → no brain to run; guard with a clear id. The dispatcher
+        // picks the embedded runtime for a gguf model, a connected remote if the brain carries an
+        // endpoint (loop 044), else the loopback Ollama.
+        localProvider(engineForModel(brain.model ?? "", brain.endpoint), brain.model ?? "")
       : brain.provider === "claude-cli"
         ? claudeCliProvider({ bin: CLAUDE_BIN, baseArgs: devClaudeArgs(), model: brain.model })
         : brain.provider === "anthropic"
@@ -736,7 +738,7 @@ app
     );
 
     registerTrusted(TRUST, "brain:save", (raw: unknown): SaveBrainResult => {
-      const input = (raw ?? {}) as { provider?: unknown; key?: unknown; model?: unknown };
+      const input = (raw ?? {}) as { provider?: unknown; key?: unknown; model?: unknown; endpoint?: unknown };
       const provider: ProviderId =
         input.provider === "anthropic"
           ? "anthropic"
@@ -747,6 +749,14 @@ app
               : "openrouter";
       const key = typeof input.key === "string" ? input.key.trim() : "";
       const model = typeof input.model === "string" && input.model.trim() ? input.model.trim() : undefined;
+      // A connect-by-address local brain (loop 044) carries an endpoint. Re-validate it at the
+      // trust boundary (never trust the renderer's copy) — a bad address is rejected before save.
+      let endpoint: string | undefined;
+      if (provider === "local" && typeof input.endpoint === "string" && input.endpoint.trim()) {
+        const normalized = normalizeEndpoint(input.endpoint);
+        if (!normalized) return { ok: false, message: "That address doesn't look right — try like 192.168.1.5:11434." };
+        endpoint = normalized;
+      }
       // The local brain needs a chosen model but no key; the subscription brain has
       // neither; the API-key brains require a key.
       if (provider === "local" && !model) return { ok: false, message: "Pick a model to run on this computer first." };
@@ -755,12 +765,21 @@ app
       // write a multi-MB blob into the keychain file.
       if (key.length > 8192) return { ok: false, message: "That doesn't look like a key." };
       try {
-        saveBrain({ provider, key, model });
+        saveBrain({ provider, key, model, endpoint });
         return { ok: true, message: "Brain saved." };
       } catch {
         // safeStorage unavailable — we refuse to write a key in plaintext
         return { ok: false, message: "Couldn't store the key safely on this computer." };
       }
+    });
+
+    // Connect-by-address (loop 044): probe a typed address — reachable? off-box? which models? —
+    // BEFORE saving a brain, so the UI can show the right ceremony (localhost light-confirm vs
+    // off-box egress-warning) and the model list. For an off-box address this makes the first
+    // off-box call, which is receipted (connectProbe → connectedEngine). Never throws across IPC.
+    registerTrusted(TRUST, "local:connect", (raw: unknown): Promise<ConnectProbeView> => {
+      const address = typeof raw === "string" ? raw : "";
+      return connectProbe(address);
     });
 
     registerTrusted(TRUST, "brain:test", async (): Promise<TestBrainResult> => {

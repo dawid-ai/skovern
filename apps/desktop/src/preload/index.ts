@@ -3,7 +3,7 @@ import type { AppInfo } from "@skovern/core";
 import type { CurrentAccount, RequestResult, VerifyResult } from "../shared/account.js";
 import type { DmSendResult, DmThreadView, NewsPostView, PublishResultView, PublishVisibilityInput } from "../shared/cloud.js";
 import type { BrainStatusView, SaveBrainInput, SaveBrainResult, TestBrainResult } from "../shared/brain.js";
-import type { LocalActionResult, LocalModelsView, LocalStatusView, PullProgressView, YourModelsView } from "../shared/local.js";
+import type { ConnectProbeView, LocalActionResult, LocalModelsView, LocalStatusView, PullProgressView, YourModelsView } from "../shared/local.js";
 import type { RunSkillResult, SandboxCheckResult, SkillView } from "../shared/plugin.js";
 import type { ActivitySummary, DateRange, ReceiptView } from "../shared/receipts.js";
 import type { ChatMeta, ChatSendResult, ChatStatusEvent, ChatTokenEvent, ChatView } from "../shared/chat.js";
@@ -66,6 +66,9 @@ const api = {
     models: (): Promise<LocalModelsView> => ipcRenderer.invoke("local:models") as Promise<LocalModelsView>,
     pull: (modelId: string): Promise<LocalActionResult> =>
       ipcRenderer.invoke("local:pull", modelId) as Promise<LocalActionResult>,
+    // Connect your own brain by address (loop 044): probe a typed address before saving.
+    connect: (address: string): Promise<ConnectProbeView> =>
+      ipcRenderer.invoke("local:connect", address) as Promise<ConnectProbeView>,
     // "Your models" (loop 041): list downloaded + loaded, delete to reclaim disk, free VRAM.
     downloadedModels: (): Promise<YourModelsView> => ipcRenderer.invoke("local:downloadedModels") as Promise<YourModelsView>,
     deleteModel: (filename: string): Promise<LocalActionResult> =>

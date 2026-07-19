@@ -13,10 +13,16 @@ import type { LocalEngine, LocalGenerateResult, LocalModelInfo, PullProgress } f
 // download never trips while a truly stalled one still fails fast.
 
 export interface OllamaOptions {
-  /** Base URL of the Ollama server. MUST be loopback; anything else is refused. */
+  /** Base URL of the server. Loopback-only unless `allowOffBox` is set. */
   baseUrl: string;
-  /** Injected fetch for tests (a fixture server). Defaults to global `fetch`. */
+  /** Injected fetch — a fixture in tests, or a receipted fetch on the off-box lane. Defaults to
+   *  global `fetch`. */
   fetchImpl?: typeof fetch;
+  /** Relax the loopback-only guard for the ONE explicit "connect your own brain by address" lane
+   *  (loop 044). Default false — every default-path construction stays hard loopback-only. When
+   *  true the caller MUST pass a receipted `fetchImpl` so the off-box egress is logged. http(s) is
+   *  still enforced. */
+  allowOffBox?: boolean;
   /** Hard per-call cap (connect + full body read) for non-streaming calls. */
   timeoutMs?: number;
   /** Idle cap for a streamed pull: if NO progress chunk arrives for this long, the
@@ -77,7 +83,7 @@ export async function ollamaResidentModels(
 ): Promise<string[]> {
   let origin: string;
   try {
-    origin = assertLoopback(baseUrl).origin;
+    origin = assertHost(baseUrl).origin;
   } catch {
     return [];
   }
@@ -112,7 +118,7 @@ export async function ollamaResidentModels(
 export async function ollamaUnload(baseUrl: string, modelId: string, fetchImpl: typeof fetch = fetch): Promise<void> {
   let origin: string;
   try {
-    origin = assertLoopback(baseUrl).origin;
+    origin = assertHost(baseUrl).origin;
   } catch {
     return; // non-loopback / bad URL → never POST off-box
   }
@@ -132,7 +138,10 @@ export async function ollamaUnload(baseUrl: string, modelId: string, fetchImpl: 
   }
 }
 
-function assertLoopback(baseUrl: string): URL {
+// Loopback-only by default; `allowOffBox` relaxes the host check for the ONE explicit,
+// consent-gated, receipted "connect your own brain by address" lane (loop 044). http(s) is
+// enforced ALWAYS — even off-box, no file://, ws://, or other scheme can be reached.
+function assertHost(baseUrl: string, allowOffBox = false): URL {
   let url: URL;
   try {
     url = new URL(baseUrl);
@@ -140,11 +149,11 @@ function assertLoopback(baseUrl: string): URL {
     throw new Error(`The local brain address "${baseUrl}" isn't a valid URL.`);
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error(`The local brain must use http on this computer, not "${url.protocol}".`);
+    throw new Error(`The local brain must use http, not "${url.protocol}".`);
   }
   // `hostname` strips the port and any [] on IPv6, so compare both forms.
   const host = url.hostname.toLowerCase();
-  if (!LOOPBACK_HOSTS.has(host)) {
+  if (!allowOffBox && !LOOPBACK_HOSTS.has(host)) {
     throw new Error(
       `The local brain can only talk to this computer (127.0.0.1), not "${url.hostname}". ` +
         "That's how we keep it private.",
@@ -165,7 +174,7 @@ function notRunning(cause: unknown): Error {
 /** Build an Ollama-backed `LocalEngine`. Throws immediately if `baseUrl` isn't
  *  loopback — the guard is at construction so an off-box URL can never be used. */
 export function ollamaEngine(opts: OllamaOptions): LocalEngine {
-  const base = assertLoopback(opts.baseUrl);
+  const base = assertHost(opts.baseUrl, opts.allowOffBox);
   const doFetch = opts.fetchImpl ?? fetch;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const pullIdleMs = opts.pullIdleMs ?? DEFAULT_PULL_IDLE_MS;
