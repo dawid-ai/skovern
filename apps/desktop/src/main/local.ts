@@ -258,6 +258,15 @@ export function connectedEngine(endpoint: string): LocalEngine {
   });
 }
 
+/** Classify a typed address WITHOUT touching the network — so the UI can show the off-box egress
+ *  warning BEFORE any byte leaves (Dawid's rule: ceremony precedes egress). Pure + cheap: normalize
+ *  + the off-box check (which honors the dev force-offbox seam). No fetch happens here. */
+export function classifyAddress(raw: string): { valid: boolean; offBox: boolean; endpoint: string | null } {
+  const endpoint = normalizeEndpoint(raw);
+  if (!endpoint) return { valid: false, offBox: false, endpoint: null };
+  return { valid: true, offBox: isOffBox(endpoint), endpoint };
+}
+
 /** Probe a connect-by-address endpoint BEFORE saving it: reachable? off-box? which models? Never
  *  throws across IPC — a failure (bad address, unreachable, non-http) is `{reachable:false}`. For an
  *  off-box endpoint this makes the first off-box call, so it is receipted via `connectedEngine`. */

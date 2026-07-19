@@ -47,6 +47,7 @@ declare global {
         models(): Promise<LocalModelsView>;
         pull(modelId: string): Promise<LocalActionResult>;
         connect(address: string): Promise<ConnectProbeView>;
+        classify(address: string): Promise<{ valid: boolean; offBox: boolean; endpoint: string | null }>;
         /** Listen for live pull progress. Returns an unsubscribe. */
         onPullProgress(cb: (p: PullProgressView) => void): () => void;
         downloadedModels(): Promise<YourModelsView>;

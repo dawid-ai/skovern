@@ -1575,6 +1575,35 @@ footer {
 .your-models-folder code {
   word-break: break-all;
 }
+.connect-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0;
+}
+.connect-row input {
+  flex: 1;
+  min-width: 0;
+}
+.connect-warning {
+  border: 1px solid #d9a441;
+  background: rgba(217, 164, 65, 0.1);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 8px 0;
+}
+.connect-models {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+}
+.connect-model-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+}
 .link.danger {
   color: #b23b3b;
 }

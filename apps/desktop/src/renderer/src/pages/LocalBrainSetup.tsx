@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { LocalModelView, LocalStatusView, PullProgressView } from "../../../shared/local.js";
 import { partitionModels } from "./local-partition.js";
 import { YourModels } from "./YourModels.js";
+import { ConnectBrain } from "./ConnectBrain.js";
 
 // "On this computer — free & private": the local-brain setup view, reached from
 // Settings (its own place, per the IA rule). Full-width: two callout cards up top —
@@ -441,6 +442,9 @@ export function LocalBrainSetup({ onBack, onSaved, guided = false }: { onBack: (
 
           {/* Your models — see/delete downloaded brains + free memory (loop 041). */}
           <YourModels refreshKey={version} onChanged={() => void refresh()} />
+
+          {/* Connect your own brain by address — the power-user advanced lane (loop 044). */}
+          <ConnectBrain onConnected={() => void refresh()} />
         </>
       )}
     </section>

@@ -69,6 +69,8 @@ const api = {
     // Connect your own brain by address (loop 044): probe a typed address before saving.
     connect: (address: string): Promise<ConnectProbeView> =>
       ipcRenderer.invoke("local:connect", address) as Promise<ConnectProbeView>,
+    classify: (address: string): Promise<{ valid: boolean; offBox: boolean; endpoint: string | null }> =>
+      ipcRenderer.invoke("local:classify", address) as Promise<{ valid: boolean; offBox: boolean; endpoint: string | null }>,
     // "Your models" (loop 041): list downloaded + loaded, delete to reclaim disk, free VRAM.
     downloadedModels: (): Promise<YourModelsView> => ipcRenderer.invoke("local:downloadedModels") as Promise<YourModelsView>,
     deleteModel: (filename: string): Promise<LocalActionResult> =>

@@ -27,7 +27,7 @@ import { fileFetchSink, fileReceiptSink, readActivityIndex, readReceipts, readRe
 import { toCsv } from "./csv.js";
 import { runPlugin, sandboxCheck } from "./plugin-host.js";
 import { claudeCliProvider } from "./claude-cli.js";
-import { connectProbe, deleteLocalModel, disposeLocal, downloadedEmbeddedModelId, downloadedModelsView, embeddedFilenames, engineForModel, freeMemory, isEmbeddedModel, localModels, localStatus, makeEngine, modelLoaded, openModelsFolder, pullModel } from "./local.js";
+import { classifyAddress, connectProbe, deleteLocalModel, disposeLocal, downloadedEmbeddedModelId, downloadedModelsView, embeddedFilenames, engineForModel, freeMemory, isEmbeddedModel, localModels, localStatus, makeEngine, modelLoaded, openModelsFolder, pullModel } from "./local.js";
 import { normalizeEndpoint } from "./connect-endpoint.js";
 import { appendMessage, createTokenCoalescer, deleteChat, getChat, listChats, newChat, renameChat, sendChatStatus, sendChatToken } from "./chat-store.js";
 import { resolveChatReply } from "./chat-reply.js";
@@ -209,6 +209,13 @@ async function routerWithSelfReliantFallback(
   }
   if (isEmbeddedModel(brain.model ?? "")) {
     devlog(`resolve: ENGINE = EMBEDDED built-in "${brain.model}" (node-llama-cpp on this computer) — Ollama not involved`);
+    return { router: normal, note: "", needsSetup: false };
+  }
+  // A CONNECTED brain (loop 044) runs on its own endpoint, NOT loopback Ollama — so the loopback
+  // probe + built-in fallback below must not hijack it (it would find loopback unreachable and swap
+  // to embedded, ignoring the endpoint the user connected to).
+  if (brain.endpoint) {
+    devlog(`resolve: ENGINE = CONNECTED "${brain.model}" @ ${brain.endpoint} — normal router, no loopback fallback`);
     return { router: normal, note: "", needsSetup: false };
   }
   // A local Ollama brain: probe whether Ollama is actually reachable.
@@ -780,6 +787,12 @@ app
     registerTrusted(TRUST, "local:connect", (raw: unknown): Promise<ConnectProbeView> => {
       const address = typeof raw === "string" ? raw : "";
       return connectProbe(address);
+    });
+
+    // Classify a typed address WITHOUT any network call, so the UI can show the off-box egress
+    // warning BEFORE it probes (which is the first byte off-box). Pure — no fetch here.
+    registerTrusted(TRUST, "local:classify", (raw: unknown): { valid: boolean; offBox: boolean; endpoint: string | null } => {
+      return classifyAddress(typeof raw === "string" ? raw : "");
     });
 
     registerTrusted(TRUST, "brain:test", async (): Promise<TestBrainResult> => {
