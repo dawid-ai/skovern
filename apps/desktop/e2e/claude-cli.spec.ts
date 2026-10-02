@@ -78,7 +78,7 @@ test("user picks the Claude Code subscription brain (no key) and runs a skill on
 
     // Settings → pick the subscription brain; there is NO key field to fill
     await page.getByRole("button", { name: "Settings" }).click();
-    await page.getByLabel("Your brain").selectOption({ label: "Claude Code (my subscription)" });
+    await page.getByLabel("Pick a brain").selectOption({ label: "Claude Code (my subscription)" });
     await expect(page.getByLabel("Your key")).toHaveCount(0);
     await page.getByRole("button", { name: "Save brain" }).click();
     await expect(page.getByText("Brain saved.")).toBeVisible();

@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { brainSwitchPlan } from "./brain-switch.js";
 
 // Loop 045 B1: switching brains frees the outgoing one, in every direction.
-const embedded = (id: string): boolean => id === "qwen2.5:3b" || id === "qwen2.5:14b";
+const isEmbedded = (id: string): boolean => id === "qwen2.5:3b" || id === "qwen2.5:14b";
+const embedded = { isEmbedded, embeddedWarm: false };
 
 describe("brainSwitchPlan", () => {
   it("U1: outgoing embedded, incoming Ollama → unload the embedded model", () => {
@@ -58,5 +59,15 @@ describe("brainSwitchPlan", () => {
       embedded,
     );
     expect(plan).toEqual({ unloadEmbedded: false, unloadOllama: ["mistral:7b"] });
+  });
+
+  it("U2b: an Ollama brain whose built-in fallback is warm → free both (the fallback is its memory too)", () => {
+    const plan = brainSwitchPlan({ provider: "local", model: "mistral:7b" }, { provider: "local", model: "qwen2.5:3b" }, { isEmbedded, embeddedWarm: true });
+    expect(plan).toEqual({ unloadEmbedded: true, unloadOllama: ["mistral:7b"] });
+  });
+
+  it("a brain with a stored filename is built-in even when the catalog no longer lists its id", () => {
+    const prev = { provider: "local", model: "qwen2.5:7b", filename: "qwen2.5-7b-instruct-q4_k_m.gguf" };
+    expect(brainSwitchPlan(prev, { provider: "local", model: "mistral:7b" }, embedded)).toEqual({ unloadEmbedded: true, unloadOllama: [] });
   });
 });

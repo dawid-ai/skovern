@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import type { YourModelsView } from "../../../shared/local.js";
 
+const POLL_MS = 5000; // same cadence as the Shell's brain-chip poll
+
 // "Your models" (loop 041): the brains you've downloaded (disk) + what's loaded in your graphics
 // card right now (VRAM), with Delete (reclaim disk) and Free memory (reclaim VRAM). Lives in the
 // "Your brain" page (loop 045). Talks ONLY to window.skovern.local.* — no disk/OS access here.
@@ -19,6 +21,13 @@ export function YourModels({ onChanged, refreshKey, onSetup }: { onChanged: () =
   useEffect(() => {
     void refresh();
   }, [refresh, refreshKey]);
+
+  // Keep polling at the sidebar chip's cadence, so a model that idle-unloads while you're looking
+  // reads "nothing loaded" here too — the page and the chip never drift apart (045 E2).
+  useEffect(() => {
+    const id = setInterval(() => void refresh(), POLL_MS);
+    return () => clearInterval(id);
+  }, [refresh]);
 
   async function del(filename: string): Promise<void> {
     setBusy(true);
@@ -75,10 +84,10 @@ export function YourModels({ onChanged, refreshKey, onSetup }: { onChanged: () =
 
       {models.length === 0 ? (
         <div className="your-models-empty">
-          <p className="hint">You haven&apos;t downloaded any brains yet.</p>
+          <p className="hint">You haven&apos;t downloaded any private brains to this computer yet.</p>
           {onSetup && (
             <button className="primary" onClick={onSetup}>
-              Set up a brain
+              Get a private brain
             </button>
           )}
         </div>

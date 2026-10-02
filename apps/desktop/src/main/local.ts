@@ -16,7 +16,7 @@ import { connectEngineOptions, hostIsOffBox, normalizeEndpoint } from "./connect
 import { scanHardware } from "./hardware.js";
 import { createCachedCatalogLoader, snapshotCatalog } from "./catalog.js";
 import { modelDownloaded, listDownloadedModels, deleteDownloadedModel, modelsDir } from "./download.js";
-import { modelDeletionPlan } from "./model-manage.js";
+import { isActiveFile, modelDeletionPlan } from "./model-manage.js";
 import type { SwitchPlan } from "./brain-switch.js";
 import { loadBrain, clearBrain } from "./keys.js";
 import { ollamaInstalled } from "./ollama-launch.js";
@@ -296,10 +296,11 @@ export function disposeLocal(): void {
   llama = null;
 }
 
-// The configured local brain's model id, or null (the "active" model in the manager).
-function activeLocalModelId(): string | null {
+// The configured local brain's model id + the GGUF filename stored with it (045), or nulls — the
+// "active" model in the manager.
+function activeLocal(): { id: string | null; filename: string | null } {
   const b = loadBrain();
-  return b?.provider === "local" ? b.model ?? null : null;
+  return b?.provider === "local" ? { id: b.model ?? null, filename: b.filename ?? null } : { id: null, filename: null };
 }
 
 /** `local:downloadedModels` — the "Your models" view: every embedded GGUF on disk with its size
@@ -307,7 +308,8 @@ function activeLocalModelId(): string | null {
  *  The Memory row covers the EMBEDDED model we run + can free; Ollama manages its own memory. */
 export async function downloadedModelsView(): Promise<YourModelsView> {
   const files = await listDownloadedModels();
-  const active = activeLocalModelId();
+  const active = activeLocal();
+  const embedded = latestEmbedded.map((m) => ({ id: m.id, filename: m.gguf.filename }));
   const models = files.map((f) => {
     const cat = latestEmbedded.find((m) => m.gguf.filename === f.filename);
     return {
@@ -315,7 +317,7 @@ export async function downloadedModelsView(): Promise<YourModelsView> {
       id: cat?.id ?? f.filename,
       label: cat?.label ?? f.filename,
       size: fmtGB(f.sizeBytes) ?? `${f.sizeBytes} B`,
-      active: cat !== undefined && cat.id === active,
+      active: isActiveFile(f.filename, active, embedded), // the same rule deletion uses
     };
   });
   // What's resident RIGHT NOW, for the Memory row. The active brain's residency comes from the
@@ -323,7 +325,7 @@ export async function downloadedModelsView(): Promise<YourModelsView> {
   // Else ask Ollama what it has loaded (`/api/ps`) — so the button appears + frees for the Ollama
   // path too, not only the embedded one (BUG B). Best-effort: a probe failure reads as nothing.
   let loadedLabel: string | null =
-    active !== null && (await modelLoaded(active)) ? models.find((m) => m.id === active)?.label ?? active : null;
+    active.id !== null && (await modelLoaded(active.id)) ? models.find((m) => m.active)?.label ?? active.id : null;
   // A warm embedded child that ISN'T the active brain still holds VRAM — say so, honestly (this
   // is exactly the stale brain B1 left resident after a switch).
   if (!loadedLabel && (llama?.isWarm() ?? false)) loadedLabel = "A built-in brain";
@@ -345,6 +347,12 @@ export async function freeMemory(): Promise<{ freed: boolean }> {
   const resident = await ollamaResidentModels(base);
   await Promise.all(resident.map((id) => ollamaUnload(base, id)));
   return { freed: true };
+}
+
+/** Is the embedded runtime holding a model in memory right now? (045: the switch plan frees a
+ *  warm built-in that was standing in for an unreachable Ollama brain.) */
+export function embeddedWarm(): boolean {
+  return llama?.isWarm() ?? false;
 }
 
 /** Carry out a brain-switch plan (045 B1) with the already-shipped primitives: the embedded
@@ -369,9 +377,7 @@ export async function openModelsFolder(): Promise<void> {
  *  validated + confined to the models dir inside `deleteDownloadedModel` (path-sink guard). */
 export async function deleteLocalModel(filename: string): Promise<LocalActionResult> {
   const embedded = latestEmbedded.map((m) => ({ id: m.id, filename: m.gguf.filename }));
-  const b = loadBrain();
-  const active = b?.provider === "local" ? { id: b.model ?? null, filename: b.filename ?? null } : { id: null, filename: null };
-  const plan = modelDeletionPlan(filename, active, llama?.isWarm() ?? false, embedded);
+  const plan = modelDeletionPlan(filename, activeLocal(), llama?.isWarm() ?? false, embedded);
   if (plan.unload) llama?.unload(); // free its VRAM before it's gone (the warm child holds the weights)
   const removed = await deleteDownloadedModel(filename); // validates the name + confines, then unlinks
   if (removed && plan.clearBrain) clearBrain(); // no dangling active pointer to a deleted file

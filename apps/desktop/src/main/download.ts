@@ -52,22 +52,32 @@ export function isSafeFinalUrl(u: string, allowLoopback: boolean): boolean {
 
 /** A failure WE described in plain language — the only kind of message that reaches the user
  *  verbatim (loop 045 B2). Anything else (undici's `TypeError: terminated`, a socket reset, an fs
- *  error) can carry developer words, a URL, or a path, so it's replaced by STOPPED_PARTWAY. */
+ *  error) can carry developer words, a URL, or a path, so it's replaced by a fixed message. */
 export class DownloadError extends Error {}
 
 const NO_SPACE = "There isn't enough free space on this computer for this model. Free up some room and try again.";
 
-export const STOPPED_PARTWAY =
-  "The download stopped partway — usually a hiccup in the internet connection. Try again — it picks up where it left off.";
+/** The connection failed (no internet, a dropped transfer). The `.part` is kept, so it resumes. */
+export const STOPPED =
+  "The download stopped — usually a hiccup in the internet connection. Try again — it picks up where it left off.";
 
-/** Our own message passes through; any raw error becomes the honest stopped-partway message. */
+/** Something on THIS computer failed (a file couldn't be written, saved, or renamed) — not the
+ *  internet, so we don't blame the connection. */
+export const LOCAL_PROBLEM =
+  "Something on this computer got in the way of saving the model. Try again — if it keeps happening, restart Skovern.";
+
+/** Our own message passes through; a raw error becomes the fixed message that matches its cause.
+ *  System/file errors carry a string `code` (ENOSPC, EACCES, EPERM…); undici's network errors are
+ *  plain `TypeError`s without one. */
 export function toDownloadError(err: unknown): DownloadError {
   // ponytail: one manual "Try again" (it resumes from the .part). Auto-retry with backoff if
   // flaky Hugging Face transfers turn out to be common.
   if (err instanceof DownloadError) return err;
   // The disk filled AFTER the pre-check (another app wrote to it): say so, not "connection".
-  if ((err as { code?: unknown } | null)?.code === "ENOSPC") return new DownloadError(NO_SPACE);
-  return new DownloadError(STOPPED_PARTWAY);
+  const code = (err as { code?: unknown } | null)?.code;
+  if (code === "ENOSPC") return new DownloadError(NO_SPACE);
+  if (typeof code === "string") return new DownloadError(LOCAL_PROBLEM);
+  return new DownloadError(STOPPED);
 }
 
 export function modelsDir(): string {

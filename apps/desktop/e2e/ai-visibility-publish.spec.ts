@@ -98,7 +98,7 @@ test("user publishes an AI Visibility result and gets a live public link", async
 
     // connect a brain (OpenRouter → mock)
     await page.getByRole("button", { name: "Settings" }).click();
-    await page.getByLabel("Your brain").selectOption({ label: "OpenRouter" });
+    await page.getByLabel("Pick a brain").selectOption({ label: "OpenRouter" });
     await page.getByLabel("Your key").fill("sk-fake-key");
     await page.getByRole("button", { name: "Save brain" }).click();
     await expect(page.getByText("Brain saved.")).toBeVisible();

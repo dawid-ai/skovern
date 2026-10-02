@@ -146,7 +146,7 @@ export function SettingsPage({ onBrainChanged, onOpenYourBrain }: { onBrainChang
       </p>
 
       <div className="form">
-        <label htmlFor="brain">Your brain</label>
+        <label htmlFor="brain">Pick a brain</label>
         <select
           id="brain"
           value={provider}

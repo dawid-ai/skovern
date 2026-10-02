@@ -356,7 +356,7 @@ test("O4: onboarding always offers an escape to an online brain — never a dead
     // choose the online escape → land in the usable app, not a dead end
     await page.getByRole("button", { name: "I'd rather use an online brain" }).click();
     await page.getByRole("button", { name: "Settings" }).click();
-    await expect(page.getByLabel("Your brain")).toBeVisible(); // the online-brain picker is reachable
+    await expect(page.getByLabel("Pick a brain")).toBeVisible(); // the online-brain picker is reachable
   } finally {
     await app.close();
     rmSync(userDataDir, { recursive: true, force: true });

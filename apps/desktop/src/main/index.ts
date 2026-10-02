@@ -28,7 +28,7 @@ import { toCsv } from "./csv.js";
 import { runPlugin, sandboxCheck } from "./plugin-host.js";
 import { claudeCliProvider } from "./claude-cli.js";
 import { brainSwitchPlan } from "./brain-switch.js";
-import { classifyAddress, connectProbe, deleteLocalModel, disposeLocal, downloadedEmbeddedModelId, downloadedModelsView, embeddedFilenameFor, embeddedFilenames, engineForModel, freeMemory, freeOutgoingBrain, isEmbeddedModel, localModels, localStatus, makeEngine, modelLoaded, openModelsFolder, pullModel } from "./local.js";
+import { classifyAddress, connectProbe, deleteLocalModel, disposeLocal, downloadedEmbeddedModelId, downloadedModelsView, embeddedFilenameFor, embeddedFilenames, embeddedWarm, engineForModel, freeMemory, freeOutgoingBrain, isEmbeddedModel, localModels, localStatus, makeEngine, modelLoaded, openModelsFolder, pullModel } from "./local.js";
 import { normalizeEndpoint } from "./connect-endpoint.js";
 import { appendMessage, createTokenCoalescer, deleteChat, getChat, listChats, newChat, renameChat, sendChatStatus, sendChatToken } from "./chat-store.js";
 import { resolveChatReply } from "./chat-reply.js";
@@ -784,7 +784,7 @@ app
       // one. Runs only AFTER a valid save (a rejected save unloads nothing), and before we return,
       // so nothing loads the new model first. Best-effort — an unload failure never fails the save.
       try {
-        await freeOutgoingBrain(brainSwitchPlan(prev, { provider, model, endpoint }, isEmbeddedModel));
+        await freeOutgoingBrain(brainSwitchPlan(prev, { provider, model, endpoint }, { isEmbedded: isEmbeddedModel, embeddedWarm: embeddedWarm() }));
       } catch {
         /* best-effort */
       }

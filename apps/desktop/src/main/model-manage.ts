@@ -1,6 +1,20 @@
 // Pure decision for deleting a downloaded model — kept out of the Electron-coupled `local.ts` so
 // the "don't leave a dangling active brain" invariant is unit-testable (loop 041, checker F1).
 
+/** Is this downloaded file the ACTIVE brain's? The brain's own stored filename wins, so a vanished
+ *  catalog entry can't make the active model read as not-active (ledger
+ *  `model-delete-active-catalog-edge`). Brains saved before 045 carry no filename — those fall back
+ *  to the catalog mapping. One rule for both the "in use" marker and deletion (loop 045). */
+export function isActiveFile(
+  filename: string,
+  active: { id: string | null; filename: string | null },
+  embedded: { id: string; filename: string }[],
+): boolean {
+  if (active.filename !== null) return active.filename === filename;
+  const cat = embedded.find((m) => m.filename === filename);
+  return cat !== undefined && cat.id === active.id;
+}
+
 /** Given the file being deleted, the active brain (its model id + the filename stored with it at
  *  save time, when known), whether the engine is warm, and the embedded catalog (id ↔ filename),
  *  decide: is this the ACTIVE model, should we UNLOAD its VRAM first (it's active AND resident —
@@ -12,10 +26,6 @@ export function modelDeletionPlan(
   warm: boolean,
   embedded: { id: string; filename: string }[],
 ): { isActive: boolean; unload: boolean; clearBrain: boolean } {
-  // The brain's own stored filename wins, so a vanished catalog entry can't make the active model
-  // read as not-active (ledger `model-delete-active-catalog-edge`). Brains saved before 045 carry
-  // no filename — those fall back to the catalog mapping.
-  const cat = embedded.find((m) => m.filename === filename);
-  const isActive = (active.filename !== null && active.filename === filename) || (cat !== undefined && cat.id === active.id);
+  const isActive = isActiveFile(filename, active, embedded);
   return { isActive, unload: isActive && warm, clearBrain: isActive };
 }

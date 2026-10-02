@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
@@ -20,7 +20,7 @@ const FAKE_REPLY = "Hello — I'm your private brain, running right here on your
 const GGUF_FILENAME = "qwen2.5-3b-instruct-q4_k_m.gguf";
 const MODEL_BODY = Buffer.from("FAKE-GGUF-BYTES-for-the-your-brain-e2e".repeat(2000));
 const MODEL_SHA256 = createHash("sha256").update(MODEL_BODY).digest("hex");
-const STOPPED = "The download stopped partway";
+const STOPPED = "The download stopped";
 
 const GPU_HARDWARE = JSON.stringify({
   ramBytes: 64 * 1024 ** 3, cpuCores: 16, gpus: [{ model: "Test GPU 24GB", vramBytes: 24 * 1024 ** 3 }],
@@ -32,18 +32,23 @@ let download: Server | null = null;
 // E4: while true, the download fixture sends half the body then drops the connection — the exact
 // shape that made undici throw its raw `TypeError: terminated` on Dawid's first download.
 let dropDownload = false;
+// Finding 4 (checker, iteration 1): when true, the live catalog RENAMES the 3B (new id + new file) —
+// the "catalog lost the active model's entry" case the stored filename must survive.
+let remapCatalog = false;
+const REMAPPED = { id: "qwen2.5:3b-v2", label: "Qwen2.5 3B v2", filename: "qwen2.5-3b-v2-instruct-q4_k_m.gguf" };
 
 function startCatalog(): Promise<string> {
   return new Promise((resolve) => {
     catalog = createServer((_req, res) => {
       res.writeHead(200, { "content-type": "application/json" });
+      const m = remapCatalog ? REMAPPED : { id: "qwen2.5:3b", label: "Qwen2.5 3B", filename: GGUF_FILENAME };
       res.end(JSON.stringify({
         models: [{
-          id: "qwen2.5:3b", label: "Qwen2.5 3B", params: 3, sizeBytes: MODEL_BODY.length, quant: "Q4_K_M",
+          id: m.id, label: m.label, params: 3, sizeBytes: MODEL_BODY.length, quant: "Q4_K_M",
           creator: "Alibaba (Qwen team)", homepage: "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF",
           license: "Apache 2.0 — free to use.", licenseUrl: "https://www.apache.org/licenses/LICENSE-2.0",
           tradeoff: "A strong little all-rounder.",
-          gguf: { url: `https://huggingface.co/x/resolve/main/${GGUF_FILENAME}`, sha256: MODEL_SHA256, sizeBytes: MODEL_BODY.length, filename: GGUF_FILENAME, contextSize: 4096 },
+          gguf: { url: `https://huggingface.co/x/resolve/main/${m.filename}`, sha256: MODEL_SHA256, sizeBytes: MODEL_BODY.length, filename: m.filename, contextSize: 4096 },
         }],
       }));
     });
@@ -130,6 +135,7 @@ test.afterAll(async () => {
 
 test.beforeEach(() => {
   dropDownload = false;
+  remapCatalog = false;
 });
 
 async function signIn(page: Page, email: string): Promise<void> {
@@ -157,7 +163,7 @@ function launch(userDataDir: string, env: Record<string, string>): Promise<Elect
 
 async function openLocalSetup(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByLabel("Your brain").selectOption("local");
+  await page.getByLabel("Pick a brain").selectOption("local");
   await page.getByRole("button", { name: "Set up the local brain →" }).click();
   await expect(page.getByRole("heading", { name: "On this computer", exact: true })).toBeVisible();
 }
@@ -187,10 +193,13 @@ test("Your brain page: empty state, list, memory agrees with the chip, free memo
     // E3 (degraded): nothing downloaded → an honest empty state with a CTA, and no Free memory
     // button at all (nothing is loaded — no dead button).
     await openYourBrain(page);
-    await expect(your.getByText(/haven't downloaded any brains/i)).toBeVisible();
-    await expect(your.getByRole("button", { name: "Set up a brain" })).toBeVisible();
+    await expect(your.getByText(/haven't downloaded any private brains/i)).toBeVisible();
     await expect(your.getByText(/Nothing is loaded in memory/i)).toBeVisible();
     await expect(your.getByRole("button", { name: "Free memory" })).toHaveCount(0);
+    // The CTA actually leads somewhere: the private-brain setup (and you can step back out).
+    await your.getByRole("button", { name: "Get a private brain" }).click();
+    await expect(page.getByRole("heading", { name: "Let's set up your brain." })).toBeVisible();
+    await page.getByRole("button", { name: "I'd rather use an online brain" }).click();
 
     // Download the 3B from Settings. E1: the setup screen no longer hosts "Your models"; it links
     // to the new page instead.
@@ -217,28 +226,47 @@ test("Your brain page: empty state, list, memory agrees with the chip, free memo
     await openYourBrain(page);
     await expect(your.getByText(/In memory now/i)).toBeVisible({ timeout: 15_000 });
     await expect(page.locator(".brain-chip")).toHaveClass(/brain-chip-local/);
-    await your.getByRole("button", { name: "Free memory" }).click();
-    await expect(your.getByText(/Nothing is loaded in memory/i)).toBeVisible({ timeout: 15_000 });
-    await expect(page.locator(".brain-chip")).toHaveClass(/brain-chip-asleep/, { timeout: 15_000 });
 
-    // E6 (viewport, retro 037): at 900×520 the folder path, Delete and the page are reachable —
-    // the page scrolls vertically, nothing overflows sideways.
+    // E6 (viewport, retro 037): at 900×520, WHILE a model is loaded, the table row, folder path,
+    // Delete, Show in folder AND Free memory are all reachable — the page scrolls vertically, and
+    // nothing overflows sideways, neither the page nor the table's own scroll box.
     await app.evaluate(async ({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setBounds({ width: 900, height: 520 }));
-    for (const el of [your.locator(".your-models-folder code"), row.getByRole("button", { name: "Delete" }), your.getByRole("button", { name: "Show in folder" })]) {
+    for (const el of [
+      row,
+      your.locator(".your-models-folder code"),
+      row.getByRole("button", { name: "Delete" }),
+      your.getByRole("button", { name: "Show in folder" }),
+      your.getByRole("button", { name: "Free memory" }),
+    ]) {
       await el.scrollIntoViewIfNeeded();
       await expect(el).toBeInViewport();
     }
-    const overflowX = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-    expect(overflowX).toBeLessThanOrEqual(0);
+    const overflow = await page.evaluate(() => {
+      const box = document.querySelector(".your-models .receipt-scroll");
+      return {
+        page: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        table: box ? box.scrollWidth - box.clientWidth : 0,
+      };
+    });
+    expect(overflow.page).toBeLessThanOrEqual(0);
+    expect(overflow.table).toBeLessThanOrEqual(0);
+
+    await your.getByRole("button", { name: "Free memory" }).click();
+    await expect(your.getByText(/Nothing is loaded in memory/i)).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator(".brain-chip")).toHaveClass(/brain-chip-asleep/, { timeout: 15_000 });
 
     // Moved 041 E2: DELETE reclaims disk and clears the active brain — no dangling pointer.
     await row.getByRole("button", { name: "Delete" }).click();
     await row.getByRole("button", { name: "Yes, delete" }).click();
     await expect(row).toHaveCount(0, { timeout: 15_000 });
     expect(existsSync(modelFile)).toBe(false);
-    await expect(your.getByText(/haven't downloaded any brains/i)).toBeVisible();
+    await expect(your.getByText(/haven't downloaded any private brains/i)).toBeVisible();
     const status = await page.evaluate(() => window.skovern.brain.status());
     expect(status.configured).toBe(false);
+
+    // Fixture realism (contract): the real app's routine poll noise is in the receipts log while
+    // all of this ran — nothing here read a clean, noise-free subset.
+    expect(readFileSync(path.join(userDataDir, "receipts.jsonl"), "utf8")).toContain("\"routine\":true");
   } finally {
     await app.close();
     rmSync(userDataDir, { recursive: true, force: true });
@@ -302,6 +330,7 @@ test("switching brains frees the old one: built-in → Ollama, then Ollama → b
     await expect(page.getByText("Local: mistral:7b")).toBeVisible({ timeout: 15_000 });
     await openYourBrain(page);
     await expect(your.getByText(/Nothing is loaded in memory/i)).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator(".brain-chip")).toHaveClass(/brain-chip-asleep/, { timeout: 15_000 }); // both flip
 
     // Ollama loads mistral (as a chat would) → page and chip agree it's loaded.
     ollama.state.resident = "mistral:7b";
@@ -347,6 +376,51 @@ test("a failed download says what happened and Try again finishes it", async () 
     await alert.getByRole("button", { name: "Try again" }).click();
     await expect(page.getByText("Local: qwen2.5:3b")).toBeVisible({ timeout: 60_000 });
     await expect(page.getByRole("alert").filter({ hasText: STOPPED })).toHaveCount(0);
+
+    // Degraded: Ollama is unreachable (this test's Ollama URL is a dead port) while switching AWAY
+    // from an Ollama brain → the best-effort unload fails quietly and the save still succeeds.
+    const toOllama = await page.evaluate(() => window.skovern.brain.save({ provider: "local", key: "", model: "mistral:7b" }));
+    expect(toOllama.ok).toBe(true);
+    const back = await page.evaluate(() => window.skovern.brain.save({ provider: "local", key: "", model: "qwen2.5:3b" }));
+    expect(back.ok).toBe(true);
+    expect((await page.evaluate(() => window.skovern.brain.status())).model).toBe("qwen2.5:3b");
+  } finally {
+    await app.close();
+    rmSync(userDataDir, { recursive: true, force: true });
+  }
+});
+
+// Ledger `model-delete-active-catalog-edge` end to end (checker finding 4): the live model list
+// RENAMES the active built-in (new id + new file) after it was downloaded. The brain's own stored
+// filename still marks the old file "in use", and deleting it still clears the brain — through the
+// real save → keychain → delete path, not just the pure function.
+test("deleting the active brain clears it even after the model list renamed it", async () => {
+  test.setTimeout(180_000);
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
+  const app = await launch(userDataDir, { SKOVERN_OLLAMA_URL: "http://127.0.0.1:1", SKOVERN_OLLAMA_INSTALLED: "0", SKOVERN_LLAMA_FAKE: "1" });
+  try {
+    const page = await app.firstWindow();
+    await signIn(page, "renamed@shop.test");
+    await openLocalSetup(page);
+    await page.getByRole("button", { name: "Get this one" }).first().click();
+    await expect(page.getByText("Local: qwen2.5:3b")).toBeVisible({ timeout: 60_000 });
+
+    remapCatalog = true;
+    // Rescan until the new list is in (the catalog loader caches for 3 s, so the first may hit it).
+    await expect(async () => {
+      await page.getByRole("button", { name: "Check my computer again" }).click();
+      await expect(page.getByText(REMAPPED.label).first()).toBeVisible({ timeout: 2_000 });
+    }).toPass({ timeout: 20_000 });
+
+    await openYourBrain(page);
+    const your = page.locator(".your-models");
+    const row = your.locator("tr.receipt-row", { hasText: GGUF_FILENAME }); // no catalog label any more
+    await expect(row.getByText("in use")).toBeVisible();
+    await row.getByRole("button", { name: "Delete" }).click();
+    await row.getByRole("button", { name: "Yes, delete" }).click();
+    await expect(row).toHaveCount(0, { timeout: 15_000 });
+    const status = await page.evaluate(() => window.skovern.brain.status());
+    expect(status.configured).toBe(false); // no dangling pointer at the deleted file
   } finally {
     await app.close();
     rmSync(userDataDir, { recursive: true, force: true });

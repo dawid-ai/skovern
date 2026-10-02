@@ -141,7 +141,7 @@ test.describe("packaged Windows build (loop 029)", () => {
 
         // to the local-brain screen (runs the real hardware scan + real catalog fetch)
         await page.getByRole("button", { name: "Settings" }).click();
-        await page.getByLabel("Your brain").selectOption("local");
+        await page.getByLabel("Pick a brain").selectOption("local");
         await page.getByRole("button", { name: "Set up the local brain →" }).click();
         await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible({ timeout: 30_000 });
 

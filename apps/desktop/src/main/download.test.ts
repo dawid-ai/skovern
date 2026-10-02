@@ -29,7 +29,7 @@ vi.mock("node:fs", async (orig) => {
   };
 });
 
-import { DownloadError, STOPPED_PARTWAY, downloadModel, ensureDiskSpace, isSafeFinalUrl, modelDownloaded, modelPath, modelsDir, sweepOrphanParts } from "./download.js";
+import { DownloadError, LOCAL_PROBLEM, STOPPED, downloadModel, ensureDiskSpace, isSafeFinalUrl, modelDownloaded, modelPath, modelsDir, sweepOrphanParts } from "./download.js";
 
 let server: Server | null = null;
 
@@ -161,17 +161,17 @@ describe("downloadModel", () => {
   // throwing sink makes downloadModel reject AND never fetch.
   it("D3: a throwing sink rejects the download and never fetches", async () => {
     const fetchSpy = vi.fn<typeof fetch>();
+    // A real receipt-sink failure is an fs error with a code (and a path in its text).
     const sink: FetchSink = {
       append: () => {
-        throw new Error("disk full");
+        throw Object.assign(new Error("EACCES: permission denied, open 'C:\\Users\\x\\receipts.jsonl'"), { code: "EACCES" });
       },
     };
     const g = gguf(Buffer.from("x"));
-    // 045: the sink's raw error text no longer reaches the user (it's not one of ours) — the
-    // download still REJECTS, and still never fetches, which is what this test guards.
-    const err = await downloadModel(g, sink, undefined, fetchSpy).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(DownloadError);
-    expect((err as Error).message).not.toMatch(/disk full/);
+    // 045: the sink's raw error (path included) no longer reaches the user. The download still
+    // REJECTS for THAT reason (the local-problem message — no other pre-fetch branch yields it) and
+    // still never fetches, which is what this test guards.
+    await expect(downloadModel(g, sink, undefined, fetchSpy, async () => Number.POSITIVE_INFINITY)).rejects.toThrow(LOCAL_PROBLEM);
     expect(fetchSpy).toHaveBeenCalledTimes(0);
   });
 
@@ -317,11 +317,24 @@ describe("download robustness (loop 029)", () => {
     // message (not the raw `ENOSPC …` text) — still a clean rejection, never a crash.
     fsControl.writeStreamError = Object.assign(new Error("ENOSPC: no space left on device, write"), { code: "ENOSPC" });
     try {
-      await expect(downloadModel(g, sink, undefined, via(base))).rejects.toThrow(/enough free space/i);
+      // Unlimited free space on the pre-check, so ONLY the mid-stream ENOSPC mapping can produce this.
+      await expect(downloadModel(g, sink, undefined, via(base), async () => Number.POSITIVE_INFINITY)).rejects.toThrow(/enough free space/i);
     } finally {
       fsControl.writeStreamError = null;
     }
     expect(existsSync(modelPath(g.filename))).toBe(false); // no bad model file
+  });
+
+  it("R2d (045): a non-ENOSPC write error reads as a local problem, not the internet or the disk", async () => {
+    const body = Buffer.alloc(80 * 1024, 4);
+    const base = await startServer(body, { chunks: 8 });
+    const g = gguf(body, "eio.gguf");
+    fsControl.writeStreamError = Object.assign(new Error("EIO: i/o error, write"), { code: "EIO" });
+    try {
+      await expect(downloadModel(g, collectingSink().sink, undefined, via(base), async () => Number.POSITIVE_INFINITY)).rejects.toThrow(LOCAL_PROBLEM);
+    } finally {
+      fsControl.writeStreamError = null;
+    }
   });
 
   // R3 — ORPHAN sweep: stale `.part`/`.part.<n>` temps are removed, but a resumable
@@ -364,7 +377,7 @@ describe("download errors speak plain language (loop 045)", () => {
     const g = gguf(body, "dropped.gguf");
     const err = await downloadModel(g, collectingSink().sink, undefined, via(base)).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(DownloadError);
-    expect((err as Error).message).toBe(STOPPED_PARTWAY);
+    expect((err as Error).message).toBe(STOPPED);
     expect((err as Error).message).not.toMatch(/terminated/i);
     expect((err as Error).message).not.toContain("127.0.0.1"); // no host/url leaks either
   });
@@ -389,7 +402,7 @@ describe("download errors speak plain language (loop 045)", () => {
     const body = Buffer.alloc(256 * 1024, 5);
     const g = gguf(body, "resumable.gguf");
     const base = await startDroppingServer(body);
-    await expect(downloadModel(g, collectingSink().sink, undefined, via(base))).rejects.toThrow(STOPPED_PARTWAY);
+    await expect(downloadModel(g, collectingSink().sink, undefined, via(base))).rejects.toThrow(STOPPED);
     expect(existsSync(`${modelPath(g.filename)}.part`)).toBe(true); // kept for the resume
     await new Promise<void>((r) => server!.close(() => r()));
     const { base: rangeBase, servedFrom } = await startRangeServer(body);

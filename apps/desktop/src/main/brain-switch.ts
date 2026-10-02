@@ -7,6 +7,8 @@ export interface SwitchBrain {
   provider: string;
   model?: string;
   endpoint?: string;
+  /** Stored with an embedded brain at save time (045) — marks it built-in without the catalog. */
+  filename?: string;
 }
 
 export interface SwitchPlan {
@@ -18,20 +20,22 @@ export interface SwitchPlan {
 
 const NOTHING: SwitchPlan = { unloadEmbedded: false, unloadOllama: [] };
 
-/** Given the outgoing brain (null on a first-ever save), the incoming one, and how to tell an
- *  embedded model from an Ollama one, decide what to free. Only a LOCAL outgoing brain holds our
- *  memory; a brain connected by address runs on someone else's box, so we never reach off-box to
- *  unload it. Re-saving the same brain frees nothing (no warm-brain thrash). */
+/** Given the outgoing brain (null on a first-ever save), the incoming one, how to tell an embedded
+ *  model from an Ollama one, and whether the embedded runtime is warm right now, decide what to
+ *  free. Only a LOCAL outgoing brain holds our memory; a brain connected by address runs on someone
+ *  else's box, so we never reach off-box to unload it. Re-saving the same brain frees nothing (no
+ *  warm-brain thrash). A warm built-in behind an Ollama brain is the self-reliant fallback answering
+ *  for an unreachable Ollama (033) — it's the outgoing brain's memory too, so it's freed. */
 export function brainSwitchPlan(
   prev: SwitchBrain | null,
   next: SwitchBrain,
-  isEmbedded: (modelId: string) => boolean,
+  ctx: { isEmbedded: (modelId: string) => boolean; embeddedWarm: boolean },
 ): SwitchPlan {
   if (!prev || prev.provider !== "local" || !prev.model) return NOTHING;
   if (prev.endpoint) return NOTHING; // connected by address: not our memory, and not our box
   const same = next.provider === "local" && next.model === prev.model && (next.endpoint ?? "") === "";
   if (same) return NOTHING;
-  return isEmbedded(prev.model)
+  return prev.filename !== undefined || ctx.isEmbedded(prev.model)
     ? { unloadEmbedded: true, unloadOllama: [] }
-    : { unloadEmbedded: false, unloadOllama: [prev.model] };
+    : { unloadEmbedded: ctx.embeddedWarm, unloadOllama: [prev.model] };
 }

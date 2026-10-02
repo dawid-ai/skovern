@@ -312,7 +312,7 @@ test("Ollama installed-but-down: honest loading, consented Start reveals your pu
     await expect(page.getByText(/founding user #/i)).toBeVisible();
 
     await page.getByRole("button", { name: "Settings" }).click();
-    await page.getByLabel("Your brain").selectOption("local");
+    await page.getByLabel("Pick a brain").selectOption("local");
     await page.getByRole("button", { name: "Set up the local brain →" }).click();
 
     // E1: while the (slow) scan runs, a REAL structured loading state shows — a spinner, not bare text.
@@ -397,7 +397,7 @@ test("user sets up a private on-computer brain, always sees which brain is activ
 
     // Settings → pick the local brain → open its dedicated setup view
     await page.getByRole("button", { name: "Settings" }).click();
-    await page.getByLabel("Your brain").selectOption("local");
+    await page.getByLabel("Pick a brain").selectOption("local");
     await page.getByRole("button", { name: "Set up the local brain →" }).click();
 
     // the honest verdict + a hardware line render
