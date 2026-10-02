@@ -328,7 +328,8 @@ export async function downloadedModelsView(): Promise<YourModelsView> {
     active.id !== null && (await modelLoaded(active.id)) ? models.find((m) => m.active)?.label ?? active.id : null;
   // A warm embedded child that ISN'T the active brain still holds VRAM — say so, honestly (this
   // is exactly the stale brain B1 left resident after a switch).
-  if (!loadedLabel && (llama?.isWarm() ?? false)) loadedLabel = "A built-in brain";
+  const warm = llama?.warmModel() ?? null;
+  if (!loadedLabel && warm !== null) loadedLabel = latestEmbedded.find((m) => m.id === warm)?.label ?? "A built-in brain";
   if (!loadedLabel) {
     const resident = await ollamaResidentModels(ollamaBaseUrl());
     if (resident.length > 0) loadedLabel = resident[0]!; // the model name Ollama reports it has loaded
@@ -349,17 +350,18 @@ export async function freeMemory(): Promise<{ freed: boolean }> {
   return { freed: true };
 }
 
-/** Is the embedded runtime holding a model in memory right now? (045: the switch plan frees a
- *  warm built-in that was standing in for an unreachable Ollama brain.) */
-export function embeddedWarm(): boolean {
-  return llama?.isWarm() ?? false;
+/** Which built-in model the embedded runtime holds in memory right now, or null. (045: the switch
+ *  plan frees a warm built-in standing in for an unreachable Ollama brain, unless it's the incoming
+ *  brain.) */
+export function warmEmbeddedModel(): string | null {
+  return llama?.warmModel() ?? null;
 }
 
-/** Carry out a brain-switch plan (045 B1) with the already-shipped primitives: the embedded
- *  `unload()` (refuses mid-reply — the idle-unload frees it later, never a mid-answer yank) and
- *  the loopback-guarded `ollamaUnload` (best-effort, resolves even when Ollama is down). */
+/** Carry out a brain-switch plan (045 B1): the embedded `unloadWhenIdle()` (frees now, or right
+ *  after an in-flight reply settles — never a mid-answer yank, never left stacked) and the
+ *  loopback-guarded `ollamaUnload` (best-effort, resolves even when Ollama is down). */
 export async function freeOutgoingBrain(plan: SwitchPlan): Promise<void> {
-  if (plan.unloadEmbedded) llama?.unload();
+  if (plan.unloadEmbedded) llama?.unloadWhenIdle(); // now, or the moment an in-flight reply settles
   const base = ollamaBaseUrl();
   await Promise.all(plan.unloadOllama.map((id) => ollamaUnload(base, id)));
 }

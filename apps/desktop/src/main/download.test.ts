@@ -411,3 +411,35 @@ describe("download errors speak plain language (loop 045)", () => {
     expect(readFileSync(dest)).toEqual(body);
   });
 });
+
+// Loop 045 — Dawid's "sat at 0%": a transfer that goes silent fails honestly within the stall
+// window instead of hanging for undici's ~5-minute timeouts.
+describe("stall watchdog (loop 045)", () => {
+  it("S1: headers arrive, then no bytes → rejects with the network message, .part kept", async () => {
+    const body = Buffer.alloc(64 * 1024, 3);
+    server = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/octet-stream", "content-length": String(body.length) });
+      res.write(body.subarray(0, 1024)); // a trickle, then silence
+    });
+    await new Promise<void>((r) => server!.listen(0, "127.0.0.1", () => r()));
+    const base = `http://127.0.0.1:${(server!.address() as AddressInfo).port}`;
+    const g = gguf(body, "stalled.gguf");
+    const started = Date.now();
+    await expect(downloadModel(g, collectingSink().sink, undefined, viaRange(base), async () => Number.POSITIVE_INFINITY, 300)).rejects.toThrow(STOPPED);
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(existsSync(`${modelPath(g.filename)}.part`)).toBe(true); // resumable
+    server!.closeAllConnections();
+  });
+
+  it("S2: the server never even answers → rejects with the network message within the window", async () => {
+    server = createServer(() => {
+      /* accept the connection, never respond */
+    });
+    await new Promise<void>((r) => server!.listen(0, "127.0.0.1", () => r()));
+    const base = `http://127.0.0.1:${(server!.address() as AddressInfo).port}`;
+    const started = Date.now();
+    await expect(downloadModel(gguf(Buffer.from("x"), "silent.gguf"), collectingSink().sink, undefined, viaRange(base), async () => Number.POSITIVE_INFINITY, 300)).rejects.toThrow(STOPPED);
+    expect(Date.now() - started).toBeLessThan(5_000);
+    server!.closeAllConnections();
+  });
+});

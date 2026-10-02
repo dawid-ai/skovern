@@ -3,7 +3,7 @@ import { brainSwitchPlan } from "./brain-switch.js";
 
 // Loop 045 B1: switching brains frees the outgoing one, in every direction.
 const isEmbedded = (id: string): boolean => id === "qwen2.5:3b" || id === "qwen2.5:14b";
-const embedded = { isEmbedded, embeddedWarm: false };
+const embedded = { isEmbedded, warmEmbedded: null };
 
 describe("brainSwitchPlan", () => {
   it("U1: outgoing embedded, incoming Ollama → unload the embedded model", () => {
@@ -62,8 +62,13 @@ describe("brainSwitchPlan", () => {
   });
 
   it("U2b: an Ollama brain whose built-in fallback is warm → free both (the fallback is its memory too)", () => {
-    const plan = brainSwitchPlan({ provider: "local", model: "mistral:7b" }, { provider: "local", model: "qwen2.5:3b" }, { isEmbedded, embeddedWarm: true });
+    const plan = brainSwitchPlan({ provider: "local", model: "mistral:7b" }, { provider: "local", model: "qwen2.5:3b" }, { isEmbedded, warmEmbedded: "qwen2.5:14b" });
     expect(plan).toEqual({ unloadEmbedded: true, unloadOllama: ["mistral:7b"] });
+  });
+
+  it("U2c: …but not when the warm fallback IS the brain you're switching to (no pointless reload)", () => {
+    const plan = brainSwitchPlan({ provider: "local", model: "mistral:7b" }, { provider: "local", model: "qwen2.5:3b" }, { isEmbedded, warmEmbedded: "qwen2.5:3b" });
+    expect(plan).toEqual({ unloadEmbedded: false, unloadOllama: ["mistral:7b"] });
   });
 
   it("a brain with a stored filename is built-in even when the catalog no longer lists its id", () => {

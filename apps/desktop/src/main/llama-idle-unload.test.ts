@@ -17,6 +17,7 @@ import { llamaEngine, type ChildLike, type EmbeddedModel, type FromChild, type T
 
 const MODELS: EmbeddedModel[] = [
   { id: "m", label: "M", gguf: { filename: "m.gguf", url: "https://x/m.gguf", sha256: "a".repeat(64), sizeBytes: 1, contextSize: 2048 } },
+  { id: "m2", label: "M2", gguf: { filename: "m2.gguf", url: "https://x/m2.gguf", sha256: "b".repeat(64), sizeBytes: 1, contextSize: 2048 } },
 ];
 
 // A controllable fake child: reports "ready" on the next tick, and answers a "generate"
@@ -180,6 +181,37 @@ describe("embedded idle-unload", () => {
     await expect(p).resolves.toMatchObject({ text: "hi" }); // the answer arrived whole
     expect(fakes[0]!.killed()).toBe(0);
     await vi.advanceTimersByTimeAsync(IDLE); // left to the idle-unload
+    expect(fakes[0]!.killed()).toBe(1);
+    expect(engine.isWarm()).toBe(false);
+  });
+
+  // Checker iteration 2: a refused unload must not be dropped. A switch mid-reply defers the free to
+  // the moment the reply settles — NOT the 5-min idle, which never starts while you keep chatting
+  // with the new brain — so two built-ins never stack in one warm child.
+  it("U7b: a switch mid-reply frees the old model the moment the reply settles; the next brain gets a fresh child", async () => {
+    const { engine, fakes } = await warmup(); // warm on "m"
+    const p = engine.generate("m", "long"); // in flight
+    await vi.advanceTimersByTimeAsync(0);
+    engine.unloadWhenIdle(); // what freeOutgoingBrain calls → deferred, not dropped
+    expect(fakes[0]!.killed()).toBe(0); // never yanked mid-answer
+    fakes[0]!.finish(2);
+    await expect(p).resolves.toMatchObject({ text: "hi" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fakes[0]!.killed()).toBe(1); // freed right away — no 5-min wait
+    expect(engine.isWarm()).toBe(false);
+    expect(engine.warmModel()).toBeNull();
+    const q = engine.generate("m2", "hello"); // the new brain
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fakes).toHaveLength(2); // a fresh child: the old model isn't sharing it
+    fakes[1]!.finish(3);
+    await q;
+    expect(engine.warmModel()).toBe("m2");
+  });
+
+  it("unloadWhenIdle frees immediately when nothing is in flight", async () => {
+    const { engine, fakes } = await warmup();
+    expect(engine.warmModel()).toBe("m");
+    engine.unloadWhenIdle();
     expect(fakes[0]!.killed()).toBe(1);
     expect(engine.isWarm()).toBe(false);
   });

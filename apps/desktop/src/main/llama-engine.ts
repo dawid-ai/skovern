@@ -75,7 +75,16 @@ export interface LlamaEngineOptions {
 
 /** The embedded engine plus lifecycle extras main owns: `dispose` (quit) and `isWarm`
  *  (the load-state chip — is a model actually resident right now). */
-export type LlamaEngine = LocalEngine & { dispose(): void; isWarm(): boolean; unload(): boolean };
+/** `unloadWhenIdle` (loop 045): free now if idle, else as soon as the in-flight reply settles —
+ *  so a brain switch mid-reply never leaves the old model stacked in VRAM. `warmModel`: the model
+ *  id the warm child last ran, or null when nothing is resident. */
+export type LlamaEngine = LocalEngine & {
+  dispose(): void;
+  isWarm(): boolean;
+  unload(): boolean;
+  unloadWhenIdle(): void;
+  warmModel(): string | null;
+};
 
 // Re-fork the Electron binary as plain Node (ELECTRON_RUN_AS_NODE), same mechanism as
 // the plugin host. The child (llama-child.js, a separate build output) dynamically imports
@@ -97,6 +106,8 @@ export function llamaEngine(opts: LlamaEngineOptions): LlamaEngine {
   let readyPromise: Promise<void> | null = null;
   let ready = false; // the native runtime reported loaded → the model is resident (chip goes green)
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  let unloadWhenSettled = false; // a switch asked to free memory while a reply was in flight (045)
+  let lastModelId: string | null = null; // the model the warm child last ran
   let nextId = 1;
   const pending = new Map<number, { resolve: (r: LocalGenerateResult) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>; onChunk?: (text: string) => void }>();
 
@@ -116,6 +127,10 @@ export function llamaEngine(opts: LlamaEngineOptions): LlamaEngine {
   // calls cancelIdle() first, resetting the clock.
   function armIdle(): void {
     cancelIdle();
+    if (child && pending.size === 0 && unloadWhenSettled) {
+      idleUnload(); // the deferred switch-unload: the reply is done, free the old model now
+      return;
+    }
     if (idleMs > 0 && child && pending.size === 0) {
       idleTimer = setTimeout(idleUnload, idleMs);
     }
@@ -129,6 +144,8 @@ export function llamaEngine(opts: LlamaEngineOptions): LlamaEngine {
     readyPromise = null;
     ready = false;
     idleTimer = null;
+    unloadWhenSettled = false;
+    lastModelId = null;
     try {
       c?.kill();
     } catch {
@@ -143,6 +160,8 @@ export function llamaEngine(opts: LlamaEngineOptions): LlamaEngine {
     child = null;
     readyPromise = null;
     ready = false;
+    unloadWhenSettled = false;
+    lastModelId = null;
     for (const [, p] of pending) {
       clearTimeout(p.timer);
       p.reject(new Error(reason));
@@ -245,6 +264,7 @@ export function llamaEngine(opts: LlamaEngineOptions): LlamaEngine {
       cancelIdle(); // a COLD spawn armed idle at "ready" (pending was empty) — clear it before we start
       const c = child;
       if (!c) throw new Error(RUNTIME_DOWN);
+      lastModelId = modelId;
       const id = nextId++;
       return new Promise<LocalGenerateResult>((resolve, reject) => {
         const timer = setTimeout(() => {
@@ -275,6 +295,7 @@ export function llamaEngine(opts: LlamaEngineOptions): LlamaEngine {
       cancelIdle(); // a COLD spawn armed idle at "ready" (pending was empty) — clear it before we start
       const c = child;
       if (!c) throw new Error(RUNTIME_DOWN);
+      lastModelId = modelId;
       const id = nextId++;
       return new Promise<LocalGenerateResult>((resolve, reject) => {
         let onAbort: (() => void) | null = null;
@@ -343,6 +364,19 @@ export function llamaEngine(opts: LlamaEngineOptions): LlamaEngine {
       cancelIdle();
       idleUnload();
       return true;
+    },
+
+    unloadWhenIdle(): void {
+      if (pending.size === 0) {
+        cancelIdle();
+        idleUnload();
+        return;
+      }
+      unloadWhenSettled = true; // armIdle() frees it the moment the last in-flight reply settles
+    },
+
+    warmModel(): string | null {
+      return ready ? lastModelId : null;
     },
 
     dispose(): void {

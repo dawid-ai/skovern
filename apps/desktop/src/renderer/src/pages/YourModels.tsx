@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { YourModelsView } from "../../../shared/local.js";
 
 const POLL_MS = 5000; // same cadence as the Shell's brain-chip poll
@@ -12,8 +12,13 @@ export function YourModels({ onChanged, refreshKey, onSetup }: { onChanged: () =
   const [confirming, setConfirming] = useState<string | null>(null); // filename pending a confirm
   const [note, setNote] = useState("");
 
+  // Only the NEWEST fetch may land: a background poll that started before a Delete/Free finished
+  // must not repaint the old state afterwards (checker iteration 2).
+  const seq = useRef(0);
   const refresh = useCallback(async (): Promise<void> => {
-    setView(await window.skovern.local.downloadedModels());
+    const mine = ++seq.current;
+    const v = await window.skovern.local.downloadedModels();
+    if (mine === seq.current) setView(v);
   }, []);
 
   // Re-fetch on mount AND whenever the parent signals a change (a download finished, a rescan) —
@@ -30,6 +35,7 @@ export function YourModels({ onChanged, refreshKey, onSetup }: { onChanged: () =
   }, [refresh]);
 
   async function del(filename: string): Promise<void> {
+    seq.current++; // invalidate a poll already in flight — it read the list before the delete
     setBusy(true);
     setConfirming(null);
     const res = await window.skovern.local.deleteModel(filename);
@@ -40,6 +46,7 @@ export function YourModels({ onChanged, refreshKey, onSetup }: { onChanged: () =
   }
 
   async function free(): Promise<void> {
+    seq.current++; // same: an in-flight poll must not repaint "In memory now" after the free
     setBusy(true);
     const { freed } = await window.skovern.local.freeMemory();
     setBusy(false);
@@ -53,7 +60,7 @@ export function YourModels({ onChanged, refreshKey, onSetup }: { onChanged: () =
 
   return (
     <div className="local-group your-models">
-      <h2>Your models</h2>
+      <h2>Downloaded brains</h2>
       <p className="hint">
         The brains Skovern has downloaded onto this computer. (Any brains you run through Ollama live
         in Ollama&apos;s own folder — those aren&apos;t shown or managed here.) Delete one to free up

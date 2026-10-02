@@ -212,7 +212,7 @@ test("Your brain page: empty state, list, memory agrees with the chip, free memo
 
     // E1 (moved from 041 E1 + 043 E-model-home): listed with a size, marked in use, folder shown.
     const row = your.locator("tr.receipt-row", { hasText: "Qwen2.5 3B" });
-    await expect(your.getByRole("heading", { name: "Your models" })).toBeVisible();
+    await expect(your.getByRole("heading", { name: "Downloaded brains" })).toBeVisible();
     await expect(row).toBeVisible();
     await expect(row).toContainText(/GB|MB|KB|B/);
     await expect(row.getByText("in use")).toBeVisible();

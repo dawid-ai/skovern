@@ -55,6 +55,9 @@ export function isSafeFinalUrl(u: string, allowLoopback: boolean): boolean {
  *  error) can carry developer words, a URL, or a path, so it's replaced by a fixed message. */
 export class DownloadError extends Error {}
 
+/** No bytes for this long (before the headers or mid-body) → the download is stalled. */
+const STALL_MS = 60_000;
+
 const NO_SPACE = "There isn't enough free space on this computer for this model. Free up some room and try again.";
 
 /** The connection failed (no internet, a dropped transfer). The `.part` is kept, so it resumes. */
@@ -223,6 +226,7 @@ export async function downloadModel(
   onProgress?: (p: DownloadProgress) => void,
   fetchImpl: typeof fetch = fetch,
   probeFreeBytes: () => Promise<number> = defaultFreeBytes,
+  stallMs: number = STALL_MS,
 ): Promise<string> {
   const dest = modelPath(gguf.filename); // throws on an unsafe name before anything else
   // Stable temp name (not a per-call unique one) so a restart can find + resume the
@@ -268,14 +272,38 @@ export async function downloadModel(
       }
     }
 
+    // Stall watchdog (045, Dawid's "sat at 0%"): if NO bytes arrive for `stallMs` — before the
+    // headers or mid-body — give up honestly instead of waiting out undici's ~5-min timeouts. Each
+    // chunk resets it. The rejection carries no `code`, so it reads as the network message.
+    const ac = new AbortController();
+    let stallTimer: ReturnType<typeof setTimeout> | undefined;
+    let onStall: (e: Error) => void = () => {};
+    const stalled = new Promise<never>((_, reject) => (onStall = reject));
+    stalled.catch(() => {});
+    // A promise that LOSES a race against `stalled` still rejects later (the abort) — swallow that so
+    // it can never surface as an unhandled rejection in main.
+    const guarded = <T,>(p: Promise<T>): Promise<T> => {
+      p.catch(() => {});
+      return p;
+    };
+    const kick = (): void => {
+      clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => {
+        ac.abort();
+        onStall(new Error("download stalled"));
+      }, stallMs);
+    };
+    kick();
+
     try {
       // Ask only for the missing tail if we're resuming. A server that ignores the Range
       // (answers 200, not 206) means we must start clean — reset the hash + truncate.
-      let res = await fetchImpl(gguf.url, received > 0 ? { headers: { Range: `bytes=${received}-` } } : undefined);
+      const init: RequestInit = received > 0 ? { headers: { Range: `bytes=${received}-` }, signal: ac.signal } : { signal: ac.signal };
+      let res = await Promise.race([guarded(fetchImpl(gguf.url, init)), stalled]);
       if (received > 0 && res.status !== 206) {
         hash = createHash("sha256");
         received = 0;
-        if (res.status !== 200) res = await fetchImpl(gguf.url); // e.g. 416 → refetch whole
+        if (res.status !== 200) res = await Promise.race([guarded(fetchImpl(gguf.url, { signal: ac.signal })), stalled]); // e.g. 416 → refetch whole
       }
       if (!res.ok || !res.body) {
         throw new DownloadError(`The download couldn't start (error ${res.status}). Try again.`);
@@ -296,11 +324,12 @@ export async function downloadModel(
       const reader = (res.body as ReadableStream<Uint8Array>).getReader();
       try {
         for (;;) {
-          const { done, value } = await Promise.race([reader.read(), streamError]);
+          const { done, value } = await Promise.race([guarded(reader.read()), streamError, stalled]);
           if (done) break;
           if (!value) continue;
           hash.update(value);
           received += value.byteLength;
+          kick(); // bytes are flowing — reset the stall watchdog
           // backpressure, never buffer the whole body
           if (!out.write(value)) await Promise.race([new Promise((r) => out.once("drain", r)), streamError]);
           onProgress?.({
@@ -310,7 +339,11 @@ export async function downloadModel(
           });
         }
       } finally {
-        reader.releaseLock();
+        try {
+          reader.releaseLock();
+        } catch {
+          /* a read was still pending when the stall watchdog fired */
+        }
       }
       await Promise.race([
         new Promise<void>((resolve, reject) => out.end((err?: Error | null) => (err ? reject(err) : resolve()))),
@@ -321,6 +354,8 @@ export async function downloadModel(
       // the one case we DO delete, since the bytes themselves are wrong.)
       await doneReceipt(false);
       throw toDownloadError(err);
+    } finally {
+      clearTimeout(stallTimer);
     }
 
     // The sha256 gate — the load-bearing integrity check. A mismatch deletes the `.part`

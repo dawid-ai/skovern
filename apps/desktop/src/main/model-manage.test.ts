@@ -59,6 +59,11 @@ describe("model deletion plan — never leave a dangling active brain (loop 041,
     // and a stored filename never makes a DIFFERENT file read as active
     expect(modelDeletionPlan("qwen2.5-0.5b-instruct-q4_k_m.gguf", active, true, EMBEDDED).isActive).toBe(false);
   });
+
+  it("045: the catalog kept the id but changed the file → the file the runtime would load still reads active", () => {
+    const active = { id: "qwen2.5:3b", filename: "qwen2.5-3b-OLD-q4_k_m.gguf" }; // stored before the catalog changed
+    expect(modelDeletionPlan("qwen2.5-3b-instruct-q4_k_m.gguf", active, true, EMBEDDED)).toEqual({ isActive: true, unload: true, clearBrain: true });
+  });
 });
 
 describe("model management — list + delete (loop 041)", () => {
