@@ -29,7 +29,7 @@ vi.mock("node:fs", async (orig) => {
   };
 });
 
-import { downloadModel, ensureDiskSpace, isSafeFinalUrl, modelDownloaded, modelPath, modelsDir, sweepOrphanParts } from "./download.js";
+import { DownloadError, STOPPED_PARTWAY, downloadModel, ensureDiskSpace, isSafeFinalUrl, modelDownloaded, modelPath, modelsDir, sweepOrphanParts } from "./download.js";
 
 let server: Server | null = null;
 
@@ -167,7 +167,11 @@ describe("downloadModel", () => {
       },
     };
     const g = gguf(Buffer.from("x"));
-    await expect(downloadModel(g, sink, undefined, fetchSpy)).rejects.toThrow(/disk full/);
+    // 045: the sink's raw error text no longer reaches the user (it's not one of ours) — the
+    // download still REJECTS, and still never fetches, which is what this test guards.
+    const err = await downloadModel(g, sink, undefined, fetchSpy).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DownloadError);
+    expect((err as Error).message).not.toMatch(/disk full/);
     expect(fetchSpy).toHaveBeenCalledTimes(0);
   });
 
@@ -309,9 +313,11 @@ describe("download robustness (loop 029)", () => {
     const base = await startServer(body, { chunks: 8 });
     const g = gguf(body, "writefail.gguf");
     const { sink } = collectingSink();
-    fsControl.writeStreamError = new Error("ENOSPC simulated");
+    // A real fs write error carries `code: "ENOSPC"`. 045: it now reads as the plain disk-space
+    // message (not the raw `ENOSPC …` text) — still a clean rejection, never a crash.
+    fsControl.writeStreamError = Object.assign(new Error("ENOSPC: no space left on device, write"), { code: "ENOSPC" });
     try {
-      await expect(downloadModel(g, sink, undefined, via(base))).rejects.toThrow(/ENOSPC/);
+      await expect(downloadModel(g, sink, undefined, via(base))).rejects.toThrow(/enough free space/i);
     } finally {
       fsControl.writeStreamError = null;
     }
@@ -335,5 +341,60 @@ describe("download robustness (loop 029)", () => {
     expect(removed).toBe(2);
     const left = readdirSync(modelsDir()).sort();
     expect(left).toEqual(["a.gguf", "a.gguf.part", "my.part.gguf"]);
+  });
+});
+
+// Loop 045 B2 — a raw network error never reaches the user; our own reasons still do.
+describe("download errors speak plain language (loop 045)", () => {
+  // A server that sends HALF the body then drops the connection — exactly what makes undici throw
+  // its raw `TypeError: terminated` mid-stream (Dawid's first-download failure).
+  function startDroppingServer(body: Buffer): Promise<string> {
+    return new Promise((resolve) => {
+      server = createServer((_req, res) => {
+        res.writeHead(200, { "content-type": "application/octet-stream", "content-length": String(body.length) });
+        res.write(body.subarray(0, body.length / 2), () => setImmediate(() => res.socket?.destroy()));
+      });
+      server.listen(0, "127.0.0.1", () => resolve(`http://127.0.0.1:${(server!.address() as AddressInfo).port}`));
+    });
+  }
+
+  it("U8: a connection dropped mid-stream → the florist message, never the word 'terminated'", async () => {
+    const body = Buffer.alloc(256 * 1024, 7);
+    const base = await startDroppingServer(body);
+    const g = gguf(body, "dropped.gguf");
+    const err = await downloadModel(g, collectingSink().sink, undefined, via(base)).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DownloadError);
+    expect((err as Error).message).toBe(STOPPED_PARTWAY);
+    expect((err as Error).message).not.toMatch(/terminated/i);
+    expect((err as Error).message).not.toContain("127.0.0.1"); // no host/url leaks either
+  });
+
+  it("U9: our own plain-language refusals still pass through verbatim", async () => {
+    const { sink } = collectingSink();
+    await expect(downloadModel({ ...gguf(Buffer.from("x")), url: "http://model.test/x.gguf" }, sink)).rejects.toThrow(
+      "This model's download link isn't a secure https link.",
+    );
+    await expect(downloadModel(gguf(Buffer.from("x"), "nospace.gguf"), sink, undefined, vi.fn<typeof fetch>(), async () => 0)).rejects.toThrow(
+      "There isn't enough free space on this computer for this model. Free up some room and try again.",
+    );
+    const body = Buffer.from("real");
+    const base = await startServer(body);
+    const bad: GgufSource = { ...gguf(body, "bad.gguf"), sha256: "0".repeat(64) };
+    await expect(downloadModel(bad, sink, undefined, via(base))).rejects.toThrow(
+      "The downloaded model didn't match its safety check and was removed. Try again.",
+    );
+  });
+
+  it("U10: the .part survives a dropped connection, and Try again resumes it to a good file", async () => {
+    const body = Buffer.alloc(256 * 1024, 5);
+    const g = gguf(body, "resumable.gguf");
+    const base = await startDroppingServer(body);
+    await expect(downloadModel(g, collectingSink().sink, undefined, via(base))).rejects.toThrow(STOPPED_PARTWAY);
+    expect(existsSync(`${modelPath(g.filename)}.part`)).toBe(true); // kept for the resume
+    await new Promise<void>((r) => server!.close(() => r()));
+    const { base: rangeBase, servedFrom } = await startRangeServer(body);
+    const dest = await downloadModel(g, collectingSink().sink, undefined, viaRange(rangeBase));
+    expect(servedFrom()).toBeGreaterThan(0); // picked up where it left off
+    expect(readFileSync(dest)).toEqual(body);
   });
 });

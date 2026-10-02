@@ -50,6 +50,26 @@ export function isSafeFinalUrl(u: string, allowLoopback: boolean): boolean {
   }
 }
 
+/** A failure WE described in plain language — the only kind of message that reaches the user
+ *  verbatim (loop 045 B2). Anything else (undici's `TypeError: terminated`, a socket reset, an fs
+ *  error) can carry developer words, a URL, or a path, so it's replaced by STOPPED_PARTWAY. */
+export class DownloadError extends Error {}
+
+const NO_SPACE = "There isn't enough free space on this computer for this model. Free up some room and try again.";
+
+export const STOPPED_PARTWAY =
+  "The download stopped partway — usually a hiccup in the internet connection. Try again — it picks up where it left off.";
+
+/** Our own message passes through; any raw error becomes the honest stopped-partway message. */
+export function toDownloadError(err: unknown): DownloadError {
+  // ponytail: one manual "Try again" (it resumes from the .part). Auto-retry with backoff if
+  // flaky Hugging Face transfers turn out to be common.
+  if (err instanceof DownloadError) return err;
+  // The disk filled AFTER the pre-check (another app wrote to it): say so, not "connection".
+  if ((err as { code?: unknown } | null)?.code === "ENOSPC") return new DownloadError(NO_SPACE);
+  return new DownloadError(STOPPED_PARTWAY);
+}
+
 export function modelsDir(): string {
   return path.join(app.getPath("userData"), "models");
 }
@@ -59,7 +79,7 @@ export function modelsDir(): string {
 // caller can never write outside the models dir.
 export function modelPath(filename: string): string {
   if (filename.includes("..") || !SAFE_GGUF_FILENAME.test(filename)) {
-    throw new Error("That model file name isn't allowed.");
+    throw new DownloadError("That model file name isn't allowed.");
   }
   return path.join(modelsDir(), filename);
 }
@@ -91,7 +111,7 @@ async function defaultFreeBytes(): Promise<number> {
 export async function ensureDiskSpace(needBytes: number, probeFreeBytes: () => Promise<number> = defaultFreeBytes): Promise<void> {
   const free = await probeFreeBytes();
   if (free < needBytes + DISK_MARGIN_BYTES) {
-    throw new Error("There isn't enough free space on this computer for this model. Free up some room and try again.");
+    throw new DownloadError(NO_SPACE);
   }
 }
 
@@ -200,17 +220,17 @@ export async function downloadModel(
   // tampered download never exists under `dest` even if this is interrupted.
   const part = `${dest}.part`;
 
-  if (inFlight.has(dest)) throw new Error("This model is already downloading.");
+  if (inFlight.has(dest)) throw new DownloadError("This model is already downloading.");
   inFlight.add(dest);
   try {
     // https-only: an untrusted catalog url can't be http/file/etc.
     let host: string;
     try {
       const u = new URL(gguf.url);
-      if (u.protocol !== "https:") throw new Error("not https");
+      if (u.protocol !== "https:") throw new DownloadError("not https");
       host = u.host;
     } catch {
-      throw new Error("This model's download link isn't a secure https link.");
+      throw new DownloadError("This model's download link isn't a secure https link.");
     }
 
     // How much is already on disk (cheap stat) → how much we still need. Refuse for disk
@@ -248,12 +268,12 @@ export async function downloadModel(
         if (res.status !== 200) res = await fetchImpl(gguf.url); // e.g. 416 → refetch whole
       }
       if (!res.ok || !res.body) {
-        throw new Error(`The download couldn't start (error ${res.status}). Try again.`);
+        throw new DownloadError(`The download couldn't start (error ${res.status}). Try again.`);
       }
       // The FINAL url (after any redirect) must stay https — a redirect can't downgrade an
       // https catalog link to plain http. Loopback http is allowed only unpackaged (fixture).
       if (res.url && !isSafeFinalUrl(res.url, !app.isPackaged)) {
-        throw new Error("The download was sent to an insecure address and was stopped.");
+        throw new DownloadError("The download was sent to an insecure address and was stopped.");
       }
       const total = gguf.sizeBytes;
       const out = createWriteStream(part, { flags: received > 0 ? "a" : "w" });
@@ -290,7 +310,7 @@ export async function downloadModel(
       // Leave the `.part` in place — a later call resumes it. (A hash mismatch below is
       // the one case we DO delete, since the bytes themselves are wrong.)
       await doneReceipt(false);
-      throw err instanceof Error ? err : new Error("The download didn't finish. Try again.");
+      throw toDownloadError(err);
     }
 
     // The sha256 gate — the load-bearing integrity check. A mismatch deletes the `.part`
@@ -300,13 +320,15 @@ export async function downloadModel(
     if (digest !== gguf.sha256.toLowerCase()) {
       await unlink(part).catch(() => {});
       await doneReceipt(false);
-      throw new Error("The downloaded model didn't match its safety check and was removed. Try again.");
+      throw new DownloadError("The downloaded model didn't match its safety check and was removed. Try again.");
     }
 
     // Verified → give it its real name. Only now does modelDownloaded() see it.
     await rename(part, dest);
     await doneReceipt(true);
     return dest;
+  } catch (err) {
+    throw toDownloadError(err); // e.g. an fs error while re-hashing a partial — never raw
   } finally {
     inFlight.delete(dest);
   }
