@@ -168,4 +168,19 @@ describe("embedded idle-unload", () => {
     fakes[0]!.finish(2); // settle so nothing hangs
     await p;
   });
+
+  // Loop 045 — a brain switch mid-reply: the switch's unload is refused (the save already happened
+  // in brain:save), the reply finishes intact, and the idle-unload frees the model afterwards.
+  it("U7: a switch while a reply is in flight never yanks it; idle-unload frees it once it settles", async () => {
+    const { engine, fakes } = await warmup();
+    const p = engine.generate("m", "long"); // in flight
+    await vi.advanceTimersByTimeAsync(0);
+    expect(engine.unload()).toBe(false); // what freeOutgoingBrain calls → refused
+    fakes[0]!.finish(2);
+    await expect(p).resolves.toMatchObject({ text: "hi" }); // the answer arrived whole
+    expect(fakes[0]!.killed()).toBe(0);
+    await vi.advanceTimersByTimeAsync(IDLE); // left to the idle-unload
+    expect(fakes[0]!.killed()).toBe(1);
+    expect(engine.isWarm()).toBe(false);
+  });
 });
