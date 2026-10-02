@@ -1575,6 +1575,29 @@ footer {
 .your-models-folder code {
   word-break: break-all;
 }
+/* Loop 045: the empty state's CTA, and a failed download shown in place with Try again. */
+.your-models-empty {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.pull-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  max-width: 280px;
+  font-size: 13px;
+  color: var(--ink);
+  background: #fff2e6;
+  border: 1px solid #f2d3b3;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.pull-error p {
+  margin: 0;
+}
 .connect-row {
   display: flex;
   gap: 8px;

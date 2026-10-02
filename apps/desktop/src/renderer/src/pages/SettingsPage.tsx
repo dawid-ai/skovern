@@ -32,7 +32,7 @@ function receiptLine(r: Receipt): string {
   return `Sent ${fmtBytes(r.bytesSent)} to ${brainLabel(r.provider)} at ${time} — and it answered.`;
 }
 
-export function SettingsPage({ onBrainChanged }: { onBrainChanged?: () => void }) {
+export function SettingsPage({ onBrainChanged, onOpenYourBrain }: { onBrainChanged?: () => void; onOpenYourBrain?: () => void }) {
   const [provider, setProvider] = useState<ProviderId>("openrouter");
   const [key, setKey] = useState("");
   const [model, setModel] = useState("");
@@ -90,6 +90,7 @@ export function SettingsPage({ onBrainChanged }: { onBrainChanged?: () => void }
           refreshStatus();
         }}
         onSaved={refreshStatus}
+        onOpenYourBrain={onOpenYourBrain}
       />
     );
   }

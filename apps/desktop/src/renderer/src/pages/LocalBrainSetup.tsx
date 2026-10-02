@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { LocalModelView, LocalStatusView, PullProgressView } from "../../../shared/local.js";
 import { partitionModels } from "./local-partition.js";
-import { YourModels } from "./YourModels.js";
 import { ConnectBrain } from "./ConnectBrain.js";
 
 // "On this computer — free & private": the local-brain setup view, reached from
@@ -27,7 +26,17 @@ function safeHref(url: string | undefined): string | undefined {
 // `guided` (onboarding, loop 037): the florist-first path — ONE recommended built-in pick plus
 // a quiet "see other options" reveal, and NO Ollama surfaces at all. Settings (guided=false)
 // keeps the full view (Ollama Advanced section, start-prompt, pull-by-name) until Loop D.
-export function LocalBrainSetup({ onBack, onSaved, guided = false }: { onBack: () => void; onSaved: () => void; guided?: boolean }) {
+export function LocalBrainSetup({
+  onBack,
+  onSaved,
+  onOpenYourBrain,
+  guided = false,
+}: {
+  onBack: () => void;
+  onSaved: () => void;
+  onOpenYourBrain?: () => void;
+  guided?: boolean;
+}) {
   const [status, setStatus] = useState<LocalStatusView | null>(null);
   const [models, setModels] = useState<LocalModelView[] | null>(null);
   const [notice, setNotice] = useState("");
@@ -36,7 +45,9 @@ export function LocalBrainSetup({ onBack, onSaved, guided = false }: { onBack: (
   const [pulling, setPulling] = useState<Record<string, PullProgressView>>({});
   const [startingOllama, setStartingOllama] = useState(false); // "Start Ollama" in flight
   const [pullName, setPullName] = useState(""); // the "pull by name" box (Advanced)
-  const [version, setVersion] = useState(0); // bumps on each refresh → re-fetches "Your models"
+  // A download that failed, by model id → its plain-language reason. Shown IN PLACE of the
+  // model's action with a Try again (which resumes), never a bar stuck at 0% (loop 045 B2).
+  const [failed, setFailed] = useState<Record<string, string>>({});
   const unsubPull = useRef<(() => void) | null>(null);
 
   const refresh = useCallback(async () => {
@@ -52,7 +63,6 @@ export function LocalBrainSetup({ onBack, onSaved, guided = false }: { onBack: (
     // Mark the model you're actually using ("This is your brain"), even before you
     // click anything this session.
     setSavedId(b.provider === "local" ? b.model : null);
-    setVersion((v) => v + 1); // signal "Your models" to re-fetch (a download may have just landed)
     setBusy(false);
   }, []);
 
@@ -91,6 +101,11 @@ export function LocalBrainSetup({ onBack, onSaved, guided = false }: { onBack: (
   }
 
   async function getModel(id: string) {
+    setFailed((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
     setPulling((prev) => ({ ...prev, [id]: { modelId: id, percent: 0, status: "starting", done: false, ok: true } }));
     // Subscribe BEFORE the pull so we don't miss early ticks (016 pattern).
     unsubPull.current?.();
@@ -111,7 +126,9 @@ export function LocalBrainSetup({ onBack, onSaved, guided = false }: { onBack: (
       await useModel(id);
       await refresh();
     } else {
-      setNotice(res.message);
+      setFailed((prev) => ({ ...prev, [id]: res.message }));
+      // A pull-by-name has no row to show it in — keep the page-level notice for that one.
+      if (!(models ?? []).some((m) => m.id === id)) setNotice(res.message);
     }
   }
 
@@ -142,6 +159,17 @@ export function LocalBrainSetup({ onBack, onSaved, guided = false }: { onBack: (
             <div className="pull-fill" style={{ width: `${Math.max(3, prog.percent)}%` }} />
           </div>
           <p className="hint">Downloading… {prog.percent}%</p>
+        </div>
+      );
+    }
+    const failure = failed[m.id];
+    if (failure !== undefined) {
+      return (
+        <div className="pull-error" role="alert">
+          <p>{failure}</p>
+          <button className="primary" onClick={() => void getModel(m.id)}>
+            Try again
+          </button>
         </div>
       );
     }
@@ -440,8 +468,15 @@ export function LocalBrainSetup({ onBack, onSaved, guided = false }: { onBack: (
             </>
           )}
 
-          {/* Your models — see/delete downloaded brains + free memory (loop 041). */}
-          <YourModels refreshKey={version} onChanged={() => void refresh()} />
+          {/* The downloaded brains + memory live on their own nav page now (loop 045 B3). */}
+          {onOpenYourBrain && (
+            <p className="hint local-your-brain-link">
+              To see the brains on this computer, free up memory, or delete one, go to{" "}
+              <button className="link" onClick={onOpenYourBrain}>
+                Your brain →
+              </button>
+            </p>
+          )}
 
           {/* Connect your own brain by address — the power-user advanced lane (loop 044). */}
           <ConnectBrain onConnected={() => void refresh()} />

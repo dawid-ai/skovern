@@ -9,17 +9,19 @@ import { MessagesPage } from "./pages/MessagesPage.js";
 import { SkillsPage } from "./pages/SkillsPage.js";
 import { ReceiptsPage } from "./pages/ReceiptsPage.js";
 import { SettingsPage } from "./pages/SettingsPage.js";
+import { YourBrainPage } from "./pages/YourBrainPage.js";
 
 // The signed-in app shell: a persistent left nav + a main area that shows one
 // dedicated page at a time. New features become new nav items + pages here —
 // never another block piled onto an existing page (CLAUDE.md UI IA rule).
 
 // "onboarding" is a hidden view (not in NAV) reached from the first-run banner.
-type Page = "news" | "chat" | "messages" | "skills" | "receipts" | "settings" | "onboarding";
+type Page = "news" | "chat" | "brain" | "messages" | "skills" | "receipts" | "settings" | "onboarding";
 
 const NAV: { id: Page; label: string }[] = [
   { id: "news", label: "What's new" },
   { id: "chat", label: "Chat" },
+  { id: "brain", label: "Your brain" },
   { id: "messages", label: "Messages" },
   { id: "skills", label: "Skills" },
   { id: "receipts", label: "Receipts" },
@@ -167,7 +169,8 @@ export function Shell({ ogNumber, onSignOut }: { ogNumber: number | null; onSign
         {page === "messages" && <MessagesPage messages={thread.messages} onChanged={onChanged} />}
         {page === "skills" && <SkillsPage />}
         {page === "receipts" && <ReceiptsPage />}
-        {page === "settings" && <SettingsPage onBrainChanged={refreshBrain} />}
+        {page === "brain" && <YourBrainPage onChanged={() => void refreshBrain()} onSetup={() => setPage("onboarding")} />}
+        {page === "settings" && <SettingsPage onBrainChanged={refreshBrain} onOpenYourBrain={() => setPage("brain")} />}
       </main>
     </div>
   );

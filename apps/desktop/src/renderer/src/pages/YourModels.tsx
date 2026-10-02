@@ -3,8 +3,8 @@ import type { YourModelsView } from "../../../shared/local.js";
 
 // "Your models" (loop 041): the brains you've downloaded (disk) + what's loaded in your graphics
 // card right now (VRAM), with Delete (reclaim disk) and Free memory (reclaim VRAM). Lives in the
-// local-brain settings view. Talks ONLY to window.skovern.local.* — no disk/OS access here.
-export function YourModels({ onChanged, refreshKey }: { onChanged: () => void; refreshKey: number }) {
+// "Your brain" page (loop 045). Talks ONLY to window.skovern.local.* — no disk/OS access here.
+export function YourModels({ onChanged, refreshKey, onSetup }: { onChanged: () => void; refreshKey: number; onSetup?: () => void }) {
   const [view, setView] = useState<YourModelsView | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState<string | null>(null); // filename pending a confirm
@@ -36,6 +36,7 @@ export function YourModels({ onChanged, refreshKey }: { onChanged: () => void; r
     setBusy(false);
     setNote(freed ? "" : "A reply is being written right now — try again in a moment.");
     await refresh();
+    onChanged(); // the sidebar chip reads the same residency — keep it in step (045 E2)
   }
 
   if (!view) return null;
@@ -73,7 +74,14 @@ export function YourModels({ onChanged, refreshKey }: { onChanged: () => void; r
       </div>
 
       {models.length === 0 ? (
-        <p className="hint">You haven&apos;t downloaded any brains yet.</p>
+        <div className="your-models-empty">
+          <p className="hint">You haven&apos;t downloaded any brains yet.</p>
+          {onSetup && (
+            <button className="primary" onClick={onSetup}>
+              Set up a brain
+            </button>
+          )}
+        </div>
       ) : (
         <div className="receipt-scroll">
           <table className="receipt-table your-models-table">
