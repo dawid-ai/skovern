@@ -1,17 +1,24 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { YourModelsView } from "../../../shared/local.js";
+
+const POLL_MS = 5000; // same cadence as the Shell's brain-chip poll
 
 // "Your models" (loop 041): the brains you've downloaded (disk) + what's loaded in your graphics
 // card right now (VRAM), with Delete (reclaim disk) and Free memory (reclaim VRAM). Lives in the
-// local-brain settings view. Talks ONLY to window.skovern.local.* — no disk/OS access here.
-export function YourModels({ onChanged, refreshKey }: { onChanged: () => void; refreshKey: number }) {
+// "Your brain" page (loop 045). Talks ONLY to window.skovern.local.* — no disk/OS access here.
+export function YourModels({ onChanged, refreshKey, onSetup }: { onChanged: () => void; refreshKey: number; onSetup?: () => void }) {
   const [view, setView] = useState<YourModelsView | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState<string | null>(null); // filename pending a confirm
   const [note, setNote] = useState("");
 
+  // Only the NEWEST fetch may land: a background poll that started before a Delete/Free finished
+  // must not repaint the old state afterwards (checker iteration 2).
+  const seq = useRef(0);
   const refresh = useCallback(async (): Promise<void> => {
-    setView(await window.skovern.local.downloadedModels());
+    const mine = ++seq.current;
+    const v = await window.skovern.local.downloadedModels();
+    if (mine === seq.current) setView(v);
   }, []);
 
   // Re-fetch on mount AND whenever the parent signals a change (a download finished, a rescan) —
@@ -20,7 +27,15 @@ export function YourModels({ onChanged, refreshKey }: { onChanged: () => void; r
     void refresh();
   }, [refresh, refreshKey]);
 
+  // Keep polling at the sidebar chip's cadence, so a model that idle-unloads while you're looking
+  // reads "nothing loaded" here too — the page and the chip never drift apart (045 E2).
+  useEffect(() => {
+    const id = setInterval(() => void refresh(), POLL_MS);
+    return () => clearInterval(id);
+  }, [refresh]);
+
   async function del(filename: string): Promise<void> {
+    seq.current++; // invalidate a poll already in flight — it read the list before the delete
     setBusy(true);
     setConfirming(null);
     const res = await window.skovern.local.deleteModel(filename);
@@ -31,11 +46,13 @@ export function YourModels({ onChanged, refreshKey }: { onChanged: () => void; r
   }
 
   async function free(): Promise<void> {
+    seq.current++; // same: an in-flight poll must not repaint "In memory now" after the free
     setBusy(true);
     const { freed } = await window.skovern.local.freeMemory();
     setBusy(false);
     setNote(freed ? "" : "A reply is being written right now — try again in a moment.");
     await refresh();
+    onChanged(); // the sidebar chip reads the same residency — keep it in step (045 E2)
   }
 
   if (!view) return null;
@@ -43,7 +60,7 @@ export function YourModels({ onChanged, refreshKey }: { onChanged: () => void; r
 
   return (
     <div className="local-group your-models">
-      <h2>Your models</h2>
+      <h2>Downloaded brains</h2>
       <p className="hint">
         The brains Skovern has downloaded onto this computer. (Any brains you run through Ollama live
         in Ollama&apos;s own folder — those aren&apos;t shown or managed here.) Delete one to free up
@@ -73,7 +90,14 @@ export function YourModels({ onChanged, refreshKey }: { onChanged: () => void; r
       </div>
 
       {models.length === 0 ? (
-        <p className="hint">You haven&apos;t downloaded any brains yet.</p>
+        <div className="your-models-empty">
+          <p className="hint">You haven&apos;t downloaded any private brains to this computer yet.</p>
+          {onSetup && (
+            <button className="primary" onClick={onSetup}>
+              Get a private brain
+            </button>
+          )}
+        </div>
       ) : (
         <div className="receipt-scroll">
           <table className="receipt-table your-models-table">

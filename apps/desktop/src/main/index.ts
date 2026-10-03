@@ -27,7 +27,8 @@ import { fileFetchSink, fileReceiptSink, readActivityIndex, readReceipts, readRe
 import { toCsv } from "./csv.js";
 import { runPlugin, sandboxCheck } from "./plugin-host.js";
 import { claudeCliProvider } from "./claude-cli.js";
-import { classifyAddress, connectProbe, deleteLocalModel, disposeLocal, downloadedEmbeddedModelId, downloadedModelsView, embeddedFilenames, engineForModel, freeMemory, isEmbeddedModel, localModels, localStatus, makeEngine, modelLoaded, openModelsFolder, pullModel } from "./local.js";
+import { brainSwitchPlan } from "./brain-switch.js";
+import { classifyAddress, connectProbe, deleteLocalModel, disposeLocal, downloadedEmbeddedModelId, downloadedModelsView, embeddedFilenameFor, embeddedFilenames, engineForModel, freeMemory, freeOutgoingBrain, isEmbeddedModel, localModels, localStatus, makeEngine, modelLoaded, openModelsFolder, pullModel, warmEmbeddedModel } from "./local.js";
 import { normalizeEndpoint } from "./connect-endpoint.js";
 import { appendMessage, createTokenCoalescer, deleteChat, getChat, listChats, newChat, renameChat, sendChatStatus, sendChatToken } from "./chat-store.js";
 import { resolveChatReply } from "./chat-reply.js";
@@ -744,7 +745,7 @@ app
       },
     );
 
-    registerTrusted(TRUST, "brain:save", (raw: unknown): SaveBrainResult => {
+    registerTrusted(TRUST, "brain:save", async (raw: unknown): Promise<SaveBrainResult> => {
       const input = (raw ?? {}) as { provider?: unknown; key?: unknown; model?: unknown; endpoint?: unknown };
       const provider: ProviderId =
         input.provider === "anthropic"
@@ -771,13 +772,23 @@ app
       // No real API key is this long — cap it so a bad/compromised renderer can't
       // write a multi-MB blob into the keychain file.
       if (key.length > 8192) return { ok: false, message: "That doesn't look like a key." };
+      const prev = loadBrain();
+      const filename = provider === "local" && model && !endpoint ? embeddedFilenameFor(model) : undefined;
       try {
-        saveBrain({ provider, key, model, endpoint });
-        return { ok: true, message: "Brain saved." };
+        saveBrain({ provider, key, model, endpoint, ...(filename ? { filename } : {}) });
       } catch {
         // safeStorage unavailable — we refuse to write a key in plaintext
         return { ok: false, message: "Couldn't store the key safely on this computer." };
       }
+      // Loop 045 B1: free the outgoing brain's memory so it doesn't stay resident next to the new
+      // one. Runs only AFTER a valid save (a rejected save unloads nothing), and before we return,
+      // so nothing loads the new model first. Best-effort — an unload failure never fails the save.
+      try {
+        await freeOutgoingBrain(brainSwitchPlan(prev, { provider, model, endpoint }, { isEmbedded: isEmbeddedModel, warmEmbedded: warmEmbeddedModel() }));
+      } catch {
+        /* best-effort */
+      }
+      return { ok: true, message: "Brain saved." };
     });
 
     // Connect-by-address (loop 044): probe a typed address — reachable? off-box? which models? —

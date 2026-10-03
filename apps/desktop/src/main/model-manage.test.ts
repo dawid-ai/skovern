@@ -18,7 +18,7 @@ const EMBEDDED = [
 
 describe("model deletion plan — never leave a dangling active brain (loop 041, U3)", () => {
   it("deleting the ACTIVE model that's WARM → unload its VRAM AND clear the brain pointer", () => {
-    expect(modelDeletionPlan("qwen2.5-3b-instruct-q4_k_m.gguf", "qwen2.5:3b", true, EMBEDDED)).toEqual({
+    expect(modelDeletionPlan("qwen2.5-3b-instruct-q4_k_m.gguf", { id: "qwen2.5:3b", filename: null }, true, EMBEDDED)).toEqual({
       isActive: true,
       unload: true,
       clearBrain: true,
@@ -26,7 +26,7 @@ describe("model deletion plan — never leave a dangling active brain (loop 041,
   });
 
   it("deleting the ACTIVE model that's COLD → clear the brain, but no unload (nothing resident)", () => {
-    expect(modelDeletionPlan("qwen2.5-3b-instruct-q4_k_m.gguf", "qwen2.5:3b", false, EMBEDDED)).toEqual({
+    expect(modelDeletionPlan("qwen2.5-3b-instruct-q4_k_m.gguf", { id: "qwen2.5:3b", filename: null }, false, EMBEDDED)).toEqual({
       isActive: true,
       unload: false,
       clearBrain: true,
@@ -34,7 +34,7 @@ describe("model deletion plan — never leave a dangling active brain (loop 041,
   });
 
   it("deleting a NON-active model → touch neither the brain nor the engine, even if warm", () => {
-    expect(modelDeletionPlan("qwen2.5-0.5b-instruct-q4_k_m.gguf", "qwen2.5:3b", true, EMBEDDED)).toEqual({
+    expect(modelDeletionPlan("qwen2.5-0.5b-instruct-q4_k_m.gguf", { id: "qwen2.5:3b", filename: null }, true, EMBEDDED)).toEqual({
       isActive: false,
       unload: false,
       clearBrain: false,
@@ -42,11 +42,27 @@ describe("model deletion plan — never leave a dangling active brain (loop 041,
   });
 
   it("no brain configured → nothing is active, nothing cleared", () => {
-    expect(modelDeletionPlan("qwen2.5-3b-instruct-q4_k_m.gguf", null, true, EMBEDDED)).toEqual({
+    expect(modelDeletionPlan("qwen2.5-3b-instruct-q4_k_m.gguf", { id: null, filename: null }, true, EMBEDDED)).toEqual({
       isActive: false,
       unload: false,
       clearBrain: false,
     });
+  });
+
+  it("045: the active model's catalog entry VANISHED but its stored filename matches → still clear the brain", () => {
+    const active = { id: "qwen2.5:7b", filename: "qwen2.5-7b-instruct-q4_k_m.gguf" }; // not in EMBEDDED any more
+    expect(modelDeletionPlan("qwen2.5-7b-instruct-q4_k_m.gguf", active, true, EMBEDDED)).toEqual({
+      isActive: true,
+      unload: true,
+      clearBrain: true,
+    });
+    // and a stored filename never makes a DIFFERENT file read as active
+    expect(modelDeletionPlan("qwen2.5-0.5b-instruct-q4_k_m.gguf", active, true, EMBEDDED).isActive).toBe(false);
+  });
+
+  it("045: the catalog kept the id but changed the file → the file the runtime would load still reads active", () => {
+    const active = { id: "qwen2.5:3b", filename: "qwen2.5-3b-OLD-q4_k_m.gguf" }; // stored before the catalog changed
+    expect(modelDeletionPlan("qwen2.5-3b-instruct-q4_k_m.gguf", active, true, EMBEDDED)).toEqual({ isActive: true, unload: true, clearBrain: true });
   });
 });
 

@@ -162,7 +162,7 @@ const isAtBottom = (m: { top: number; sh: number; ch: number }): boolean => m.to
 // Set up + activate the local EMBEDDED brain via the real UI (download the fixture 3B → active).
 async function setupLocalEmbeddedBrain(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Your brain").selectOption("local");
+  await page.getByLabel("Pick a brain").selectOption("local");
   await page.getByRole("button", { name: "Set up the local brain →" }).click();
   await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible();
   await page.getByRole("button", { name: "Get this one" }).first().click();
@@ -239,7 +239,7 @@ test("chat streams a local reply, persists it, stops mid-stream, and writes one 
 
     // Set up a LOCAL embedded brain: Settings → local → download the 3B (fixture) → active.
     await page.getByRole("button", { name: "Settings" }).click();
-    await page.getByLabel("Your brain").selectOption("local");
+    await page.getByLabel("Pick a brain").selectOption("local");
     await page.getByRole("button", { name: "Set up the local brain →" }).click();
     await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible();
     // "Get this one" appears both in the recommendation callout and the table row — either
@@ -392,7 +392,7 @@ test("Issue 2/4/3b: an Ollama brain STREAMS token-by-token with a prepare status
 
     // Activate the pulled Ollama brain (mistral:7b, an Ollama-only id → routes to the Ollama engine).
     await page.getByRole("button", { name: "Settings" }).click();
-    await page.getByLabel("Your brain").selectOption("local");
+    await page.getByLabel("Pick a brain").selectOption("local");
     await page.getByRole("button", { name: "Set up the local brain →" }).click();
     await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible();
     await page.locator("tr.receipt-row", { hasText: "mistral:7b" }).getByRole("button", { name: "Use this one" }).click();
@@ -857,7 +857,7 @@ test("Chat opens in a ready empty chat and the box stays focused after sending (
     await signIn(page, "chat-040@shop.test");
     // set up a local embedded brain
     await page.getByRole("button", { name: "Settings" }).click();
-    await page.getByLabel("Your brain").selectOption("local");
+    await page.getByLabel("Pick a brain").selectOption("local");
     await page.getByRole("button", { name: "Set up the local brain →" }).click();
     await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible();
     await page.getByRole("button", { name: "Get this one" }).first().click();

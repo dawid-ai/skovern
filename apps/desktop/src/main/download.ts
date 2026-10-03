@@ -50,6 +50,39 @@ export function isSafeFinalUrl(u: string, allowLoopback: boolean): boolean {
   }
 }
 
+/** A failure WE described in plain language — the only kind of message that reaches the user
+ *  verbatim (loop 045 B2). Anything else (undici's `TypeError: terminated`, a socket reset, an fs
+ *  error) can carry developer words, a URL, or a path, so it's replaced by a fixed message. */
+export class DownloadError extends Error {}
+
+/** No bytes for this long (before the headers or mid-body) → the download is stalled. */
+const STALL_MS = 60_000;
+
+const NO_SPACE = "There isn't enough free space on this computer for this model. Free up some room and try again.";
+
+/** The connection failed (no internet, a dropped transfer). The `.part` is kept, so it resumes. */
+export const STOPPED =
+  "The download stopped — usually a hiccup in the internet connection. Try again — it picks up where it left off.";
+
+/** Something on THIS computer failed (a file couldn't be written, saved, or renamed) — not the
+ *  internet, so we don't blame the connection. */
+export const LOCAL_PROBLEM =
+  "Something on this computer got in the way of saving the model. Try again — if it keeps happening, restart Skovern.";
+
+/** Our own message passes through; a raw error becomes the fixed message that matches its cause.
+ *  System/file errors carry a string `code` (ENOSPC, EACCES, EPERM…); undici's network errors are
+ *  plain `TypeError`s without one. */
+export function toDownloadError(err: unknown): DownloadError {
+  // ponytail: one manual "Try again" (it resumes from the .part). Auto-retry with backoff if
+  // flaky Hugging Face transfers turn out to be common.
+  if (err instanceof DownloadError) return err;
+  // The disk filled AFTER the pre-check (another app wrote to it): say so, not "connection".
+  const code = (err as { code?: unknown } | null)?.code;
+  if (code === "ENOSPC") return new DownloadError(NO_SPACE);
+  if (typeof code === "string") return new DownloadError(LOCAL_PROBLEM);
+  return new DownloadError(STOPPED);
+}
+
 export function modelsDir(): string {
   return path.join(app.getPath("userData"), "models");
 }
@@ -59,7 +92,7 @@ export function modelsDir(): string {
 // caller can never write outside the models dir.
 export function modelPath(filename: string): string {
   if (filename.includes("..") || !SAFE_GGUF_FILENAME.test(filename)) {
-    throw new Error("That model file name isn't allowed.");
+    throw new DownloadError("That model file name isn't allowed.");
   }
   return path.join(modelsDir(), filename);
 }
@@ -91,7 +124,7 @@ async function defaultFreeBytes(): Promise<number> {
 export async function ensureDiskSpace(needBytes: number, probeFreeBytes: () => Promise<number> = defaultFreeBytes): Promise<void> {
   const free = await probeFreeBytes();
   if (free < needBytes + DISK_MARGIN_BYTES) {
-    throw new Error("There isn't enough free space on this computer for this model. Free up some room and try again.");
+    throw new DownloadError(NO_SPACE);
   }
 }
 
@@ -193,6 +226,7 @@ export async function downloadModel(
   onProgress?: (p: DownloadProgress) => void,
   fetchImpl: typeof fetch = fetch,
   probeFreeBytes: () => Promise<number> = defaultFreeBytes,
+  stallMs: number = STALL_MS,
 ): Promise<string> {
   const dest = modelPath(gguf.filename); // throws on an unsafe name before anything else
   // Stable temp name (not a per-call unique one) so a restart can find + resume the
@@ -200,17 +234,17 @@ export async function downloadModel(
   // tampered download never exists under `dest` even if this is interrupted.
   const part = `${dest}.part`;
 
-  if (inFlight.has(dest)) throw new Error("This model is already downloading.");
+  if (inFlight.has(dest)) throw new DownloadError("This model is already downloading.");
   inFlight.add(dest);
   try {
     // https-only: an untrusted catalog url can't be http/file/etc.
     let host: string;
     try {
       const u = new URL(gguf.url);
-      if (u.protocol !== "https:") throw new Error("not https");
+      if (u.protocol !== "https:") throw new DownloadError("not https");
       host = u.host;
     } catch {
-      throw new Error("This model's download link isn't a secure https link.");
+      throw new DownloadError("This model's download link isn't a secure https link.");
     }
 
     // How much is already on disk (cheap stat) → how much we still need. Refuse for disk
@@ -238,22 +272,46 @@ export async function downloadModel(
       }
     }
 
+    // Stall watchdog (045, Dawid's "sat at 0%"): if NO bytes arrive for `stallMs` — before the
+    // headers or mid-body — give up honestly instead of waiting out undici's ~5-min timeouts. Each
+    // chunk resets it. The rejection carries no `code`, so it reads as the network message.
+    const ac = new AbortController();
+    let stallTimer: ReturnType<typeof setTimeout> | undefined;
+    let onStall: (e: Error) => void = () => {};
+    const stalled = new Promise<never>((_, reject) => (onStall = reject));
+    stalled.catch(() => {});
+    // A promise that LOSES a race against `stalled` still rejects later (the abort) — swallow that so
+    // it can never surface as an unhandled rejection in main.
+    const guarded = <T,>(p: Promise<T>): Promise<T> => {
+      p.catch(() => {});
+      return p;
+    };
+    const kick = (): void => {
+      clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => {
+        ac.abort();
+        onStall(new Error("download stalled"));
+      }, stallMs);
+    };
+    kick();
+
     try {
       // Ask only for the missing tail if we're resuming. A server that ignores the Range
       // (answers 200, not 206) means we must start clean — reset the hash + truncate.
-      let res = await fetchImpl(gguf.url, received > 0 ? { headers: { Range: `bytes=${received}-` } } : undefined);
+      const init: RequestInit = received > 0 ? { headers: { Range: `bytes=${received}-` }, signal: ac.signal } : { signal: ac.signal };
+      let res = await Promise.race([guarded(fetchImpl(gguf.url, init)), stalled]);
       if (received > 0 && res.status !== 206) {
         hash = createHash("sha256");
         received = 0;
-        if (res.status !== 200) res = await fetchImpl(gguf.url); // e.g. 416 → refetch whole
+        if (res.status !== 200) res = await Promise.race([guarded(fetchImpl(gguf.url, { signal: ac.signal })), stalled]); // e.g. 416 → refetch whole
       }
       if (!res.ok || !res.body) {
-        throw new Error(`The download couldn't start (error ${res.status}). Try again.`);
+        throw new DownloadError(`The download couldn't start (error ${res.status}). Try again.`);
       }
       // The FINAL url (after any redirect) must stay https — a redirect can't downgrade an
       // https catalog link to plain http. Loopback http is allowed only unpackaged (fixture).
       if (res.url && !isSafeFinalUrl(res.url, !app.isPackaged)) {
-        throw new Error("The download was sent to an insecure address and was stopped.");
+        throw new DownloadError("The download was sent to an insecure address and was stopped.");
       }
       const total = gguf.sizeBytes;
       const out = createWriteStream(part, { flags: received > 0 ? "a" : "w" });
@@ -266,11 +324,12 @@ export async function downloadModel(
       const reader = (res.body as ReadableStream<Uint8Array>).getReader();
       try {
         for (;;) {
-          const { done, value } = await Promise.race([reader.read(), streamError]);
+          const { done, value } = await Promise.race([guarded(reader.read()), streamError, stalled]);
           if (done) break;
           if (!value) continue;
           hash.update(value);
           received += value.byteLength;
+          kick(); // bytes are flowing — reset the stall watchdog
           // backpressure, never buffer the whole body
           if (!out.write(value)) await Promise.race([new Promise((r) => out.once("drain", r)), streamError]);
           onProgress?.({
@@ -280,7 +339,11 @@ export async function downloadModel(
           });
         }
       } finally {
-        reader.releaseLock();
+        try {
+          reader.releaseLock();
+        } catch {
+          /* a read was still pending when the stall watchdog fired */
+        }
       }
       await Promise.race([
         new Promise<void>((resolve, reject) => out.end((err?: Error | null) => (err ? reject(err) : resolve()))),
@@ -290,7 +353,9 @@ export async function downloadModel(
       // Leave the `.part` in place — a later call resumes it. (A hash mismatch below is
       // the one case we DO delete, since the bytes themselves are wrong.)
       await doneReceipt(false);
-      throw err instanceof Error ? err : new Error("The download didn't finish. Try again.");
+      throw toDownloadError(err);
+    } finally {
+      clearTimeout(stallTimer);
     }
 
     // The sha256 gate — the load-bearing integrity check. A mismatch deletes the `.part`
@@ -300,13 +365,15 @@ export async function downloadModel(
     if (digest !== gguf.sha256.toLowerCase()) {
       await unlink(part).catch(() => {});
       await doneReceipt(false);
-      throw new Error("The downloaded model didn't match its safety check and was removed. Try again.");
+      throw new DownloadError("The downloaded model didn't match its safety check and was removed. Try again.");
     }
 
     // Verified → give it its real name. Only now does modelDownloaded() see it.
     await rename(part, dest);
     await doneReceipt(true);
     return dest;
+  } catch (err) {
+    throw toDownloadError(err); // e.g. an fs error while re-hashing a partial — never raw
   } finally {
     inFlight.delete(dest);
   }

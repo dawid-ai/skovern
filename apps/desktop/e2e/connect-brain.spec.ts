@@ -100,7 +100,7 @@ async function signInAndOpenLocal(page: Page, email: string): Promise<void> {
   await page.getByRole("button", { name: "Verify" }).click();
   await expect(page.getByText(/founding user #/i)).toBeVisible();
   await page.getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Your brain").selectOption("local");
+  await page.getByLabel("Pick a brain").selectOption("local");
   await page.getByRole("button", { name: "Set up the local brain →" }).click();
   await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible({ timeout: 30_000 });
 }

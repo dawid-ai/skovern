@@ -20,6 +20,9 @@ export interface BrainConfig {
    *  (e.g. "http://192.168.1.5:11434"). Absent for the built-in / loopback-Ollama default path.
    *  A host:port, never a secret. */
   endpoint?: string;
+  /** For an embedded `local` brain (loop 045): its GGUF filename, stored at save time so "is this
+   *  the active model" never depends on the live catalog still listing it. */
+  filename?: string;
 }
 
 function brainFile(): string {
@@ -46,7 +49,8 @@ export function loadBrain(): BrainConfig | null {
       !PROVIDERS.includes(parsed.provider) ||
       typeof parsed.key !== "string" ||
       (parsed.model !== undefined && typeof parsed.model !== "string") ||
-      (parsed.endpoint !== undefined && typeof parsed.endpoint !== "string")
+      (parsed.endpoint !== undefined && typeof parsed.endpoint !== "string") ||
+      (parsed.filename !== undefined && typeof parsed.filename !== "string")
     ) {
       return null;
     }
