@@ -194,7 +194,7 @@ export function llamaEngine(opts: LlamaEngineOptions): LlamaEngine {
       }
       c.on("message", (m: FromChild) => {
         if (m.type === "ready") {
-          if (settled) return;
+          if (settled || child !== c) return; // a replaced child's late "ready" mustn't mark the new one warm
           settled = true;
           ready = true; // model resident → chip green; nothing pending yet → start the idle clock
           clearTimeout(readyTimer);
@@ -225,11 +225,25 @@ export function llamaEngine(opts: LlamaEngineOptions): LlamaEngine {
       });
       // A child that dies (segfault, OOM, killed) fires exit/error — reject readiness if
       // still pending, and fail every in-flight generate. Never an uncaught throw.
+      // A child we already replaced (killed by an unload, then a new one spawned) can report its
+      // exit late. That must never tear down the NEW child — it would orphan a process holding VRAM
+      // (B1's symptom) and fail its first reply. Only settle this child's own readiness, if open.
+      const replaced = (): boolean => {
+        if (child === c) return false;
+        if (!settled) {
+          settled = true;
+          clearTimeout(readyTimer);
+          reject(new Error(RUNTIME_DOWN));
+        }
+        return true;
+      };
       c.on("exit", () => {
+        if (replaced()) return;
         if (!settled) teardownReject(new Error(RUNTIME_DOWN));
         else teardown(CRASHED);
       });
       c.on("error", (e: Error) => {
+        if (replaced()) return;
         if (!settled) teardownReject(e instanceof Error ? new Error(RUNTIME_DOWN) : new Error(RUNTIME_DOWN));
         else teardown(CRASHED);
       });

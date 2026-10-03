@@ -22,7 +22,7 @@ const MODELS: EmbeddedModel[] = [
 
 // A controllable fake child: reports "ready" on the next tick, and answers a "generate"
 // with a "result" only when the test calls finish(). kill() is spied so we can see a reap.
-function makeFakeChild(): { child: ChildLike; ready: () => void; finish: (id: number) => void; killed: () => number; sent: ToChild[] } {
+function makeFakeChild(exitDelayMs?: number): { child: ChildLike; ready: () => void; finish: (id: number) => void; killed: () => number; sent: ToChild[] } {
   const listeners: { message: ((m: FromChild) => void)[]; exit: ((c: number | null) => void)[]; error: ((e: Error) => void)[] } = { message: [], exit: [], error: [] };
   const sent: ToChild[] = [];
   let kills = 0;
@@ -41,6 +41,8 @@ function makeFakeChild(): { child: ChildLike; ready: () => void; finish: (id: nu
       },
       kill: () => {
         kills++;
+        // A real child reports its exit AFTER kill(); simulate that late event when asked.
+        if (exitDelayMs !== undefined) setTimeout(() => listeners.exit.forEach((cb) => cb(0)), exitDelayMs);
       },
     },
   };
@@ -176,7 +178,7 @@ describe("embedded idle-unload", () => {
     const { engine, fakes } = await warmup();
     const p = engine.generate("m", "long"); // in flight
     await vi.advanceTimersByTimeAsync(0);
-    expect(engine.unload()).toBe(false); // what freeOutgoingBrain calls → refused
+    expect(engine.unload()).toBe(false); // the Free-memory primitive → refused (the switch path is U7b)
     fakes[0]!.finish(2);
     await expect(p).resolves.toMatchObject({ text: "hi" }); // the answer arrived whole
     expect(fakes[0]!.killed()).toBe(0);
@@ -214,5 +216,38 @@ describe("embedded idle-unload", () => {
     engine.unloadWhenIdle();
     expect(fakes[0]!.killed()).toBe(1);
     expect(engine.isWarm()).toBe(false);
+  });
+
+  // Checker iteration 3 (N2): a killed child's LATE exit must not tear down the child that replaced
+  // it — that would orphan a process holding VRAM and fail the new brain's first reply.
+  it("a replaced child's late exit never tears down the new child", async () => {
+    const fakes: ReturnType<typeof makeFakeChild>[] = [];
+    const engine = llamaEngine({
+      models: () => MODELS,
+      fetchSink: { append: () => {} },
+      idleMs: IDLE,
+      spawn: () => {
+        const f = makeFakeChild(50); // exit arrives 50 ms after kill
+        fakes.push(f);
+        queueMicrotask(f.ready);
+        return f.child;
+      },
+    });
+    const p1 = engine.generate("m", "hi");
+    await vi.advanceTimersByTimeAsync(0);
+    fakes[0]!.finish(1);
+    await p1;
+    engine.unloadWhenIdle(); // kills child 1; its exit is still on the way
+    const p2 = engine.generate("m2", "hello"); // spawns child 2 before child 1's exit lands
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fakes).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(50); // child 1's late exit fires now
+    fakes[1]!.finish(2);
+    await expect(p2).resolves.toMatchObject({ text: "hi" }); // not failed by the stale exit
+    expect(engine.isWarm()).toBe(true);
+    expect(engine.warmModel()).toBe("m2");
+    expect(fakes[1]!.killed()).toBe(0); // the new child is still owned, not orphaned
+    engine.unload();
+    expect(fakes[1]!.killed()).toBe(1); // …and still reachable to free
   });
 });

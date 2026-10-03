@@ -443,3 +443,31 @@ describe("stall watchdog (loop 045)", () => {
     server!.closeAllConnections();
   });
 });
+
+describe("stall watchdog reset (checker iteration 3, N1)", () => {
+  it("S3: a slow but steady transfer longer than the stall window still finishes (each chunk resets it)", async () => {
+    const body = Buffer.alloc(6 * 64 * 1024, 6); // 64 KB pieces: realistic-sized writes, not tiny ones the OS batches
+    const pieces = 6;
+    const step = Math.ceil(body.length / pieces);
+    server = createServer((_req, res) => {
+      res.socket?.setNoDelay(true);
+      res.writeHead(200, { "content-type": "application/octet-stream", "content-length": String(body.length) });
+      res.flushHeaders();
+      let i = 0;
+      const tick = (): void => {
+        if (i >= body.length) return void res.end();
+        res.write(body.subarray(i, i + step));
+        i += step;
+        setTimeout(tick, 180); // 0.6 × the 300 ms window between chunks; ~1 s in total
+      };
+      tick();
+    });
+    await new Promise<void>((r) => server!.listen(0, "127.0.0.1", () => r()));
+    const base = `http://127.0.0.1:${(server!.address() as AddressInfo).port}`;
+    const g = gguf(body, "steady.gguf");
+    const started = Date.now();
+    const dest = await downloadModel(g, collectingSink().sink, undefined, viaRange(base), async () => Number.POSITIVE_INFINITY, 300);
+    expect(Date.now() - started).toBeGreaterThan(300); // it really outlasted one window
+    expect(readFileSync(dest)).toEqual(body);
+  });
+});
