@@ -49,6 +49,9 @@ importers:
         specifier: ^3.19.0
         version: 3.19.0(typescript@5.9.3)
     devDependencies:
+      '@dawid-ai/model-fit':
+        specifier: link:../../../model-fit
+        version: link:../../../model-fit
       '@playwright/test':
         specifier: ^1.61.1
         version: 1.61.1
@@ -128,6 +131,9 @@ importers:
       '@ai-sdk/openai':
         specifier: ^2.0.0
         version: 2.0.110(zod@4.4.3)
+      '@dawid-ai/model-fit':
+        specifier: link:../../../model-fit
+        version: link:../../../model-fit
       '@skovern/plugin-sdk':
         specifier: workspace:*
         version: link:../plugin-sdk

@@ -44,6 +44,9 @@ export interface LocalModelView {
   tradeoff?: string;
   /** Human size ("2.0 GB"), when known. */
   size?: string;
+  /** Estimated tokens per second here (046) — from the SAME fit as `tier`. Null when it won't run
+   *  here, memory is unknown, or we don't know the model's size at all. */
+  tokPerSec: number | null;
 }
 
 /** Result of `local:status` — is Ollama here, and how does this computer look. */

@@ -140,6 +140,9 @@ export interface ModelFit {
   usable: boolean;
   /** Plain-language, warm one-liner for this model on this machine. */
   note: string;
+  /** Estimated tokens per second on this machine (046, @dawid-ai/model-fit). Null when it won't
+   *  run here (red), memory is unknown, or it isn't a text model — never a guessed number. */
+  tokPerSec: number | null;
 }
 
 /** The verdict pure function's output: per-model fit + one warm overall line. */
@@ -161,6 +164,11 @@ export interface VerdictModel {
   label: string;
   params: number;
   sizeBytes?: number;
+  /** Quantization label (e.g. "Q4_K_M") — picks the bytes-per-parameter in the fit math. */
+  quant?: string;
+  /** `params` is a placeholder (neither a parameter count nor a size was known) — the model still
+   *  gets a tier, but never a speed (046: no made-up numbers). */
+  paramsGuessed?: boolean;
   /** Can the user download this model RIGHT NOW in their current setup? Embedded (gguf)
    *  models are always fetchable; an Ollama-only model is fetchable only when Ollama is
    *  running. The fit table scores every model, but the recommendation only ever names a

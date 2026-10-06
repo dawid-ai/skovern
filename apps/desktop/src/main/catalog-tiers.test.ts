@@ -69,9 +69,18 @@ describe("catalog tiers — built-in floor (loop 038)", () => {
     expect(v.recommendedModelId).toBe("qwen2.5:1.5b"); // 3B no longer fits (red at 2GB); 1.5B is biggest usable
   });
 
-  it("U4: TINY (~1 GB RAM, no GPU) recommends the 0.5B — the only rung that fits", () => {
+  // 046 (Dawid, 2026-10-06): with llmfit's runtime overhead the 0.5B needs ~1.04 GB, so a 1 GB
+  // machine can't run anything — honest. The floor's intent (the smallest rung catches the smallest
+  // machine that CAN run a brain) moves to 1.5 GB, where the 0.5B fits and the 1.5B doesn't.
+  it("U4: TINY (~1.5 GB RAM, no GPU) recommends the 0.5B — the only rung that fits", () => {
+    const v = verdict(profile({ ramBytes: 1.5 * GB }), builtInCandidates(snapshotCatalog()));
+    expect(v.recommendedModelId).toBe("qwen2.5:0.5b"); // 1.5B needs ~1.7 GB → too big; the smallest catches this machine
+  });
+
+  it("U4b (046): a 1 GB machine gets no pick and the honest use-the-cloud headline", () => {
     const v = verdict(profile({ ramBytes: 1 * GB }), builtInCandidates(snapshotCatalog()));
-    expect(v.recommendedModelId).toBe("qwen2.5:0.5b"); // 1.5B red at 1GB; the smallest catches this machine
+    expect(v.recommendedModelId).toBeNull();
+    expect(v.headline).toMatch(/can't comfortably run a private brain/i);
   });
 
   it("U5: 24 GB GPU still recommends the 14B — adding the floor doesn't move a capable machine's pick", () => {

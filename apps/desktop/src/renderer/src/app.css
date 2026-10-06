@@ -1105,6 +1105,15 @@ footer {
   font-size: 14px;
 }
 
+/* 046: the estimated writing speed, under the fit word. Wraps rather than widening the column. */
+.local-speed {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .local-fit {
   display: inline-flex;
   align-items: center;

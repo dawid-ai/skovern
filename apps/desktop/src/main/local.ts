@@ -500,6 +500,7 @@ export async function localModels(): Promise<LocalModelsView> {
       licenseUrl: c.licenseUrl,
       tradeoff: c.tradeoff,
       size: fmtGB(c.sizeBytes) ?? undefined,
+      tokPerSec: fit?.tokPerSec ?? null, // the same fit object as `tier` (046 single source)
     };
   });
 
@@ -515,6 +516,7 @@ export async function localModels(): Promise<LocalModelsView> {
       note: fit?.note ?? "",
       recommended: recommendedModelId === m.id,
       size: m.sizeBytes ? fmtGB(m.sizeBytes) ?? undefined : undefined,
+      tokPerSec: fit?.tokPerSec ?? null,
     };
   });
 

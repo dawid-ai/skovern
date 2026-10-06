@@ -67,12 +67,20 @@ describe("display tiers — Ollama rows get their REAL fit, not a default amber 
     const gpu24 = profile({ bestVramBytes: 24 * GB });
     // A small Ollama-only model alongside the huge ones: the display verdict must judge each on
     // its own merits, not blanket-amber every non-built-in.
-    const cat = [...CATALOG, { id: "llama3.2:1b", label: "Llama 3.2 1B (Ollama)", params: 1 }];
+    // 046: a genuinely huge one (70B ≈ 41 GB) joins, because with real KV math a Q4 32B (~20 GB)
+    // DOES fit a 24 GB card (llmfit agrees) — the "huge model shows its honest non-green tier"
+    // guard now rides the 70B.
+    const cat = [
+      ...CATALOG,
+      { id: "llama3.2:1b", label: "Llama 3.2 1B (Ollama)", params: 1 },
+      { id: "llama3.1:70b", label: "Llama 3.1 70B (Ollama)", params: 70 },
+    ];
     const fitOf = (id: string) => verdict(gpu24, allCandidates(cat)).fits.find((f) => f.modelId === id)!.tier;
 
     expect(fitOf("llama3.2:1b")).toBe("green"); // a 1B on a 24 GB card is fast — the BUG A case
     expect(fitOf("gemma2:22b")).toBe("green"); // 22B still fits 24 GB → green
-    expect(fitOf("qwen2.5:32b")).toBe("amber"); // 32B is bigger than 24 GB VRAM → honest amber (not defaulted)
+    expect(fitOf("qwen2.5:32b")).not.toBe("red"); // ~20 GB of 24 GB: it fits (green, or amber if only just)
+    expect(fitOf("llama3.1:70b")).toBe("amber"); // ~43 GB: far bigger than the card, so it spills to RAM → honest amber (not defaulted)
 
     // The recommendation is UNCHANGED — the built-in-only pass still picks the biggest built-in,
     // never the (bigger, greener) Ollama models. Widening the DISPLAY set didn't widen the pick.

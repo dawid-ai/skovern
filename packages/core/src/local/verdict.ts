@@ -1,85 +1,76 @@
+import { fit, specFor, type FitModel, type FitResult } from "@dawid-ai/model-fit";
 import type { FitTier, HardwareProfile, ModelFit, Verdict, VerdictModel } from "./types.js";
 
-// The honesty engine: hardware profile + candidate models → an honest, warm
-// verdict. Pure and deterministic (no I/O), so it's the testable backbone of the
-// whole feature. It judges USABLE, not merely "runs":
-//   - green  = a GPU we can use holds the whole model → fast.
-//   - amber  = it runs, but slowly (CPU-only, or partly offloaded to RAM).
-//   - red    = it won't fit at all — no false hope.
-// A recommendation, never a gate: the UI still lets the user run an amber pick,
-// with the trade-off spelled out.
+// The honesty engine: hardware profile + candidate models → an honest, warm verdict. Pure and
+// deterministic (no I/O). The MATH (memory need, share of the machine, words-per-second) lives in
+// @dawid-ai/model-fit; this file keeps Skovern's own rules and its florist words. It judges
+// USABLE, not merely "runs":
+//   - green  = a GPU we can use holds the whole model with room to spare → fast.
+//   - amber  = it runs, but slowly (CPU-only, partly offloaded to RAM) or only just fits.
+//   - red    = it won't fit at all, or would crawl on the processor — no false hope.
+// A recommendation, never a gate: the UI still lets the user run an amber pick, with the
+// trade-off spelled out.
 
 const GB = 1024 * 1024 * 1024;
 
-// A model needs headroom above its raw footprint (runtime, other apps).
-const HEADROOM = 1.2;
-// Below this, a "GPU" is really an iGPU too small to accelerate a useful model —
-// treat the machine as CPU-only rather than promise acceleration it can't give.
+// Below this, a "GPU" is really an iGPU too small to accelerate a useful model — treat the
+// machine as CPU-only rather than promise acceleration it can't give.
 const MIN_USEFUL_VRAM = 2 * GB;
+// Unified memory (Apple) is shared with the OS and your apps; only part is usable for a model.
+// ponytail: a constant until Loop B reads Metal's real working-set limit.
+const UNIFIED_USABLE = 0.66;
 // A model with more params than this on CPU-only is "painfully slow" territory.
 const CPU_SLOW_PARAMS = 7;
-// Unified memory (Apple) is shared with the OS; only part is usable for a model.
-const UNIFIED_USABLE = 0.66;
 // "Good" = capable enough to be worth running locally at all.
 const GOOD_PARAMS = 3;
+// The context window our runtimes allocate (the catalog's `contextSize`).
+const CONTEXT = 4096;
 
-// Rough on-disk weight size when the catalog doesn't give one: ~0.6 GB per billion
-// params at Q4. An estimate, and labeled as such upstream.
-function weightBytes(m: VerdictModel): number {
-  return m.sizeBytes ?? m.params * 0.6 * GB;
+/** The model as the fit math sees it: its own catalog numbers, plus the architecture the shared
+ *  module knows for its id (an Ollama tag), when it knows it. */
+function fitModelOf(m: VerdictModel): FitModel {
+  const spec = specFor(m.id);
+  return {
+    params: m.params,
+    quant: m.quant,
+    ...(m.sizeBytes !== undefined ? { sizeBytes: m.sizeBytes } : {}),
+    ...(spec ? { layers: spec.layers, kvHeads: spec.kvHeads, headDim: spec.headDim, kind: spec.kind } : {}),
+  };
 }
 
-// Rough KV-cache cost for a real 4k context: ~0.15 GB per billion params. Honest
-// ballpark — the point is to reserve room, not to be exact.
-function kvBytes(m: VerdictModel): number {
-  return m.params * 0.15 * GB;
+/** Run the shared fit math with Skovern's stricter rules. Exported so a caller showing a model's
+ *  speed reads the SAME numbers its tier came from (one source of truth). */
+export function fitFor(profile: HardwareProfile, m: VerdictModel): FitResult {
+  return fit(profile, fitModelOf(m), { ctx: CONTEXT, unifiedUsable: UNIFIED_USABLE, minUsefulVramBytes: MIN_USEFUL_VRAM });
 }
 
-function footprint(m: VerdictModel): number {
-  return (weightBytes(m) + kvBytes(m)) * HEADROOM;
+function memoryUnknown(profile: HardwareProfile): boolean {
+  const vram = profile.unifiedMemory ? 0 : profile.bestVramBytes ?? 0;
+  return (profile.ramBytes ?? 0) <= 0 && vram < MIN_USEFUL_VRAM;
 }
 
-interface Budget {
-  /** GPU memory we can actually use for a model, 0 when CPU-only. */
-  vram: number;
-  /** Total memory a model could spill into (VRAM + RAM, or just RAM on CPU). */
-  total: number;
-  gpuAccelerated: boolean;
-}
-
-function budgetOf(profile: HardwareProfile): Budget {
-  const ram = profile.ramBytes ?? 0;
-  if (profile.unifiedMemory && ram > 0) {
-    const usable = ram * UNIFIED_USABLE;
-    return { vram: usable, total: usable, gpuAccelerated: true };
-  }
-  const vram = profile.bestVramBytes ?? 0;
-  if (vram >= MIN_USEFUL_VRAM) {
-    // A discrete GPU can offload the overflow to RAM (slower), so `total` adds RAM.
-    return { vram, total: vram + ram, gpuAccelerated: true };
-  }
-  // CPU-only: RAM is the whole budget, nothing is fast.
-  return { vram: 0, total: ram, gpuAccelerated: false };
-}
-
-function fitOne(m: VerdictModel, b: Budget): ModelFit {
-  const need = footprint(m);
+function fitOne(profile: HardwareProfile, m: VerdictModel): ModelFit {
   let tier: FitTier;
   let note: string;
+  const r = fitFor(profile, m);
 
-  if (b.total <= 0) {
+  if (memoryUnknown(profile)) {
     // We couldn't read memory at all — be honest, don't guess a pass.
     tier = "amber";
     note = "We couldn't check this computer's memory, so we're not sure how well it'll run.";
-  } else if (b.gpuAccelerated && need <= b.vram) {
-    tier = "green";
-    note = "Fits on your graphics card — this one will feel quick.";
-  } else if (!b.gpuAccelerated) {
-    // CPU-only: it can run if it fits RAM, but never fast.
-    if (need > b.total) {
-      tier = "red";
-      note = "Too big for this computer's memory — it won't run here.";
-    } else if (m.params > CPU_SLOW_PARAMS) {
+  } else if (r.runMode === "gpu") {
+    if (r.level === "marginal") {
+      tier = "amber";
+      note = "Only just fits on your graphics card — it may crowd your other apps.";
+    } else {
+      tier = "green";
+      note = "Fits on your graphics card — this one will feel quick.";
+    }
+  } else if (r.runMode === "partial") {
+    tier = "amber";
+    note = "Bigger than your graphics memory — part runs on the processor, so it'll be slower.";
+  } else if (r.runMode === "cpu") {
+    if (m.params > CPU_SLOW_PARAMS) {
       tier = "red";
       note = "Would run on your processor only, and be painfully slow at this size.";
     } else {
@@ -87,23 +78,22 @@ function fitOne(m: VerdictModel, b: Budget): ModelFit {
       note = "Runs on your processor (no graphics card we can use) — it'll work, but slowly.";
     }
   } else {
-    // GPU-accelerated but bigger than VRAM: partial offload to RAM = slow, or won't fit.
-    if (need <= b.total) {
-      tier = "amber";
-      note = "Bigger than your graphics memory — part runs on the processor, so it'll be slower.";
-    } else {
-      tier = "red";
-      note = "Too big for this computer — it won't run well here.";
-    }
+    tier = "red";
+    note =
+      profile.unifiedMemory || (profile.bestVramBytes ?? 0) >= MIN_USEFUL_VRAM
+        ? "Too big for this computer — it won't run well here."
+        : "Too big for this computer's memory — it won't run here.";
   }
 
-  return { modelId: m.id, tier, usable: tier !== "red", note };
+  // A speed is shown only for a model that will actually run here — never for red, never a guess
+  // when memory is unknown.
+  const tokPerSec = tier !== "red" && !memoryUnknown(profile) && !m.paramsGuessed ? r.tokPerSec : null;
+  return { modelId: m.id, tier, usable: tier !== "red", note, tokPerSec };
 }
 
 /** Score every candidate model against a machine and return one warm verdict. */
 export function verdict(profile: HardwareProfile, models: VerdictModel[]): Verdict {
-  const b = budgetOf(profile);
-  const fits = models.map((m) => fitOne(m, b));
+  const fits = models.map((m) => fitOne(profile, m));
 
   // The recommendation only ever names a model the user can ACTUALLY get right now
   // (`fetchable !== false`) — recommending one with a dead download button is a bug.

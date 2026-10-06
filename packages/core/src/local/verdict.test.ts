@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { verdict } from "./verdict.js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { fitFor, verdict } from "./verdict.js";
 import type { HardwareProfile, VerdictModel } from "./types.js";
 
 // V1 — the honesty table. verdict() is pure, so we assert per-model fit + usability
@@ -53,10 +55,15 @@ describe("verdict — honesty table", () => {
     expect(v.recommendedModelId).toBe("qwen2.5:7b");
   });
 
-  it("apple unified (16GB shared): a capable model is fast, the 14B won't fit", () => {
+  // 046 (approved behavior change): the old red came from the 1.2× headroom and a flat
+  // 0.15 GB/B KV overestimate. With real KV math the 14B needs ~9.8 GB of the ~10.6 GB a 16 GB Mac
+  // can spare — it JUST fits, so it's amber "only just fits", never green. The intent holds: we
+  // don't promise a 14B is fast on a 16 GB Mac, and the pick is still the 7B.
+  it("apple unified (16GB shared): a capable model is fast, the 14B only just fits (amber)", () => {
     const v = verdict(profile({ ramBytes: 16 * GB, unifiedMemory: true }), MODELS);
     expect(tierOf(v, "qwen2.5:7b")).toBe("green");
-    expect(tierOf(v, "qwen2.5:14b")).toBe("red");
+    expect(tierOf(v, "qwen2.5:14b")).toBe("amber");
+    expect(v.fits.find((f) => f.modelId === "qwen2.5:14b")!.note).toMatch(/only just fits/i);
     expect(v.canRunGoodOne).toBe(true);
     expect(v.recommendedModelId).toBe("qwen2.5:7b");
   });
@@ -136,5 +143,34 @@ describe("verdict — recommends only a fetchable model", () => {
     expect(verdict(profile({ ramBytes: 64 * GB, bestVramBytes: 24 * GB }), embedded).recommendedModelId).toBe("qwen2.5:14b");
     // 8GB VRAM: the 14B spills (amber), so the biggest GREEN embedded (7B) is the pick.
     expect(verdict(profile({ ramBytes: 16 * GB, bestVramBytes: 8 * GB }), embedded).recommendedModelId).toBe("qwen2.5:7b");
+  });
+});
+
+// 046 — the math lives in @dawid-ai/model-fit; this file only maps it to tiers + words.
+describe("verdict — delegates the math (046)", () => {
+  it("S1: no weight/KV/headroom arithmetic remains in verdict.ts", () => {
+    const src = readFileSync(fileURLToPath(new URL("./verdict.ts", import.meta.url)), "utf8");
+    for (const sym of ["HEADROOM", "kvBytes", "weightBytes", "footprint", "budgetOf"]) expect(src, sym).not.toContain(sym);
+    expect(src).toContain('from "@dawid-ai/model-fit"');
+  });
+
+  it("speed is shown for a model that runs, never for red or when memory is unknown", () => {
+    const gpu = verdict(profile({ ramBytes: 64 * GB, bestVramBytes: 24 * GB, gpus: [{ model: "AMD Radeon RX 7900 XTX", vramBytes: 24 * GB }] }), MODELS);
+    const s3 = gpu.fits.find((f) => f.modelId === "qwen2.5:3b")!.tokPerSec;
+    expect(s3).toBeGreaterThan(100); // 960 GB/s ÷ (3B × 0.5 B/param) × 0.55 ≈ 350
+    const cpu = verdict(profile({ ramBytes: 16 * GB }), MODELS);
+    expect(cpu.fits.find((f) => f.modelId === "qwen2.5:3b")!.tokPerSec).toBeGreaterThan(0); // amber: runs, slowly
+    expect(cpu.fits.find((f) => f.modelId === "qwen2.5:14b")!.tier).toBe("red");
+    expect(cpu.fits.find((f) => f.modelId === "qwen2.5:14b")!.tokPerSec).toBeNull(); // red → no speed
+    const unknown = verdict(profile({}), MODELS);
+    expect(unknown.fits.every((f) => f.tokPerSec === null)).toBe(true);
+  });
+
+  it("uses the shared architecture data for a known catalog id, and estimates for an unknown one", () => {
+    const p = profile({ ramBytes: 64 * GB, bestVramBytes: 24 * GB });
+    const known = fitFor(p, { id: "qwen2.5:14b", label: "x", params: 14.77 });
+    const unknown = fitFor(p, { id: "someone/else:14b", label: "x", params: 14.77 });
+    expect(known.estimated.kv).toBe(false);
+    expect(unknown.estimated.kv).toBe(true);
   });
 });
