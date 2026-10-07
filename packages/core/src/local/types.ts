@@ -138,6 +138,8 @@ export interface ModelFit {
   tier: FitTier;
   /** False only when the model won't run at all (red). Amber = runs, but slowly. */
   usable: boolean;
+  /** Short label next to the tier dot ("Runs great here", "Only just fits"…). Amber says why. */
+  label: string;
   /** Plain-language, warm one-liner for this model on this machine. */
   note: string;
   /** Estimated tokens per second on this machine (046, @dawid-ai/model-fit). Null when it won't

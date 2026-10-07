@@ -236,7 +236,7 @@ export function LocalBrainSetup({
           <h3>{m.label}</h3>
         </div>
         <p className="hint">
-          {TIER_WORD[m.tier] ?? ""}
+          {m.fitLabel || TIER_WORD[m.tier] || ""}
           {m.size ? ` · ${m.size}` : ""}
           {m.note ? ` — ${m.note}` : m.tradeoff ? ` — ${m.tradeoff}` : ""}
         </p>
@@ -281,7 +281,7 @@ export function LocalBrainSetup({
                   <td>
                     <span className="local-fit">
                       <span className={`fit-dot fit-${m.tier}`} aria-hidden="true" />
-                      {TIER_WORD[m.tier] ?? ""}
+                      {m.fitLabel || TIER_WORD[m.tier] || ""}
                     </span>
                     {speedWords(m.tokPerSec) && <span className="local-speed">{speedWords(m.tokPerSec)}</span>}
                   </td>

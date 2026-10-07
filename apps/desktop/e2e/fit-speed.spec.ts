@@ -217,6 +217,11 @@ test("E3 + E5: CPU-only — small brains show a slower speed, red rows show none
     const r3 = row(page, "Qwen2.5 3B");
     await expect(r3).toContainText("Runs, but slowly");
     await expect(r3.locator(".local-speed")).toHaveText(expectedWords(CPU_16));
+    // F2 (Dawid, 2026-10-07): a small brain that's quick on the processor says where it runs, not "slowly".
+    const tiny = row(page, "Qwen2.5 0.5B");
+    await expect(tiny).toContainText("Runs on your processor");
+    await expect(tiny).not.toContainText("slowly");
+    await expect(tiny.locator(".local-speed")).toHaveText(expectedWords(CPU_16, "qwen2.5:0.5b"));
     // Above 7B on the processor is red ("painfully slow"), and the 32B doesn't fit at all: no speed.
     // Red is a warning, never a gate (Dawid, 2026-10-07): the row stays actionable, but says plainly
     // it won't run well here and shows no speed that could suggest otherwise.

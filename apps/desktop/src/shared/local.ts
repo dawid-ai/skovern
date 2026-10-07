@@ -32,6 +32,8 @@ export interface LocalModelView {
   embedded?: boolean;
   tier: FitTier;
   usable: boolean;
+  /** Short label next to the tier dot, from the SAME fit as `tier`; amber says why (046). */
+  fitLabel: string;
   /** Warm one-liner for this model on this computer. */
   note: string;
   /** True for the single best pick — highlighted in the UI. */

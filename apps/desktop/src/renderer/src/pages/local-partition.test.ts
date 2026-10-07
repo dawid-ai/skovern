@@ -3,7 +3,7 @@ import type { LocalModelView } from "../../../shared/local.js";
 import { partitionModels } from "./local-partition.js";
 
 function model(over: Partial<LocalModelView>): LocalModelView {
-  return { id: "x", label: "X", group: "suggested", downloaded: false, tier: "green", usable: true, note: "", recommended: false, tokPerSec: null, ...over };
+  return { id: "x", label: "X", group: "suggested", downloaded: false, tier: "green", usable: true, fitLabel: "", note: "", recommended: false, tokPerSec: null, ...over };
 }
 
 describe("partitionModels — actionable-now split (embedded-first)", () => {

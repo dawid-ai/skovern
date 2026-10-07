@@ -25,6 +25,9 @@ const CPU_SLOW_PARAMS = 7;
 const GOOD_PARAMS = 3;
 // The context window our runtimes allocate (the catalog's `contextSize`).
 const CONTEXT = 4096;
+// A processor-only brain at or above this speed (~10 words a second) isn't "slow" — a small brain
+// on a decent CPU reads fine, so its label says where it runs instead (Dawid, 2026-10-07).
+const QUICK_CPU_TOKPS = 13;
 
 /** The model as the fit math sees it: its own catalog numbers, plus the architecture the shared
  *  module knows for its id (an Ollama tag), when it knows it. */
@@ -93,7 +96,23 @@ function fitOne(profile: HardwareProfile, m: VerdictModel): ModelFit {
   // A speed is shown only for a model that will actually run here — never for red, never a guess
   // when memory is unknown.
   const tokPerSec = tier !== "red" && !memoryUnknown(profile) && !m.paramsGuessed ? r.tokPerSec : null;
-  return { modelId: m.id, tier, usable: tier !== "red", note, tokPerSec };
+
+  // The short label next to the dot. Amber says WHY, so it never contradicts the speed under it.
+  const quickCpu = r.runMode === "cpu" && tier === "amber" && tokPerSec !== null && tokPerSec >= QUICK_CPU_TOKPS;
+  if (quickCpu) note = "Runs on your processor (no graphics card we can use) — fine for a small brain like this.";
+  const label =
+    tier === "green"
+      ? "Runs great here"
+      : tier === "red"
+        ? "Too big for this computer"
+        : memoryUnknown(profile)
+          ? "We couldn't check"
+          : r.runMode === "gpu"
+            ? "Only just fits"
+            : quickCpu
+              ? "Runs on your processor"
+              : "Runs, but slowly";
+  return { modelId: m.id, tier, usable: tier !== "red", label, note, tokPerSec };
 }
 
 /** Score every candidate model against a machine and return one warm verdict. */

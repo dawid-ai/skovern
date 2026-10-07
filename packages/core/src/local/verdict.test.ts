@@ -211,6 +211,30 @@ describe("verdict — delegates the math (046)", () => {
     expect(v.fits[0]!.note).toBe("Only just fits in this computer's memory — it may crowd your other apps."); // Mac wording (N10)
   });
 
+  // F2 (Dawid, 2026-10-07): amber says WHY, so the label never contradicts the speed shown under it.
+  it("each amber label names its reason: just fits, processor, slow, or couldn't check", () => {
+    const labelOf = (v: ReturnType<typeof verdict>, id: string) => v.fits.find((f) => f.modelId === id)!;
+    const mac = verdict(profile({ ramBytes: 16 * GB, unifiedMemory: true }), MODELS);
+    expect(labelOf(mac, "qwen2.5:14b").label).toBe("Only just fits");
+    expect(labelOf(mac, "qwen2.5:7b").label).toBe("Runs great here");
+
+    const cpu = verdict(profile({ ramBytes: 16 * GB, cpuCores: 8 }), MODELS);
+    const tiny = labelOf(cpu, "qwen2.5:0.5b"); // ~54 tokens/s on 8 cores — not slow
+    expect(tiny.tier).toBe("amber");
+    expect(tiny.label).toBe("Runs on your processor");
+    expect(tiny.note).not.toMatch(/slowly/);
+    const mid = labelOf(cpu, "qwen2.5:7b"); // a few words a second — honestly slow
+    expect(mid.tokPerSec!).toBeLessThan(13);
+    expect(mid.label).toBe("Runs, but slowly");
+    expect(labelOf(cpu, "qwen2.5:14b").label).toBe("Too big for this computer");
+
+    const spill = verdict(profile({ ramBytes: 16 * GB, bestVramBytes: 8 * GB }), MODELS);
+    expect(labelOf(spill, "qwen2.5:14b").label).toBe("Runs, but slowly"); // partly on the processor
+
+    const unknown = verdict(profile({ ramBytes: null }), MODELS);
+    expect(unknown.fits.every((f) => f.label === "We couldn't check")).toBe(true);
+  });
+
   it("an embedding model the user pulled gets a tier but never a writing speed", () => {
     const v = verdict(profile({ ramBytes: 64 * GB, bestVramBytes: 24 * GB }), [{ id: "nomic-embed-text:latest", label: "x", params: 0.137 }]);
     expect(v.fits[0]!.tier).toBe("green");
