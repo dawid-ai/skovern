@@ -87,3 +87,18 @@ describe("display tiers — Ollama rows get their REAL fit, not a default amber 
     expect(verdict(gpu24, builtInCandidates(cat)).recommendedModelId).toBe("qwen2.5:14b");
   });
 });
+
+describe("speed only for what we actually know (046)", () => {
+  it("a model with no params and no size gets a tier but never a made-up speed", () => {
+    const gpu24 = profile({ bestVramBytes: 24 * GB });
+    const cat = [
+      { id: "mystery:latest", label: "mystery:latest" }, // nothing known → 3B placeholder, guessed
+      { id: "sized:latest", label: "sized:latest", sizeBytes: 2 * GB }, // size known → real estimate
+    ];
+    const fits = verdict(gpu24, allCandidates(cat)).fits;
+    const mystery = fits.find((f) => f.modelId === "mystery:latest")!;
+    expect(mystery.tier).toBe("green");
+    expect(mystery.tokPerSec).toBeNull();
+    expect(fits.find((f) => f.modelId === "sized:latest")!.tokPerSec).toBeGreaterThan(0);
+  });
+});

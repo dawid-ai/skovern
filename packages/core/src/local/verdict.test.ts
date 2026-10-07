@@ -55,6 +55,16 @@ describe("verdict — honesty table", () => {
     expect(v.recommendedModelId).toBe("qwen2.5:7b");
   });
 
+  // 046 behavior change (N7, llmfit's rule): running partly on the processor needs the whole model
+  // to fit in system RAM on its own. The 14B (~9.8 GB) is too big for the 8 GB card AND for 8 GB
+  // of RAM, so it's red — the old pooled VRAM+RAM budget called it amber.
+  it("laptop (8GB card, 8GB RAM): the 14B can't spill to RAM that's too small → red", () => {
+    const v = verdict(profile({ ramBytes: 8 * GB, bestVramBytes: 8 * GB }), MODELS);
+    expect(tierOf(v, "qwen2.5:7b")).toBe("green");
+    expect(tierOf(v, "qwen2.5:14b")).toBe("red");
+    expect(v.fits.find((f) => f.modelId === "qwen2.5:14b")!.tokPerSec).toBeNull();
+  });
+
   // 046 (approved behavior change): the old red came from the 1.2× headroom and a flat
   // 0.15 GB/B KV overestimate. With real KV math the 14B needs ~9.8 GB of the ~10.6 GB a 16 GB Mac
   // can spare — it JUST fits, so it's amber "only just fits", never green. The intent holds: we

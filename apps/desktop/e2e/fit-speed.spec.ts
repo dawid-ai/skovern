@@ -21,9 +21,7 @@ import { speedWords } from "../src/renderer/src/pages/speed-words.js";
 const GiB = 1024 ** 3;
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SHIPPED_CATALOG = readFileSync(path.join(here, "..", "..", "..", "catalog", "models.json"), "utf8");
-const QWEN_3B = (JSON.parse(SHIPPED_CATALOG) as { models: { id: string; params: number; sizeBytes: number; quant: string }[] }).models.find(
-  (m) => m.id === "qwen2.5:3b",
-)!;
+const CATALOG_MODELS = (JSON.parse(SHIPPED_CATALOG) as { models: { id: string; params: number; sizeBytes: number; quant: string }[] }).models;
 
 type Hw = {
   ramBytes: number | null;
@@ -40,13 +38,15 @@ const UNKNOWN_GPU = hw({ gpus: [{ model: "Test GPU 24GB", vramBytes: 24 * GiB }]
 const CPU_16 = hw({ ramBytes: 16 * GiB, cpuCores: 8 });
 const NO_MEMORY = hw({ ramBytes: null, cpuCores: null });
 
-// What the app should show for the 3B on a machine — computed from the SAME module, with the same
-// options Skovern's verdict passes (4096 context, 66% of unified memory, a 2 GB iGPU floor).
-function expectedWords(profile: Hw): string {
-  const spec = specFor(QWEN_3B.id)!;
+// What the app should show for a shipped catalog model on a machine — computed from the SAME
+// module, with the same options Skovern's verdict passes (4096 context, 66% of unified memory, a
+// 2 GB iGPU floor).
+function expectedWords(profile: Hw, id = "qwen2.5:3b"): string {
+  const m = CATALOG_MODELS.find((c) => c.id === id)!;
+  const spec = specFor(m.id)!;
   const r = fit(
     profile,
-    { params: QWEN_3B.params, sizeBytes: QWEN_3B.sizeBytes, quant: QWEN_3B.quant, layers: spec.layers, kvHeads: spec.kvHeads, headDim: spec.headDim },
+    { params: m.params, sizeBytes: m.sizeBytes, quant: m.quant, layers: spec.layers, kvHeads: spec.kvHeads, headDim: spec.headDim },
     { ctx: 4096, unifiedUsable: 0.66, minUsefulVramBytes: 2 * GiB },
   );
   return speedWords(r.tokPerSec)!;
@@ -156,6 +156,10 @@ test("E1 + E6: a named card shows the module's speed, in its cell, at short and 
     const r3 = row(page, "Qwen2.5 3B");
     await expect(r3).toContainText("Runs great here");
     await expect(r3.locator(".local-speed")).toHaveText(expectedWords(XTX)); // fast card → "faster than you can read"
+    // A big model stays under the cap, so a real NUMBER from the named card's bandwidth is on screen.
+    const words32 = expectedWords(XTX, "qwen2.5:32b");
+    expect(words32).toMatch(/^Writes about \d+ words a second$/);
+    await expect(row(page, "Qwen2.5 32B").locator(".local-speed")).toHaveText(words32);
 
     // No new egress: of EVERYTHING that left while opening the table, there is exactly the one
     // catalog fetch it always made, and anything else is a routine background poll (messages) —
