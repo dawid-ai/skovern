@@ -35,6 +35,9 @@ function fitModelOf(m: VerdictModel): FitModel {
     quant: m.quant,
     ...(m.sizeBytes !== undefined ? { sizeBytes: m.sizeBytes } : {}),
     ...(spec ? { layers: spec.layers, kvHeads: spec.kvHeads, headDim: spec.headDim, kind: spec.kind } : {}),
+    // ponytail: an Ollama model with "embed" in its name turns text into numbers and never writes,
+    // so it gets no words-per-second. Read the real kind from Ollama's model info if this misfires.
+    ...(!spec && /embed/i.test(m.id) ? { kind: "embedding" as const } : {}),
   };
 }
 
@@ -59,12 +62,14 @@ function fitOne(profile: HardwareProfile, m: VerdictModel): ModelFit {
     tier = "amber";
     note = "We couldn't check this computer's memory, so we're not sure how well it'll run.";
   } else if (r.runMode === "gpu") {
+    // A Mac has no separate graphics card — its brain runs in the computer's shared memory.
+    const where = profile.unifiedMemory ? "in this computer's memory" : "on your graphics card";
     if (r.level === "marginal") {
       tier = "amber";
-      note = "Only just fits on your graphics card — it may crowd your other apps.";
+      note = `Only just fits ${where} — it may crowd your other apps.`;
     } else {
       tier = "green";
-      note = "Fits on your graphics card — this one will feel quick.";
+      note = `Fits ${where} — this one will feel quick.`;
     }
   } else if (r.runMode === "partial") {
     tier = "amber";

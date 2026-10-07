@@ -177,6 +177,36 @@ describe("verdict — delegates the math (046)", () => {
     expect(unknown.fits.every((f) => f.tokPerSec === null)).toBe(true);
   });
 
+  it("S2: every SHIPPED catalog id resolves its architecture; an alias resolves; hostile ids only miss", () => {
+    const catalog = JSON.parse(readFileSync(fileURLToPath(new URL("../../../../catalog/models.json", import.meta.url)), "utf8")) as {
+      models: { id: string; label: string; params: number; sizeBytes: number; quant: string }[];
+    };
+    const p = profile({ ramBytes: 64 * GB, bestVramBytes: 24 * GB });
+    expect(catalog.models.length).toBe(9);
+    for (const m of catalog.models) expect(fitFor(p, m).estimated.kv, m.id).toBe(false); // no silent fallback
+    expect(fitFor(p, { id: "qwen2.5:latest", label: "x", params: 7.6 }).estimated.kv).toBe(false); // own-pulled alias tag
+    for (const id of ["qwen2.5:3b-evil", "__proto__", "constructor", "../x", "", "x".repeat(10_000)]) {
+      expect(() => fitFor(p, { id, label: "x", params: 3 })).not.toThrow();
+      expect(fitFor(p, { id, label: "x", params: 3 }).estimated.kv, JSON.stringify(id).slice(0, 20)).toBe(true);
+    }
+  });
+
+  it("N3: the REAL catalog 14B on a 16 GB Mac is amber 'only just fits' — not red, not green", () => {
+    const catalog = JSON.parse(readFileSync(fileURLToPath(new URL("../../../../catalog/models.json", import.meta.url)), "utf8")) as {
+      models: { id: string; label: string; params: number; sizeBytes: number; quant: string }[];
+    };
+    const q14 = catalog.models.find((m) => m.id === "qwen2.5:14b")!;
+    const v = verdict(profile({ ramBytes: 16 * GB, unifiedMemory: true }), [q14]);
+    expect(v.fits[0]!.tier).toBe("amber");
+    expect(v.fits[0]!.note).toBe("Only just fits in this computer's memory — it may crowd your other apps."); // Mac wording (N10)
+  });
+
+  it("an embedding model the user pulled gets a tier but never a writing speed", () => {
+    const v = verdict(profile({ ramBytes: 64 * GB, bestVramBytes: 24 * GB }), [{ id: "nomic-embed-text:latest", label: "x", params: 0.137 }]);
+    expect(v.fits[0]!.tier).toBe("green");
+    expect(v.fits[0]!.tokPerSec).toBeNull();
+  });
+
   it("uses the shared architecture data for a known catalog id, and estimates for an unknown one", () => {
     const p = profile({ ramBytes: 64 * GB, bestVramBytes: 24 * GB });
     const known = fitFor(p, { id: "qwen2.5:14b", label: "x", params: 14.77 });

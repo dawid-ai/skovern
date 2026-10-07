@@ -79,7 +79,7 @@ describe("display tiers — Ollama rows get their REAL fit, not a default amber 
 
     expect(fitOf("llama3.2:1b")).toBe("green"); // a 1B on a 24 GB card is fast — the BUG A case
     expect(fitOf("gemma2:22b")).toBe("green"); // 22B still fits 24 GB → green
-    expect(fitOf("qwen2.5:32b")).not.toBe("red"); // ~20 GB of 24 GB: it fits (green, or amber if only just)
+    expect(fitOf("qwen2.5:32b")).toBe("green"); // params 32, no size: ~20.1 GB of 24 GB (84%) → fits with room
     expect(fitOf("llama3.1:70b")).toBe("amber"); // ~43 GB: far bigger than the card, so it spills to RAM → honest amber (not defaulted)
 
     // The recommendation is UNCHANGED — the built-in-only pass still picks the biggest built-in,

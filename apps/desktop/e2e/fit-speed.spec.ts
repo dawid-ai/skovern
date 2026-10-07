@@ -88,6 +88,8 @@ test.beforeAll(async () => {
           // The user's own pulled models, NOT in the catalog: one with a size, one with nothing.
           { name: "mistral:7b", size: 4_700_000_000, details: { quantization_level: "Q4_K_M", parameter_size: "7B" } },
           { name: "mystery:latest" },
+          // An embedding model: it never writes, so it must never show a words-per-second.
+          { name: "nomic-embed-text:latest", size: 274_000_000, details: { quantization_level: "F16", parameter_size: "137M" } },
         ],
       });
     }
@@ -106,7 +108,18 @@ test.afterAll(async () => {
   ollama?.close();
 });
 
-async function openBrainTable(profile: Hw): Promise<{ app: ElectronApplication; page: Page; dir: string }> {
+// Every receipt line recording a byte about to leave ("sent" phase), routine or not.
+function egressLines(dir: string): string[] {
+  let log = "";
+  try {
+    log = readFileSync(path.join(dir, "receipts.jsonl"), "utf8");
+  } catch {
+    return [];
+  }
+  return log.split("\n").filter((l) => l.includes('"phase":"sent"'));
+}
+
+async function openBrainTable(profile: Hw): Promise<{ app: ElectronApplication; page: Page; dir: string; egressBeforeOpen: string[] }> {
   const dir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
   const app = await electron.launch({
     args: [".", `--user-data-dir=${dir}`],
@@ -127,29 +140,35 @@ async function openBrainTable(profile: Hw): Promise<{ app: ElectronApplication; 
   await page.getByLabel("Paste your link").fill(mailer.sent[mailer.sent.length - 1]!.url);
   await page.getByRole("button", { name: "Verify" }).click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const egressBeforeOpen = egressLines(dir);
   await page.getByLabel("Pick a brain").selectOption("local");
   await page.getByRole("button", { name: "Set up the local brain →" }).click();
   await expect(page.locator("tr.receipt-row", { hasText: "Qwen2.5 3B" }).first()).toBeVisible({ timeout: 30_000 });
-  return { app, page, dir };
+  return { app, page, dir, egressBeforeOpen };
 }
 
 const row = (page: Page, text: string) => page.locator("table.local-table tr.receipt-row", { hasText: text }).first();
 
 test("E1 + E6: a named card shows the module's speed, in its cell, at short and narrow windows; no new egress", async () => {
   test.setTimeout(180_000);
-  const { app, page, dir } = await openBrainTable(XTX);
+  const { app, page, dir, egressBeforeOpen } = await openBrainTable(XTX);
   try {
     const r3 = row(page, "Qwen2.5 3B");
     await expect(r3).toContainText("Runs great here");
-    await expect(r3.locator(".local-speed")).toHaveText(expectedWords(XTX));
+    await expect(r3.locator(".local-speed")).toHaveText(expectedWords(XTX)); // fast card → "faster than you can read"
 
-    // No new egress: opening the table made exactly the one catalog fetch it always did.
-    const receipts = readFileSync(path.join(dir, "receipts.jsonl"), "utf8").split("\n");
-    expect(receipts.filter((l) => l.includes('"task":"Skovern: model list"') && l.includes('"phase":"sent"'))).toHaveLength(1);
+    // No new egress: of EVERYTHING that left while opening the table, there is exactly the one
+    // catalog fetch it always made, and anything else is a routine background poll (messages) —
+    // nothing new, nothing user-visible. The speed math sends nothing.
+    const newEgress = egressLines(dir).slice(egressBeforeOpen.length);
+    expect(newEgress.filter((l) => l.includes('"task":"Skovern: model list"'))).toHaveLength(1);
+    expect(newEgress.filter((l) => !l.includes('"task":"Skovern: model list"') && !l.includes('"routine":true'))).toEqual([]);
 
     // E6: at 900×600 and 640×720 the speed stays inside its own cell and the page never scrolls sideways.
     for (const [width, height] of [[900, 600], [640, 720]] as const) {
       await app.evaluate(async ({ BrowserWindow }, b) => BrowserWindow.getAllWindows()[0]?.setBounds(b), { width, height });
+      // The resize really happened (a window that silently kept its size would pass everything below).
+      await expect.poll(() => page.evaluate(() => window.innerWidth)).toBeLessThanOrEqual(width);
       await r3.locator(".local-speed").scrollIntoViewIfNeeded();
       const cell = await r3.locator("td").nth(1).boundingBox();
       const speed = await r3.locator(".local-speed").boundingBox();
@@ -176,6 +195,10 @@ test("E2 + S5: an unknown card still shows a speed; a pulled model we know nothi
     const mystery = row(page, "mystery:latest");
     await expect(mystery).toBeVisible();
     await expect(mystery.locator(".local-speed")).toHaveCount(0);
+    // …and an embedding model never claims to write at all.
+    const embed = row(page, "nomic-embed-text:latest");
+    await expect(embed).toBeVisible();
+    await expect(embed.locator(".local-speed")).toHaveCount(0);
     expect(await page.locator("body").innerText()).not.toMatch(/NaN|about 0 words/);
   } finally {
     await app.close();
@@ -191,11 +214,14 @@ test("E3 + E5: CPU-only — small brains show a slower speed, red rows show none
     await expect(r3).toContainText("Runs, but slowly");
     await expect(r3.locator(".local-speed")).toHaveText(expectedWords(CPU_16));
     // Above 7B on the processor is red ("painfully slow"), and the 32B doesn't fit at all: no speed.
+    // Red is a warning, never a gate (Dawid, 2026-10-07): the row stays actionable, but says plainly
+    // it won't run well here and shows no speed that could suggest otherwise.
     for (const text of ["Qwen2.5 14B", "Qwen2.5 32B"]) {
       const r = row(page, text);
       await expect(r).toContainText("Too big for this computer");
+      await expect(r.locator(".fit-dot.fit-red")).toBeVisible();
       await expect(r.locator(".local-speed")).toHaveCount(0);
-      await expect(r.getByRole("button", { name: "Use this one" })).toHaveCount(0);
+      await expect(r.getByRole("button", { name: /Get this one|Use this one|Needs Ollama/ })).toBeVisible(); // not a gate
     }
   } finally {
     await app.close();
