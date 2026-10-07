@@ -50,8 +50,8 @@ importers:
         version: 3.19.0(typescript@5.9.3)
     devDependencies:
       '@dawid-ai/model-fit':
-        specifier: link:../../../model-fit
-        version: link:../../../model-fit
+        specifier: 0.1.0
+        version: 0.1.0
       '@playwright/test':
         specifier: ^1.61.1
         version: 1.61.1
@@ -132,8 +132,8 @@ importers:
         specifier: ^2.0.0
         version: 2.0.110(zod@4.4.3)
       '@dawid-ai/model-fit':
-        specifier: link:../../../model-fit
-        version: link:../../../model-fit
+        specifier: 0.1.0
+        version: 0.1.0
       '@skovern/plugin-sdk':
         specifier: workspace:*
         version: link:../plugin-sdk
@@ -275,6 +275,10 @@ packages:
 
   '@balena/dockerignore@1.0.2':
     resolution: {integrity: sha512-wMue2Sy4GAVTk6Ic4tJVcnfdau+gx2EnG7S+uAEe+TWJFqE4YoWN4/H8MSLj4eYJKxGg26lZwboEniNiNwZQ6Q==}
+
+  '@dawid-ai/model-fit@0.1.0':
+    resolution: {integrity: sha512-byPvQ140TQhRuCMpzSgYWVP43Q6NdvA1XkSHuY9Tlfx5ovM1jnVW0TbGnVnIoxlZizhSxGrhXx9h+AI6Fqs5Bw==}
+    engines: {node: '>=20.10'}
 
   '@electron-internal/extract-zip@1.0.4':
     resolution: {integrity: sha512-Zr1Vs7E9tpCNhZHDAbFVXc2gEVCG9RqPDjrno5+bdgB6LRAuvgyMHJut4NCVyYwtAieapMzc3fiQ3CSTi75ARg==}
@@ -4033,6 +4037,8 @@ snapshots:
       '@babel/helper-validator-identifier': 7.29.7
 
   '@balena/dockerignore@1.0.2': {}
+
+  '@dawid-ai/model-fit@0.1.0': {}
 
   '@electron-internal/extract-zip@1.0.4': {}
 

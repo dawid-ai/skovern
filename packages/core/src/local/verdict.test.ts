@@ -148,6 +148,17 @@ describe("verdict — recommends only a fetchable model", () => {
 
 // 046 — the math lives in @dawid-ai/model-fit; this file only maps it to tiers + words.
 describe("verdict — delegates the math (046)", () => {
+  it("S1: the module is pinned to an EXACT version, installed from the npm registry with an integrity hash", () => {
+    const root = new URL("../../../../", import.meta.url);
+    for (const pkg of ["packages/core/package.json", "apps/desktop/package.json"]) {
+      const deps = JSON.parse(readFileSync(fileURLToPath(new URL(pkg, root)), "utf8")) as Record<string, Record<string, string> | undefined>;
+      const v = deps["dependencies"]?.["@dawid-ai/model-fit"] ?? deps["devDependencies"]?.["@dawid-ai/model-fit"];
+      expect(v, pkg).toMatch(/^\d+\.\d+\.\d+$/); // no ^, ~, link:, file:, or git URL
+    }
+    const lock = readFileSync(fileURLToPath(new URL("pnpm-lock.yaml", root)), "utf8");
+    expect(lock).toMatch(/'@dawid-ai\/model-fit@\d+\.\d+\.\d+':\n\s+resolution: \{integrity: sha512-/);
+  });
+
   it("S1: no weight/KV/headroom arithmetic remains in verdict.ts", () => {
     const src = readFileSync(fileURLToPath(new URL("./verdict.ts", import.meta.url)), "utf8");
     for (const sym of ["HEADROOM", "kvBytes", "weightBytes", "footprint", "budgetOf"]) expect(src, sym).not.toContain(sym);
