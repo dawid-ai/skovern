@@ -16,6 +16,12 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # SEC-046-1: @dawid-ai/model-fit runs in the main process, so every version (and every
+      # Dependabot bump) must prove it was built by its own repo's publish workflow from its tag.
+      - name: Verify @dawid-ai/model-fit provenance and purity
+        run: node scripts/verify-model-fit.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
       - name: Typecheck
         run: pnpm typecheck
       - name: Lint

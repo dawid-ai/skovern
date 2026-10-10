@@ -241,7 +241,9 @@ export function ollamaEngine(opts: OllamaOptions): LocalEngine {
         const m = (raw ?? {}) as Record<string, unknown>;
         const id = typeof m["name"] === "string" ? m["name"] : typeof m["model"] === "string" ? (m["model"] as string) : "";
         const details = (m["details"] ?? {}) as Record<string, unknown>;
-        const sizeBytes = typeof m["size"] === "number" ? m["size"] : undefined;
+        // A size we can't trust (negative, zero, NaN, Infinity) is treated as unknown — the fit math
+        // would otherwise score it as tiny and promise a fast run (046 security hardening).
+        const sizeBytes = typeof m["size"] === "number" && Number.isFinite(m["size"]) && m["size"] > 0 ? m["size"] : undefined;
         const quant = typeof details["quantization_level"] === "string" ? (details["quantization_level"] as string) : undefined;
         const paramStr = typeof details["parameter_size"] === "string" ? (details["parameter_size"] as string) : undefined;
         const params = paramStr ? parseParamSize(paramStr) : undefined;

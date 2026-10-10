@@ -82,6 +82,16 @@ describe("ollamaEngine — happy paths (fixture server)", () => {
     expect(models[0]).toMatchObject({ sizeBytes: 1_900_000_000, quant: "Q4_K_M", params: 3.1 });
   });
 
+  it("treats a negative, zero, or overflowing size as unknown, never as a tiny model (046 hardening)", async () => {
+    const base = await startFixture(() => ({
+      status: 200,
+      // 1e400 parses to Infinity in JSON.parse.
+      body: '{"models":[{"name":"neg","size":-1000000000000},{"name":"zero","size":0},{"name":"huge","size":1e400},{"name":"ok","size":5}]}',
+    }));
+    const models = await ollamaEngine({ baseUrl: base }).listModels();
+    expect(models.map((m) => [m.id, m.sizeBytes])).toEqual([["neg", undefined], ["zero", undefined], ["huge", undefined], ["ok", 5]]);
+  });
+
   it("generates text from POST /api/generate, with token counts", async () => {
     const base = await startFixture((_m, url) =>
       url === "/api/generate"
