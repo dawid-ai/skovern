@@ -73,7 +73,7 @@ describe("verdict — honesty table", () => {
     const v = verdict(profile({ ramBytes: 16 * GB, unifiedMemory: true }), MODELS);
     expect(tierOf(v, "qwen2.5:7b")).toBe("green");
     expect(tierOf(v, "qwen2.5:14b")).toBe("amber");
-    expect(v.fits.find((f) => f.modelId === "qwen2.5:14b")!.note).toMatch(/only just fits/i);
+    expect(v.fits.find((f) => f.modelId === "qwen2.5:14b")!.label).toBe("Only just fits");
     expect(v.canRunGoodOne).toBe(true);
     expect(v.recommendedModelId).toBe("qwen2.5:7b");
   });
@@ -208,7 +208,8 @@ describe("verdict — delegates the math (046)", () => {
     const q14 = catalog.models.find((m) => m.id === "qwen2.5:14b")!;
     const v = verdict(profile({ ramBytes: 16 * GB, unifiedMemory: true }), [q14]);
     expect(v.fits[0]!.tier).toBe("amber");
-    expect(v.fits[0]!.note).toBe("Only just fits in this computer's memory — it may crowd your other apps."); // Mac wording (N10)
+    expect(v.fits[0]!.label).toBe("Only just fits");
+    expect(v.fits[0]!.note).toBe("Uses nearly all of this computer's memory — it may crowd your other apps."); // Mac wording (N10)
   });
 
   // F2 (Dawid, 2026-10-07): amber says WHY, so the label never contradicts the speed shown under it.
@@ -233,6 +234,43 @@ describe("verdict — delegates the math (046)", () => {
 
     const unknown = verdict(profile({ ramBytes: null }), MODELS);
     expect(unknown.fits.every((f) => f.label === "We couldn't check")).toBe(true);
+  });
+
+  // G1 (Dawid, 2026-10-10): partly on the processor but quick is not "slowly" either.
+  it("a quick partly-offloaded brain says where it runs; a slow one says slowly", () => {
+    const card4 = verdict(
+      profile({ ramBytes: 32 * GB, bestVramBytes: 4 * GB, gpus: [{ model: "NVIDIA GeForce RTX 3050 Laptop GPU", vramBytes: 4 * GB }] }),
+      [...MODELS, { id: "qwen2.5:32b", label: "Qwen 32B", params: 32 }],
+    );
+    const q7 = card4.fits.find((f) => f.modelId === "qwen2.5:7b")!;
+    expect(q7.tier).toBe("amber");
+    expect(q7.tokPerSec!).toBeGreaterThanOrEqual(13);
+    expect(q7.label).toBe("Partly on your processor");
+    expect(q7.note).not.toMatch(/slow/);
+    const q32 = card4.fits.find((f) => f.modelId === "qwen2.5:32b")!;
+    expect(q32.tokPerSec!).toBeLessThan(13);
+    expect(q32.label).toBe("Runs, but slowly");
+  });
+
+  it("a helper brain that never writes isn't called slow on the processor (G3)", () => {
+    const v = verdict(profile({ ramBytes: 16 * GB }), [{ id: "nomic-embed-text:latest", label: "x", params: 0.137 }]);
+    expect(v.fits[0]!.tier).toBe("amber");
+    expect(v.fits[0]!.label).toBe("Runs on your processor");
+    expect(v.fits[0]!.note).not.toMatch(/slow/);
+  });
+
+  it("no note repeats its own label (the brain card shows both side by side, G2)", () => {
+    const machines = [
+      profile({ ramBytes: 16 * GB, unifiedMemory: true }),
+      profile({ ramBytes: 16 * GB, cpuCores: 8 }),
+      profile({ ramBytes: 32 * GB, bestVramBytes: 4 * GB }),
+      profile({ ramBytes: 16 * GB, bestVramBytes: 8 * GB }),
+      profile({ ramBytes: null }),
+      profile({ ramBytes: 64 * GB, bestVramBytes: 24 * GB }),
+    ];
+    for (const p of machines)
+      for (const f of verdict(p, [...MODELS, { id: "nomic-embed-text:latest", label: "x", params: 0.137 }]).fits)
+        expect(f.note.toLowerCase().startsWith(f.label.toLowerCase()), `${f.label} / ${f.note}`).toBe(false);
   });
 
   it("an embedding model the user pulled gets a tier but never a writing speed", () => {

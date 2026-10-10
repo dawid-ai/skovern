@@ -149,6 +149,27 @@ async function openBrainTable(profile: Hw): Promise<{ app: ElectronApplication; 
 
 const row = (page: Page, text: string) => page.locator("table.local-table tr.receipt-row", { hasText: text }).first();
 
+// E6: at 900×600 and 640×720 the label and speed stay inside their own cell and the page never
+// scrolls sideways.
+async function fitsAtSmallWindows(app: ElectronApplication, page: Page, r: ReturnType<typeof row>): Promise<void> {
+  for (const [width, height] of [[900, 600], [640, 720]] as const) {
+    await app.evaluate(async ({ BrowserWindow }, b) => BrowserWindow.getAllWindows()[0]?.setBounds(b), { width, height });
+    // The resize really happened (a window that silently kept its size would pass everything below).
+    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBeLessThanOrEqual(width);
+    await r.locator(".local-speed").scrollIntoViewIfNeeded();
+    const cell = await r.locator("td").nth(1).boundingBox();
+    expect(cell).toBeTruthy();
+    for (const part of [".local-fit", ".local-speed"]) {
+      const box = await r.locator(part).boundingBox();
+      expect(box, part).toBeTruthy();
+      expect(box!.x, part).toBeGreaterThanOrEqual(cell!.x - 0.5);
+      expect(box!.x + box!.width, part).toBeLessThanOrEqual(cell!.x + cell!.width + 0.5);
+      expect(box!.y + box!.height, part).toBeLessThanOrEqual(cell!.y + cell!.height + 0.5);
+    }
+    const overflowX = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(overflowX, `${width}×${height}`).toBeLessThanOrEqual(0);
+  }
+}
 test("E1 + E6: a named card shows the module's speed, in its cell, at short and narrow windows; no new egress", async () => {
   test.setTimeout(180_000);
   const { app, page, dir, egressBeforeOpen } = await openBrainTable(XTX);
@@ -168,21 +189,8 @@ test("E1 + E6: a named card shows the module's speed, in its cell, at short and 
     expect(newEgress.filter((l) => l.includes('"task":"Skovern: model list"'))).toHaveLength(1);
     expect(newEgress.filter((l) => !l.includes('"task":"Skovern: model list"') && !l.includes('"routine":true'))).toEqual([]);
 
-    // E6: at 900×600 and 640×720 the speed stays inside its own cell and the page never scrolls sideways.
-    for (const [width, height] of [[900, 600], [640, 720]] as const) {
-      await app.evaluate(async ({ BrowserWindow }, b) => BrowserWindow.getAllWindows()[0]?.setBounds(b), { width, height });
-      // The resize really happened (a window that silently kept its size would pass everything below).
-      await expect.poll(() => page.evaluate(() => window.innerWidth)).toBeLessThanOrEqual(width);
-      await r3.locator(".local-speed").scrollIntoViewIfNeeded();
-      const cell = await r3.locator("td").nth(1).boundingBox();
-      const speed = await r3.locator(".local-speed").boundingBox();
-      expect(cell && speed).toBeTruthy();
-      expect(speed!.x).toBeGreaterThanOrEqual(cell!.x - 0.5);
-      expect(speed!.x + speed!.width).toBeLessThanOrEqual(cell!.x + cell!.width + 0.5);
-      expect(speed!.y + speed!.height).toBeLessThanOrEqual(cell!.y + cell!.height + 0.5);
-      const overflowX = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-      expect(overflowX, `${width}×${height}`).toBeLessThanOrEqual(0);
-    }
+    await fitsAtSmallWindows(app, page, r3);
+
   } finally {
     await app.close();
     rmSync(dir, { recursive: true, force: true });
@@ -222,6 +230,7 @@ test("E3 + E5: CPU-only — small brains show a slower speed, red rows show none
     await expect(tiny).toContainText("Runs on your processor");
     await expect(tiny).not.toContainText("slowly");
     await expect(tiny.locator(".local-speed")).toHaveText(expectedWords(CPU_16, "qwen2.5:0.5b"));
+    await fitsAtSmallWindows(app, page, tiny); // G4: the longer amber label holds at small windows too
     // Above 7B on the processor is red ("painfully slow"), and the 32B doesn't fit at all: no speed.
     // Red is a warning, never a gate (Dawid, 2026-10-07): the row stays actionable, but says plainly
     // it won't run well here and shows no speed that could suggest otherwise.

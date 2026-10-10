@@ -25,9 +25,9 @@ const CPU_SLOW_PARAMS = 7;
 const GOOD_PARAMS = 3;
 // The context window our runtimes allocate (the catalog's `contextSize`).
 const CONTEXT = 4096;
-// A processor-only brain at or above this speed (~10 words a second) isn't "slow" — a small brain
-// on a decent CPU reads fine, so its label says where it runs instead (Dawid, 2026-10-07).
-const QUICK_CPU_TOKPS = 13;
+// A brain on the processor (wholly or partly) at or above this speed (~10 words a second) isn't
+// "slow" — it reads fine, so its label says where it runs instead (Dawid, 2026-10-07 and -10).
+const QUICK_TOKPS = 13;
 
 /** The model as the fit math sees it: its own catalog numbers, plus the architecture the shared
  *  module knows for its id (an Ollama tag), when it knows it. */
@@ -63,13 +63,13 @@ function fitOne(profile: HardwareProfile, m: VerdictModel): ModelFit {
   if (memoryUnknown(profile)) {
     // We couldn't read memory at all — be honest, don't guess a pass.
     tier = "amber";
-    note = "We couldn't check this computer's memory, so we're not sure how well it'll run.";
+    note = "We couldn't read this computer's memory, so we're not sure how well it'll run.";
   } else if (r.runMode === "gpu") {
     // A Mac has no separate graphics card — its brain runs in the computer's shared memory.
     const where = profile.unifiedMemory ? "in this computer's memory" : "on your graphics card";
     if (r.level === "marginal") {
       tier = "amber";
-      note = `Only just fits ${where} — it may crowd your other apps.`;
+      note = `Uses nearly all of ${profile.unifiedMemory ? "this computer's memory" : "your graphics card's memory"} — it may crowd your other apps.`;
     } else {
       tier = "green";
       note = `Fits ${where} — this one will feel quick.`;
@@ -97,9 +97,19 @@ function fitOne(profile: HardwareProfile, m: VerdictModel): ModelFit {
   // when memory is unknown.
   const tokPerSec = tier !== "red" && !memoryUnknown(profile) && !m.paramsGuessed ? r.tokPerSec : null;
 
-  // The short label next to the dot. Amber says WHY, so it never contradicts the speed under it.
-  const quickCpu = r.runMode === "cpu" && tier === "amber" && tokPerSec !== null && tokPerSec >= QUICK_CPU_TOKPS;
-  if (quickCpu) note = "Runs on your processor (no graphics card we can use) — fine for a small brain like this.";
+  // The short label next to the dot. Amber says WHY, so it never contradicts the speed under it:
+  // a brain that's on the processor (wholly or partly) but quick, or one that never writes
+  // (embedding), isn't called slow.
+  const offCard = tier === "amber" && !memoryUnknown(profile) && (r.runMode === "cpu" || r.runMode === "partial");
+  const notSlow = offCard && (fitModelOf(m).kind === "embedding" || (tokPerSec !== null && tokPerSec >= QUICK_TOKPS));
+  if (notSlow) {
+    note =
+      r.runMode === "partial"
+        ? "Bigger than your graphics memory, so part runs on the processor — still quick enough."
+        : fitModelOf(m).kind === "embedding"
+          ? "No graphics card we can use — fine for this helper brain, which doesn't write replies."
+          : "No graphics card we can use, but a small brain like this keeps up fine.";
+  }
   const label =
     tier === "green"
       ? "Runs great here"
@@ -109,8 +119,10 @@ function fitOne(profile: HardwareProfile, m: VerdictModel): ModelFit {
           ? "We couldn't check"
           : r.runMode === "gpu"
             ? "Only just fits"
-            : quickCpu
-              ? "Runs on your processor"
+            : notSlow
+              ? r.runMode === "partial"
+                ? "Partly on your processor"
+                : "Runs on your processor"
               : "Runs, but slowly";
   return { modelId: m.id, tier, usable: tier !== "red", label, note, tokPerSec };
 }
