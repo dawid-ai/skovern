@@ -267,12 +267,71 @@ describe("verdict — delegates the math (046)", () => {
       profile({ ramBytes: 16 * GB, bestVramBytes: 8 * GB }),
       profile({ ramBytes: null }),
       profile({ ramBytes: 64 * GB, bestVramBytes: 24 * GB }),
+      profile({ ramBytes: 8 * GB, unifiedMemory: true }), // the 32B won't fit → red, card wording
+      profile({ ramBytes: 4 * GB }), // red, no-card wording; the 14B also "painfully slow"
     ];
+    const big = { id: "qwen2.5:32b", label: "Qwen 32B", params: 32 };
+    const reds = new Set<string>();
     for (const p of machines)
-      for (const f of verdict(p, [...MODELS, { id: "nomic-embed-text:latest", label: "x", params: 0.137 }]).fits)
+      for (const f of verdict(p, [...MODELS, big, { id: "nomic-embed-text:latest", label: "x", params: 0.137 }]).fits) {
+        if (f.tier === "red") reds.add(f.note);
         expect(f.note.toLowerCase().startsWith(f.label.toLowerCase()), `${f.label} / ${f.note}`).toBe(false);
+        // Nor its label's first words ("We couldn't check" / "We couldn't read…" stutters too).
+        expect(f.note.split(" ").slice(0, 2).join(" ").toLowerCase(), `${f.label} / ${f.note}`).not.toBe(f.label.split(" ").slice(0, 2).join(" ").toLowerCase());
+      }
+    expect(reds.size).toBe(3); // every red wording was reached
   });
 
+  // H1/H3/H4 (Dawid, 2026-10-10): "slow" is judged on the speed shown, wherever the brain runs. A
+  // brain that fits but writes under ~10 words a second is amber, never "Runs great here".
+  it("across the shipped catalog on many machines, the label always agrees with the speed shown", () => {
+    const catalog = JSON.parse(readFileSync(fileURLToPath(new URL("../../../../catalog/models.json", import.meta.url)), "utf8")) as {
+      models: VerdictModel[];
+    };
+    const machines: HardwareProfile[] = [];
+    for (const cores of [2, 4, 8, 16]) for (const ram of [8, 16, 32, 64]) machines.push(profile({ ramBytes: ram * GB, cpuCores: cores }));
+    for (const vram of [2, 3, 4, 6, 8, 12, 16, 24])
+      machines.push(profile({ ramBytes: 32 * GB, cpuCores: 8, bestVramBytes: vram * GB, gpus: [{ model: `Test GPU ${vram}GB`, vramBytes: vram * GB }] }));
+    for (const ram of [8, 16, 24, 36, 64]) machines.push(profile({ ramBytes: ram * GB, cpuCores: 10, unifiedMemory: true }));
+    // A 2-core box with a small unknown card: its 7B lands at ~12.3 tokens/s, just under the line.
+    machines.push(profile({ ramBytes: 32 * GB, cpuCores: 2, bestVramBytes: 4 * GB, gpus: [{ model: "Test GPU 4GB", vramBytes: 4 * GB }] }));
+
+    const QUICK = 9.5 / 0.75; // "about 10 words a second"
+    let nearSlow = 0;
+    let nearQuick = 0;
+    for (const p of machines) {
+      for (const f of verdict(p, catalog.models).fits) {
+        const what = `${f.modelId} ${f.label} ${f.tokPerSec}`;
+        if (f.tier === "green" && f.tokPerSec !== null) expect(f.tokPerSec, what).toBeGreaterThanOrEqual(QUICK);
+        if (f.label === "Runs, but slowly" && f.tokPerSec !== null) expect(f.tokPerSec, what).toBeLessThan(QUICK);
+        if (["Runs on your processor", "Partly on your processor", "Runs great here"].includes(f.label) && f.tokPerSec !== null)
+          expect(f.tokPerSec, what).toBeGreaterThanOrEqual(QUICK);
+        if (f.tier === "green") expect(f.note, what).toMatch(/quick/);
+        else expect(f.note, what).not.toMatch(/quick\.$|feel quick/);
+        if (f.tokPerSec !== null && f.tokPerSec >= QUICK - 1.5 && f.tokPerSec < QUICK) nearSlow++;
+        if (f.tokPerSec !== null && f.tokPerSec >= QUICK && f.tokPerSec < QUICK + 1.5) nearQuick++;
+      }
+    }
+    // The sweep really straddles the line, so a threshold moved by more than ~1.5 tokens/s fails.
+    expect(nearSlow).toBeGreaterThan(0);
+    expect(nearQuick).toBeGreaterThan(0);
+  });
+
+  it("H1: the 32B on an unknown 24 GB card fits but writes slowly → amber, not 'feel quick'", () => {
+    const v = verdict(profile({ ramBytes: 64 * GB, cpuCores: 16, bestVramBytes: 24 * GB, gpus: [{ model: "Test GPU 24GB", vramBytes: 24 * GB }] }), [
+      { id: "qwen2.5:32b", label: "Qwen 32B", params: 32, sizeBytes: 19_900_000_000, quant: "Q4_K_M" },
+    ]);
+    expect(v.fits[0]!.tier).toBe("amber");
+    expect(v.fits[0]!.label).toBe("Runs, but slowly");
+    expect(v.fits[0]!.note).toBe("Fits on your graphics card, but it's a big one — it'll write slowly.");
+  });
+
+  it("H5: a brain we know nothing about isn't called slow on a guess", () => {
+    const v = verdict(profile({ ramBytes: 16 * GB }), [{ id: "mystery:latest", label: "x", params: 3, paramsGuessed: true }]);
+    expect(v.fits[0]!.tokPerSec).toBeNull();
+    expect(v.fits[0]!.label).toBe("Runs on your processor");
+    expect(v.fits[0]!.note).not.toMatch(/slow/);
+  });
   it("an embedding model the user pulled gets a tier but never a writing speed", () => {
     const v = verdict(profile({ ramBytes: 64 * GB, bestVramBytes: 24 * GB }), [{ id: "nomic-embed-text:latest", label: "x", params: 0.137 }]);
     expect(v.fits[0]!.tier).toBe("green");

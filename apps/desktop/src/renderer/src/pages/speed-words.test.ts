@@ -12,6 +12,10 @@ describe("speedWords (046)", () => {
     expect(speedWords(67)).toBe("Writes faster than you can read"); // 50.25 words → over the cap
     expect(speedWords(2112)).toBe("Writes faster than you can read"); // the 0.5B on a 7900 XTX
   });
+  it("turns 'about 10' exactly where core's slow line sits (verdict.ts QUICK_TOKPS = 9.5 / 0.75)", () => {
+    expect(speedWords(9.5 / 0.75)).toBe("Writes about 10 words a second");
+    expect(speedWords(9.49 / 0.75)).toBe("Writes about 9 words a second");
+  });
   it("says so honestly when it's very slow", () => {
     expect(speedWords(0.8)).toBe("Writes less than a word a second");
   });

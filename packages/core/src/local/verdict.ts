@@ -5,7 +5,7 @@ import type { FitTier, HardwareProfile, ModelFit, Verdict, VerdictModel } from "
 // deterministic (no I/O). The MATH (memory need, share of the machine, words-per-second) lives in
 // @dawid-ai/model-fit; this file keeps Skovern's own rules and its florist words. It judges
 // USABLE, not merely "runs":
-//   - green  = a GPU we can use holds the whole model with room to spare → fast.
+//   - green  = a GPU we can use holds the whole model with room to spare AND it writes at least\n//              ~10 words a second → fast.
 //   - amber  = it runs, but slowly (CPU-only, partly offloaded to RAM) or only just fits.
 //   - red    = it won't fit at all, or would crawl on the processor — no false hope.
 // A recommendation, never a gate: the UI still lets the user run an amber pick, with the
@@ -25,9 +25,10 @@ const CPU_SLOW_PARAMS = 7;
 const GOOD_PARAMS = 3;
 // The context window our runtimes allocate (the catalog's `contextSize`).
 const CONTEXT = 4096;
-// A brain on the processor (wholly or partly) at or above this speed (~10 words a second) isn't
-// "slow" — it reads fine, so its label says where it runs instead (Dawid, 2026-10-07 and -10).
-const QUICK_TOKPS = 13;
+// Below this a brain is "slow", wherever it runs (Dawid, 2026-10-07 and -10). It is exactly the
+// speed the app shows as "about 10 words a second" (speed-words.ts: 0.75 words per token, rounded),
+// so "about 9" always reads slow and "about 10" never does.
+const QUICK_TOKPS = 9.5 / 0.75;
 
 /** The model as the fit math sees it: its own catalog numbers, plus the architecture the shared
  *  module knows for its id (an Ollama tag), when it knows it. */
@@ -56,77 +57,65 @@ function memoryUnknown(profile: HardwareProfile): boolean {
 }
 
 function fitOne(profile: HardwareProfile, m: VerdictModel): ModelFit {
-  let tier: FitTier;
-  let note: string;
   const r = fitFor(profile, m);
+  const unknownMem = memoryUnknown(profile);
+  const writes = fitModelOf(m).kind !== "embedding";
+  const tooSlowOnCpu = r.runMode === "cpu" && m.params > CPU_SLOW_PARAMS;
+  // A speed is shown only for a model that will actually run here — never for red, never a guess
+  // when memory or the model's size is unknown.
+  const tokPerSec = r.runMode !== "none" && !tooSlowOnCpu && !unknownMem && !m.paramsGuessed ? r.tokPerSec : null;
+  // "Slow" is judged on the speed we SHOW, so the label never contradicts the line under it. No
+  // speed → no speed claim either way.
+  const slow = tokPerSec !== null && tokPerSec < QUICK_TOKPS;
+  const amber = (label: string, note: string) => ({ tier: "amber" as const, label, note });
 
-  if (memoryUnknown(profile)) {
+  let f: { tier: FitTier; label: string; note: string };
+  if (unknownMem) {
     // We couldn't read memory at all — be honest, don't guess a pass.
-    tier = "amber";
-    note = "We couldn't read this computer's memory, so we're not sure how well it'll run.";
+    f = amber("We couldn't check", "This computer didn't tell us how much memory it has, so we're not sure how well it'll run.");
   } else if (r.runMode === "gpu") {
     // A Mac has no separate graphics card — its brain runs in the computer's shared memory.
     const where = profile.unifiedMemory ? "in this computer's memory" : "on your graphics card";
     if (r.level === "marginal") {
-      tier = "amber";
-      note = `Uses nearly all of ${profile.unifiedMemory ? "this computer's memory" : "your graphics card's memory"} — it may crowd your other apps.`;
+      f = amber("Only just fits", `Uses nearly all of ${profile.unifiedMemory ? "this computer's memory" : "your graphics card's memory"} — it may crowd your other apps.`);
+    } else if (slow) {
+      // Fits, but a big brain still writes slowly — green promises quick, so it's amber (Dawid, 2026-10-10).
+      f = amber("Runs, but slowly", `Fits ${where}, but it's a big one — it'll write slowly.`);
     } else {
-      tier = "green";
-      note = `Fits ${where} — this one will feel quick.`;
+      f = { tier: "green", label: "Runs great here", note: `Fits ${where} — this one will feel quick.` };
     }
   } else if (r.runMode === "partial") {
-    tier = "amber";
-    note = "Bigger than your graphics memory — part runs on the processor, so it'll be slower.";
-  } else if (r.runMode === "cpu") {
-    if (m.params > CPU_SLOW_PARAMS) {
-      tier = "red";
-      note = "Would run on your processor only, and be painfully slow at this size.";
-    } else {
-      tier = "amber";
-      note = "Runs on your processor (no graphics card we can use) — it'll work, but slowly.";
-    }
+    f = slow
+      ? amber("Runs, but slowly", "Bigger than your graphics memory — part runs on the processor, so it'll be slower.")
+      : amber(
+          "Partly on your processor",
+          tokPerSec === null && writes
+            ? "Bigger than your graphics memory, so part runs on the processor. We don't know this brain's size, so we can't say how fast."
+            : "Bigger than your graphics memory, so part runs on the processor — still quick enough.",
+        );
+  } else if (r.runMode === "cpu" && !tooSlowOnCpu) {
+    f = slow
+      ? amber("Runs, but slowly", "Runs on your processor (no graphics card we can use) — it'll work, but slowly.")
+      : amber(
+          "Runs on your processor",
+          !writes
+            ? "No graphics card we can use — fine for this helper brain, which doesn't write replies."
+            : tokPerSec === null
+              ? "No graphics card we can use. We don't know this brain's size, so we can't say how fast it'll be."
+              : "No graphics card we can use, but a small brain like this keeps up fine.",
+        );
+  } else if (tooSlowOnCpu) {
+    f = { tier: "red", label: "Too big for this computer", note: "Would run on your processor only, and be painfully slow at this size." };
   } else {
-    tier = "red";
-    note =
-      profile.unifiedMemory || (profile.bestVramBytes ?? 0) >= MIN_USEFUL_VRAM
-        ? "Too big for this computer — it won't run well here."
-        : "Too big for this computer's memory — it won't run here.";
+    const card = profile.unifiedMemory || (profile.bestVramBytes ?? 0) >= MIN_USEFUL_VRAM;
+    f = {
+      tier: "red",
+      label: "Too big for this computer",
+      note: card ? "It needs more memory than this computer can spare — it won't run well here." : "It needs more memory than this computer has — it won't run here.",
+    };
   }
-
-  // A speed is shown only for a model that will actually run here — never for red, never a guess
-  // when memory is unknown.
-  const tokPerSec = tier !== "red" && !memoryUnknown(profile) && !m.paramsGuessed ? r.tokPerSec : null;
-
-  // The short label next to the dot. Amber says WHY, so it never contradicts the speed under it:
-  // a brain that's on the processor (wholly or partly) but quick, or one that never writes
-  // (embedding), isn't called slow.
-  const offCard = tier === "amber" && !memoryUnknown(profile) && (r.runMode === "cpu" || r.runMode === "partial");
-  const notSlow = offCard && (fitModelOf(m).kind === "embedding" || (tokPerSec !== null && tokPerSec >= QUICK_TOKPS));
-  if (notSlow) {
-    note =
-      r.runMode === "partial"
-        ? "Bigger than your graphics memory, so part runs on the processor — still quick enough."
-        : fitModelOf(m).kind === "embedding"
-          ? "No graphics card we can use — fine for this helper brain, which doesn't write replies."
-          : "No graphics card we can use, but a small brain like this keeps up fine.";
-  }
-  const label =
-    tier === "green"
-      ? "Runs great here"
-      : tier === "red"
-        ? "Too big for this computer"
-        : memoryUnknown(profile)
-          ? "We couldn't check"
-          : r.runMode === "gpu"
-            ? "Only just fits"
-            : notSlow
-              ? r.runMode === "partial"
-                ? "Partly on your processor"
-                : "Runs on your processor"
-              : "Runs, but slowly";
-  return { modelId: m.id, tier, usable: tier !== "red", label, note, tokPerSec };
+  return { modelId: m.id, tier: f.tier, usable: f.tier !== "red", label: f.label, note: f.note, tokPerSec };
 }
-
 /** Score every candidate model against a machine and return one warm verdict. */
 export function verdict(profile: HardwareProfile, models: VerdictModel[]): Verdict {
   const fits = models.map((m) => fitOne(profile, m));
