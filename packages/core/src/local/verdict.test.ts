@@ -305,7 +305,7 @@ describe("verdict — delegates the math (046)", () => {
         if (["Runs, but slowly", "Fits here"].includes(f.label) && f.tokPerSec !== null) expect(f.tokPerSec, what).toBeLessThan(QUICK);
         if (["Runs on your processor", "Partly on your processor", "Runs great here"].includes(f.label) && f.tokPerSec !== null)
           expect(f.tokPerSec, what).toBeGreaterThanOrEqual(QUICK);
-        if (f.label === "Runs great here") expect(f.note, what).toMatch(/feel quick/);
+        if (f.label === "Runs great here" && f.tokPerSec !== null) expect(f.note, what).toMatch(/feel quick/);
         else expect(f.note, what).not.toMatch(/feel quick/);
         if (f.label === "Only just fits" && f.tokPerSec !== null) expect(/write slowly/.test(f.note), what).toBe(f.tokPerSec < QUICK);
         if (f.tokPerSec !== null && f.tokPerSec >= QUICK - 1.5 && f.tokPerSec < QUICK) nearSlow++;
@@ -325,7 +325,7 @@ describe("verdict — delegates the math (046)", () => {
     ]);
     expect(v.fits[0]!.tier).toBe("green");
     expect(v.fits[0]!.label).toBe("Fits here");
-    expect(v.fits[0]!.note).toBe("Fits on your graphics card — big, so it writes at a steady pace.");
+    expect(v.fits[0]!.note).toBe("Room for it on your graphics card — big, so it writes at a steady pace."); // K4: no "Fits here · … — Fits on…" echo
   });
 
   it("J1: on a base M1 Mac (16 GB) the pick stays the 7B — the speed estimate doesn't move it", () => {
@@ -340,6 +340,34 @@ describe("verdict — delegates the math (046)", () => {
     expect(q7.label).toBe("Fits here"); // …and the words agree with it
   });
 
+  // K2 (Dawid, 2026-10-10): with no fast, capable pick, start with the biggest brain that ISN'T slow.
+  it("K2: the fallback pick prefers the biggest not-slow brain over a bigger slow one", () => {
+    const catalog = JSON.parse(readFileSync(fileURLToPath(new URL("../../../../catalog/models.json", import.meta.url)), "utf8")) as {
+      models: VerdictModel[];
+    };
+    const card3 = verdict(profile({ ramBytes: 16 * GB, cpuCores: 8, bestVramBytes: 3 * GB, gpus: [{ model: "Test GPU 3GB", vramBytes: 3 * GB }] }), catalog.models);
+    expect(card3.canRunGoodOne).toBe(false);
+    expect(card3.recommendedModelId).toBe("qwen2.5:7b"); // "Partly on your processor", ~15 words/s — not the slow 14B
+    expect(card3.fits.find((f) => f.modelId === "qwen2.5:14b")!.label).toBe("Runs, but slowly");
+    expect(card3.headline).toContain("start with Qwen2.5 7B");
+
+    const cpu6 = verdict(profile({ ramBytes: 6 * GB, cpuCores: 8 }), catalog.models);
+    const pick = cpu6.fits.find((f) => f.modelId === cpu6.recommendedModelId)!;
+    expect(pick.tokPerSec!).toBeGreaterThanOrEqual(9.5 / 0.75); // not the 7B at ~3 words/s
+    expect(cpu6.fits.find((f) => f.modelId === "qwen2.5:7b")!.label).toBe("Runs, but slowly");
+
+    // Every runnable brain slow → still the biggest (unchanged rule).
+    const slowBox = verdict(profile({ ramBytes: 16 * GB, cpuCores: 2 }), MODELS.filter((m) => m.params >= 3));
+    expect(slowBox.fits.filter((f) => f.usable).every((f) => f.tokPerSec! < 9.5 / 0.75)).toBe(true);
+    expect(slowBox.recommendedModelId).toBe("qwen2.5:7b");
+  });
+
+  it("K3: an embedding brain on a graphics card isn't promised 'feel quick' — it doesn't write", () => {
+    const v = verdict(profile({ ramBytes: 64 * GB, bestVramBytes: 24 * GB }), [{ id: "nomic-embed-text:latest", label: "x", params: 0.137 }]);
+    expect(v.fits[0]!.tier).toBe("green");
+    expect(v.fits[0]!.note).not.toMatch(/quick/);
+    expect(v.fits[0]!.note).toMatch(/helper brain/);
+  });
   it("J3: a brain that only just fits AND is slow says both", () => {
     const m1 = profile({ ramBytes: 16 * GB, cpuCores: 8, unifiedMemory: true, gpus: [{ model: "Apple M1", vramBytes: null }] });
     const f = verdict(m1, MODELS).fits.find((x) => x.modelId === "qwen2.5:14b")!;

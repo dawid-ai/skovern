@@ -203,6 +203,12 @@ test("E2 + S5: an unknown card still shows a speed; a pulled model we know nothi
   try {
     await expect(row(page, "Qwen2.5 3B").locator(".local-speed")).toHaveText(expectedWords(UNKNOWN_GPU));
     await expect(row(page, "mistral:7b").locator(".local-speed")).toHaveText(/^Writes about \d+ words a second$/);
+    // A big brain that fits an unnamed card but writes under ~10 words a second: still green (the
+    // pick goes by fit), but it reads "Fits here", never "Runs great here" (Dawid, 2026-10-10).
+    const r32 = row(page, "Qwen2.5 32B");
+    await expect(r32.locator(".fit-dot.fit-green")).toBeVisible();
+    await expect(r32.locator(".local-fit")).toHaveText("Fits here");
+    await expect(r32.locator(".local-speed")).toHaveText(expectedWords(UNKNOWN_GPU, "qwen2.5:32b"));
     // S5: no size, no parameter count → a tier, but never a made-up speed (and never NaN/0).
     const mystery = row(page, "mystery:latest");
     await expect(mystery).toBeVisible();

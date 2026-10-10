@@ -84,9 +84,11 @@ function fitOne(profile: HardwareProfile, m: VerdictModel): ModelFit {
     } else if (slow) {
       // Green is "fits with room", so the pick stays a memory judgment; the words just never
       // promise quick (Dawid, 2026-10-10).
-      f = { tier: "green", label: "Fits here", note: `Fits ${where} — big, so it writes at a steady pace.` };
+      f = { tier: "green", label: "Fits here", note: `Room for it ${where} — big, so it writes at a steady pace.` };
     } else if (tokPerSec === null && writes) {
-      f = { tier: "green", label: "Fits here", note: `Fits ${where}. We don't know this brain's size, so we can't say how fast.` };
+      f = { tier: "green", label: "Fits here", note: `Room for it ${where}. We don't know this brain's size, so we can't say how fast.` };
+    } else if (!writes) {
+      f = { tier: "green", label: "Runs great here", note: `Fits ${where} — fine for this helper brain, which doesn't write replies.` };
     } else {
       f = { tier: "green", label: "Runs great here", note: `Fits ${where} — this one will feel quick.` };
     }
@@ -147,16 +149,20 @@ export function verdict(profile: HardwareProfile, models: VerdictModel[]): Verdi
     recommendedModelId = goodGreens[0]!.m.id;
     headline = `Good news — this computer can run a real private brain. Our pick for it: ${goodGreens[0]!.m.label}.`;
   } else {
-    // No fast, capable, gettable option. Steer to the best gettable amber (runs, slowly)
-    // if there is one, and be honest that the cloud brain will feel better.
+    // No fast, capable, gettable option. Steer to the best gettable amber if there is one, and be
+    // honest that the cloud brain will feel better. "Best" = the biggest one that ISN'T slow, so a
+    // 7B at 15 words a second beats a 14B at 7; only when every one is slow, the biggest (Dawid,
+    // 2026-10-10). No speed known (memory unknown) counts as not slow, so all tie on size.
     const usable = gettable
       .filter((x) => x.fit.usable)
       .sort((a, b2) => b2.m.params - a.m.params);
-    if (usable.length > 0) {
-      recommendedModelId = usable[0]!.m.id;
+    const notSlow = usable.filter((x) => x.fit.tokPerSec === null || x.fit.tokPerSec >= QUICK_TOKPS);
+    const start = notSlow[0] ?? usable[0];
+    if (start) {
+      recommendedModelId = start.m.id;
       headline =
         "This computer can run a private brain, but it'll feel slow — the free cloud brain or your subscription will likely serve you better. " +
-        `If you'd still like to try it here, start with ${usable[0]!.m.label}.`;
+        `If you'd still like to try it here, start with ${start.m.label}.`;
     } else {
       headline =
         "This computer can't comfortably run a private brain yet — the free cloud brain or your subscription will serve you much better.";
