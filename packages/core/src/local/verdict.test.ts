@@ -302,12 +302,12 @@ describe("verdict — delegates the math (046)", () => {
     for (const p of machines) {
       for (const f of verdict(p, catalog.models).fits) {
         const what = `${f.modelId} ${f.label} ${f.tokPerSec}`;
-        if (f.tier === "green" && f.tokPerSec !== null) expect(f.tokPerSec, what).toBeGreaterThanOrEqual(QUICK);
-        if (f.label === "Runs, but slowly" && f.tokPerSec !== null) expect(f.tokPerSec, what).toBeLessThan(QUICK);
+        if (["Runs, but slowly", "Fits here"].includes(f.label) && f.tokPerSec !== null) expect(f.tokPerSec, what).toBeLessThan(QUICK);
         if (["Runs on your processor", "Partly on your processor", "Runs great here"].includes(f.label) && f.tokPerSec !== null)
           expect(f.tokPerSec, what).toBeGreaterThanOrEqual(QUICK);
-        if (f.tier === "green") expect(f.note, what).toMatch(/quick/);
-        else expect(f.note, what).not.toMatch(/quick\.$|feel quick/);
+        if (f.label === "Runs great here") expect(f.note, what).toMatch(/feel quick/);
+        else expect(f.note, what).not.toMatch(/feel quick/);
+        if (f.label === "Only just fits" && f.tokPerSec !== null) expect(/write slowly/.test(f.note), what).toBe(f.tokPerSec < QUICK);
         if (f.tokPerSec !== null && f.tokPerSec >= QUICK - 1.5 && f.tokPerSec < QUICK) nearSlow++;
         if (f.tokPerSec !== null && f.tokPerSec >= QUICK && f.tokPerSec < QUICK + 1.5) nearQuick++;
       }
@@ -317,20 +317,46 @@ describe("verdict — delegates the math (046)", () => {
     expect(nearQuick).toBeGreaterThan(0);
   });
 
-  it("H1: the 32B on an unknown 24 GB card fits but writes slowly → amber, not 'feel quick'", () => {
+  // H1 (Dawid, 2026-10-10, "words only, picks by fit"): a big brain that fits stays green — the pick
+  // is a memory judgment, never swung by a speed estimate — but its words never promise quick.
+  it("H1: the 32B on an unknown 24 GB card fits but writes slowly → green 'Fits here', not 'feel quick'", () => {
     const v = verdict(profile({ ramBytes: 64 * GB, cpuCores: 16, bestVramBytes: 24 * GB, gpus: [{ model: "Test GPU 24GB", vramBytes: 24 * GB }] }), [
       { id: "qwen2.5:32b", label: "Qwen 32B", params: 32, sizeBytes: 19_900_000_000, quant: "Q4_K_M" },
     ]);
-    expect(v.fits[0]!.tier).toBe("amber");
-    expect(v.fits[0]!.label).toBe("Runs, but slowly");
-    expect(v.fits[0]!.note).toBe("Fits on your graphics card, but it's a big one — it'll write slowly.");
+    expect(v.fits[0]!.tier).toBe("green");
+    expect(v.fits[0]!.label).toBe("Fits here");
+    expect(v.fits[0]!.note).toBe("Fits on your graphics card — big, so it writes at a steady pace.");
   });
 
-  it("H5: a brain we know nothing about isn't called slow on a guess", () => {
-    const v = verdict(profile({ ramBytes: 16 * GB }), [{ id: "mystery:latest", label: "x", params: 3, paramsGuessed: true }]);
-    expect(v.fits[0]!.tokPerSec).toBeNull();
-    expect(v.fits[0]!.label).toBe("Runs on your processor");
-    expect(v.fits[0]!.note).not.toMatch(/slow/);
+  it("J1: on a base M1 Mac (16 GB) the pick stays the 7B — the speed estimate doesn't move it", () => {
+    const catalog = JSON.parse(readFileSync(fileURLToPath(new URL("../../../../catalog/models.json", import.meta.url)), "utf8")) as {
+      models: VerdictModel[];
+    };
+    const m1 = profile({ ramBytes: 16 * GB, cpuCores: 8, unifiedMemory: true, gpus: [{ model: "Apple M1", vramBytes: null }] });
+    const v = verdict(m1, catalog.models);
+    expect(v.recommendedModelId).toBe("qwen2.5:7b");
+    const q7 = v.fits.find((f) => f.modelId === "qwen2.5:7b")!;
+    expect(q7.tokPerSec!).toBeLessThan(9.5 / 0.75); // an honest "about 8 words a second" on screen…
+    expect(q7.label).toBe("Fits here"); // …and the words agree with it
+  });
+
+  it("J3: a brain that only just fits AND is slow says both", () => {
+    const m1 = profile({ ramBytes: 16 * GB, cpuCores: 8, unifiedMemory: true, gpus: [{ model: "Apple M1", vramBytes: null }] });
+    const f = verdict(m1, MODELS).fits.find((x) => x.modelId === "qwen2.5:14b")!;
+    expect(f.label).toBe("Only just fits");
+    expect(f.note).toBe("Uses nearly all of this computer's memory — it may crowd your other apps, and it'll write slowly.");
+  });
+
+  it("H5/J2: a brain we know nothing about is never called slow or quick on a guess", () => {
+    const mystery = { id: "mystery:latest", label: "x", params: 3, paramsGuessed: true };
+    const cpu = verdict(profile({ ramBytes: 16 * GB }), [mystery]).fits[0]!;
+    expect(cpu.tokPerSec).toBeNull();
+    expect(cpu.label).toBe("Runs on your processor");
+    expect(cpu.note).not.toMatch(/slow|quick/);
+    const gpu = verdict(profile({ ramBytes: 64 * GB, bestVramBytes: 24 * GB }), [mystery]).fits[0]!;
+    expect(gpu.tier).toBe("green");
+    expect(gpu.label).toBe("Fits here");
+    expect(gpu.note).not.toMatch(/slow|quick/);
   });
   it("an embedding model the user pulled gets a tier but never a writing speed", () => {
     const v = verdict(profile({ ramBytes: 64 * GB, bestVramBytes: 24 * GB }), [{ id: "nomic-embed-text:latest", label: "x", params: 0.137 }]);

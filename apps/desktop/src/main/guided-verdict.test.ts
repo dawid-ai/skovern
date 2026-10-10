@@ -22,11 +22,6 @@ const CATALOG = [
 function profile(p: Partial<HardwareProfile>): HardwareProfile {
   return { ramBytes: 64 * GB, cpuCores: 16, gpus: [], bestVramBytes: null, unifiedMemory: false, diskFreeBytes: 500 * GB, notes: [], ...p };
 }
-// 046 (shared surface, flagged): green now also needs ~10 words a second (Dawid, 2026-10-10). On an
-// UNNAMED 24 GB card the rough speed estimate puts a 22B/32B under that line (amber), so these tests
-// name a real 24 GB card. The intent is unchanged: a bigger Ollama model really is green here, and
-// only the built-in exclusion keeps it out of the pick.
-const GPU24 = { bestVramBytes: 24 * GB, gpus: [{ model: "NVIDIA GeForce RTX 4090", vramBytes: 24 * GB }] };
 
 describe("guided verdict — built-in only (flip-kill, loop 037)", () => {
   it("U1: the candidate set excludes every non-built-in (Ollama-only) model — the flip can't happen", () => {
@@ -39,7 +34,7 @@ describe("guided verdict — built-in only (flip-kill, loop 037)", () => {
   });
 
   it("U2: even though a bigger Ollama model scores green on 24 GB, the pick is ALWAYS a built-in", () => {
-    const gpu24 = profile(GPU24);
+    const gpu24 = profile({ bestVramBytes: 24 * GB });
     // Sanity: the 22B Ollama-only model really would be green+capable here (so the exclusion,
     // not a fit miss, is what keeps it out of the pick).
     const withOllama = verdict(gpu24, [...builtInCandidates(CATALOG), { id: "gemma2:22b", label: "Gemma2 22B", params: 22, fetchable: true }]);
@@ -69,7 +64,7 @@ describe("display tiers — Ollama rows get their REAL fit, not a default amber 
   });
 
   it("U-new-2: on a 24 GB GPU a small Ollama model scores GREEN and a huge one amber/red — REAL per-model fit — while the pick stays a built-in", () => {
-    const gpu24 = profile(GPU24);
+    const gpu24 = profile({ bestVramBytes: 24 * GB });
     // A small Ollama-only model alongside the huge ones: the display verdict must judge each on
     // its own merits, not blanket-amber every non-built-in.
     // 046: a genuinely huge one (70B ≈ 41 GB) joins, because with real KV math a Q4 32B (~20 GB)

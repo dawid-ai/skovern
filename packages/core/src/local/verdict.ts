@@ -5,7 +5,8 @@ import type { FitTier, HardwareProfile, ModelFit, Verdict, VerdictModel } from "
 // deterministic (no I/O). The MATH (memory need, share of the machine, words-per-second) lives in
 // @dawid-ai/model-fit; this file keeps Skovern's own rules and its florist words. It judges
 // USABLE, not merely "runs":
-//   - green  = a GPU we can use holds the whole model with room to spare AND it writes at least\n//              ~10 words a second → fast.
+//   - green  = a GPU we can use holds the whole model with room to spare. Its label says whether
+//              it's also quick ("Runs great here") or big and steady ("Fits here").
 //   - amber  = it runs, but slowly (CPU-only, partly offloaded to RAM) or only just fits.
 //   - red    = it won't fit at all, or would crawl on the processor — no false hope.
 // A recommendation, never a gate: the UI still lets the user run an amber pick, with the
@@ -25,9 +26,10 @@ const CPU_SLOW_PARAMS = 7;
 const GOOD_PARAMS = 3;
 // The context window our runtimes allocate (the catalog's `contextSize`).
 const CONTEXT = 4096;
-// Below this a brain is "slow", wherever it runs (Dawid, 2026-10-07 and -10). It is exactly the
-// speed the app shows as "about 10 words a second" (speed-words.ts: 0.75 words per token, rounded),
-// so "about 9" always reads slow and "about 10" never does.
+// Below this a brain's WORDS call it slow or steady, wherever it runs (Dawid, 2026-10-07 and -10).
+// It never changes a tier: speeds are estimates and mustn't swing the pick. It is exactly the speed
+// the app shows as "about 10 words a second" (speed-words.ts: 0.75 words per token, rounded), so
+// "about 9" always reads slow and "about 10" never does.
 const QUICK_TOKPS = 9.5 / 0.75;
 
 /** The model as the fit math sees it: its own catalog numbers, plus the architecture the shared
@@ -77,10 +79,14 @@ function fitOne(profile: HardwareProfile, m: VerdictModel): ModelFit {
     // A Mac has no separate graphics card — its brain runs in the computer's shared memory.
     const where = profile.unifiedMemory ? "in this computer's memory" : "on your graphics card";
     if (r.level === "marginal") {
-      f = amber("Only just fits", `Uses nearly all of ${profile.unifiedMemory ? "this computer's memory" : "your graphics card's memory"} — it may crowd your other apps.`);
+      const mem = profile.unifiedMemory ? "this computer's memory" : "your graphics card's memory";
+      f = amber("Only just fits", `Uses nearly all of ${mem} — it may crowd your other apps${slow ? ", and it'll write slowly" : ""}.`);
     } else if (slow) {
-      // Fits, but a big brain still writes slowly — green promises quick, so it's amber (Dawid, 2026-10-10).
-      f = amber("Runs, but slowly", `Fits ${where}, but it's a big one — it'll write slowly.`);
+      // Green is "fits with room", so the pick stays a memory judgment; the words just never
+      // promise quick (Dawid, 2026-10-10).
+      f = { tier: "green", label: "Fits here", note: `Fits ${where} — big, so it writes at a steady pace.` };
+    } else if (tokPerSec === null && writes) {
+      f = { tier: "green", label: "Fits here", note: `Fits ${where}. We don't know this brain's size, so we can't say how fast.` };
     } else {
       f = { tier: "green", label: "Runs great here", note: `Fits ${where} — this one will feel quick.` };
     }
