@@ -352,14 +352,51 @@ describe("verdict — delegates the math (046)", () => {
     expect(card3.headline).toContain("start with Qwen2.5 7B");
 
     const cpu6 = verdict(profile({ ramBytes: 6 * GB, cpuCores: 8 }), catalog.models);
-    const pick = cpu6.fits.find((f) => f.modelId === cpu6.recommendedModelId)!;
-    expect(pick.tokPerSec!).toBeGreaterThanOrEqual(9.5 / 0.75); // not the 7B at ~3 words/s
+    expect(cpu6.recommendedModelId).toBe("qwen2.5:3b"); // not the 7B at ~3 words/s (L1 below)
     expect(cpu6.fits.find((f) => f.modelId === "qwen2.5:7b")!.label).toBe("Runs, but slowly");
 
-    // Every runnable brain slow → still the biggest (unchanged rule).
+    // Every capable brain slow → the fastest of them, not the biggest (L1).
     const slowBox = verdict(profile({ ramBytes: 16 * GB, cpuCores: 2 }), MODELS.filter((m) => m.params >= 3));
     expect(slowBox.fits.filter((f) => f.usable).every((f) => f.tokPerSec! < 9.5 / 0.75)).toBe(true);
-    expect(slowBox.recommendedModelId).toBe("qwen2.5:7b");
+    expect(slowBox.recommendedModelId).toBe("qwen2.5:3b");
+  });
+
+  // L1 (2026-10-20): the not-slow preference applies only to capable brains (3B and up). A CPU-only
+  // box used to drop to the quick-but-weak 1.5B; it now gets the fastest capable brain.
+  it("L1: a big CPU-only box picks the 3B — never the 1.5B for speed, never the 7B at ~3 words/s", () => {
+    const catalog = JSON.parse(readFileSync(fileURLToPath(new URL("../../../../catalog/models.json", import.meta.url)), "utf8")) as {
+      models: VerdictModel[];
+    };
+    for (const ramGb of [3, 6, 16, 64]) {
+      const v = verdict(profile({ ramBytes: ramGb * GB, cpuCores: 32 }), catalog.models);
+      expect(v.canRunGoodOne, `${ramGb} GB`).toBe(false);
+      expect(v.recommendedModelId, `${ramGb} GB`).toBe("qwen2.5:3b");
+      expect(v.headline, `${ramGb} GB`).toContain("start with Qwen2.5 3B");
+    }
+    // A 3 GB card + 16 GB keeps the K2 win: the 7B at ~10 words/s beats the slow 14B.
+    const card3 = verdict(profile({ ramBytes: 16 * GB, bestVramBytes: 3 * GB, gpus: [{ model: "Test GPU 3GB", vramBytes: 3 * GB }] }), catalog.models);
+    expect(card3.recommendedModelId).toBe("qwen2.5:7b");
+    // Only when no capable brain runs at all, the biggest that does.
+    const small = verdict(profile({ ramBytes: 2 * GB }), [MODELS[0]!, { id: "qwen2.5:1.5b", label: "Qwen 1.5B", params: 1.5 }, MODELS[1]!]);
+    expect(small.fits.find((f) => f.modelId === "qwen2.5:3b")!.usable).toBe(false);
+    expect(small.recommendedModelId).toBe("qwen2.5:1.5b");
+  });
+
+  // L4: the fallback never picks a brain that doesn't write, and a brain with no speed (size
+  // unknown) isn't treated as quick when memory IS known.
+  it("L4: the fallback skips an embedding brain and doesn't promote a no-speed guess over a real speed", () => {
+    const cpu = profile({ ramBytes: 16 * GB, cpuCores: 8 });
+    const embed = verdict(cpu, [MODELS[1]!, { id: "big-embed:latest", label: "Embed", params: 5 }]);
+    expect(embed.fits.find((f) => f.modelId === "big-embed:latest")!.usable).toBe(true);
+    expect(embed.recommendedModelId).toBe("qwen2.5:3b");
+    // With memory unknown no brain has a speed, so size alone would make the embedding brain win.
+    expect(verdict(profile({ ramBytes: null }), [MODELS[1]!, { id: "big-embed:latest", label: "Embed", params: 5 }]).recommendedModelId).toBe("qwen2.5:3b");
+    const guess = verdict(cpu, [MODELS[1]!, { id: "mystery:latest", label: "Mystery", params: 6, paramsGuessed: true }]);
+    expect(guess.fits.find((f) => f.modelId === "mystery:latest")!.tokPerSec).toBeNull();
+    expect(guess.recommendedModelId).toBe("qwen2.5:3b");
+    // With memory unknown, nothing has a speed: all tie on size, biggest capable wins.
+    const unknown = verdict(profile({ ramBytes: null }), MODELS);
+    expect(unknown.recommendedModelId).toBe("qwen2.5:14b");
   });
 
   it("K3: an embedding brain on a graphics card isn't promised 'feel quick' — it doesn't write", () => {

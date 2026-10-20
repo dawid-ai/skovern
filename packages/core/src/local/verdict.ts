@@ -27,7 +27,8 @@ const GOOD_PARAMS = 3;
 // The context window our runtimes allocate (the catalog's `contextSize`).
 const CONTEXT = 4096;
 // Below this a brain's WORDS call it slow or steady, wherever it runs (Dawid, 2026-10-07 and -10).
-// It never changes a tier: speeds are estimates and mustn't swing the pick. It is exactly the speed
+// It never changes a tier, and it never swings a good pick (green, GOOD_PARAMS or more): speeds are
+// estimates. Only the fallback pick reads it, to prefer a capable brain that isn't slow. It is exactly the speed
 // the app shows as "about 10 words a second" (speed-words.ts: 0.75 words per token, rounded), so
 // "about 9" always reads slow and "about 10" never does.
 const QUICK_TOKPS = 9.5 / 0.75;
@@ -149,15 +150,23 @@ export function verdict(profile: HardwareProfile, models: VerdictModel[]): Verdi
     recommendedModelId = goodGreens[0]!.m.id;
     headline = `Good news — this computer can run a real private brain. Our pick for it: ${goodGreens[0]!.m.label}.`;
   } else {
-    // No fast, capable, gettable option. Steer to the best gettable amber if there is one, and be
-    // honest that the cloud brain will feel better. "Best" = the biggest one that ISN'T slow, so a
-    // 7B at 15 words a second beats a 14B at 7; only when every one is slow, the biggest (Dawid,
-    // 2026-10-10). No speed known (memory unknown) counts as not slow, so all tie on size.
+    // No fast, capable, gettable option. Steer to the best gettable brain that runs, and be honest
+    // that the cloud brain will feel better. A brain that doesn't write (embedding) is never the
+    // pick. "Best" = the biggest CAPABLE one (GOOD_PARAMS or more) that isn't slow, so a 7B at 15
+    // words a second beats a 14B at 7 (Dawid, 2026-10-10). When every capable one is slow, the
+    // fastest of them, so a CPU-only box gets the 3B at ~7 words a second, not the 7B at ~3, and
+    // never drops below 3B for speed (L1, 2026-10-20). Only when no capable brain runs, the
+    // biggest that does. No speed counts as not slow only when memory is unknown (all tie on
+    // size); a guessed-size brain with no speed isn't promised quick and ranks last on speed.
+    const unknownMem = memoryUnknown(profile);
+    const notSlow = (x: (typeof scored)[number]) =>
+      x.fit.tokPerSec === null ? unknownMem : x.fit.tokPerSec >= QUICK_TOKPS;
     const usable = gettable
-      .filter((x) => x.fit.usable)
+      .filter((x) => x.fit.usable && fitModelOf(x.m).kind !== "embedding")
       .sort((a, b2) => b2.m.params - a.m.params);
-    const notSlow = usable.filter((x) => x.fit.tokPerSec === null || x.fit.tokPerSec >= QUICK_TOKPS);
-    const start = notSlow[0] ?? usable[0];
+    const capable = usable.filter((x) => x.m.params >= GOOD_PARAMS);
+    const fastest = [...capable].sort((a, b2) => (b2.fit.tokPerSec ?? -1) - (a.fit.tokPerSec ?? -1))[0];
+    const start = capable.find(notSlow) ?? fastest ?? usable[0];
     if (start) {
       recommendedModelId = start.m.id;
       headline =
