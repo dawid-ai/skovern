@@ -166,11 +166,21 @@ export function verdict(profile: HardwareProfile, models: VerdictModel[]): Verdi
       .sort((a, b2) => b2.m.params - a.m.params);
     const capable = usable.filter((x) => x.m.params >= GOOD_PARAMS);
     const fastest = [...capable].sort((a, b2) => (b2.fit.tokPerSec ?? -1) - (a.fit.tokPerSec ?? -1))[0];
-    const start = capable.find(notSlow) ?? fastest ?? usable[0];
+    // N7 (2026-10-21): with memory unknown nothing has a speed, so "biggest" would hand an unread
+    // machine a 9 GB brain. Start it on the smallest capable brain instead.
+    const start = unknownMem
+      ? (capable[capable.length - 1] ?? usable[0])
+      : (capable.find(notSlow) ?? fastest ?? usable[0]);
     if (start) {
       recommendedModelId = start.m.id;
+      // L2 (2026-10-21): the headline says "slow" only when the pick's own row does.
+      const lead = unknownMem
+        ? "We couldn't check this computer's memory, so we'd start small"
+        : notSlow(start)
+          ? "This computer can run a smaller private brain"
+          : "This computer can run a private brain, but it'll feel slow";
       headline =
-        "This computer can run a private brain, but it'll feel slow — the free cloud brain or your subscription will likely serve you better. " +
+        `${lead} — the free cloud brain or your subscription will likely serve you better. ` +
         `If you'd still like to try it here, start with ${start.m.label}.`;
     } else {
       headline =

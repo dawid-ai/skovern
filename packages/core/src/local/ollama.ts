@@ -241,9 +241,10 @@ export function ollamaEngine(opts: OllamaOptions): LocalEngine {
         const m = (raw ?? {}) as Record<string, unknown>;
         const id = typeof m["name"] === "string" ? m["name"] : typeof m["model"] === "string" ? (m["model"] as string) : "";
         const details = (m["details"] ?? {}) as Record<string, unknown>;
-        // A size we can't trust (negative, zero, NaN, Infinity) is treated as unknown — the fit math
-        // would otherwise score it as tiny and promise a fast run (046 security hardening).
-        const sizeBytes = typeof m["size"] === "number" && Number.isFinite(m["size"]) && m["size"] > 0 ? m["size"] : undefined;
+        // A size we can't trust (negative, NaN, Infinity, or smaller than any real model file) is
+        // treated as unknown — the fit math would otherwise score it as tiny and promise a fast run
+        // (046 security hardening).
+        const sizeBytes = typeof m["size"] === "number" && Number.isFinite(m["size"]) && m["size"] >= MIN_MODEL_BYTES ? m["size"] : undefined;
         const quant = typeof details["quantization_level"] === "string" ? (details["quantization_level"] as string) : undefined;
         const paramStr = typeof details["parameter_size"] === "string" ? (details["parameter_size"] as string) : undefined;
         const params = paramStr ? parseParamSize(paramStr) : undefined;
@@ -448,12 +449,15 @@ function assertLineCap(buffer: string, cap: number, reason: string): void {
   }
 }
 
-// "3.2B", "1.5B", "500M" → billions of params. Best-effort; undefined if unparseable.
+// The smallest real model files (tiny embedding brains) are tens of MB; anything under this is junk.
+const MIN_MODEL_BYTES = 10 * 1024 * 1024;
+
+// "3.2B", "1.5B", "500M" → billions of params. Best-effort; undefined if unparseable or zero.
 function parseParamSize(s: string): number | undefined {
   const match = /([\d.]+)\s*([bBmM])/.exec(s.trim());
   if (!match) return undefined;
   const n = Number(match[1]);
-  if (!Number.isFinite(n)) return undefined;
+  if (!Number.isFinite(n) || n <= 0) return undefined;
   return match[2]!.toLowerCase() === "m" ? n / 1000 : n;
 }
 

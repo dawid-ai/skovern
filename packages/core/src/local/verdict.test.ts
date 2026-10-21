@@ -394,9 +394,30 @@ describe("verdict — delegates the math (046)", () => {
     const guess = verdict(cpu, [MODELS[1]!, { id: "mystery:latest", label: "Mystery", params: 6, paramsGuessed: true }]);
     expect(guess.fits.find((f) => f.modelId === "mystery:latest")!.tokPerSec).toBeNull();
     expect(guess.recommendedModelId).toBe("qwen2.5:3b");
-    // With memory unknown, nothing has a speed: all tie on size, biggest capable wins.
+  });
+
+  // N7 (2026-10-21): memory we couldn't read → start small, not with a 9 GB download.
+  it("N7: unknown memory starts on the smallest capable brain and says why, not 'slow'", () => {
     const unknown = verdict(profile({ ramBytes: null }), MODELS);
-    expect(unknown.recommendedModelId).toBe("qwen2.5:14b");
+    expect(unknown.recommendedModelId).toBe("qwen2.5:3b");
+    expect(unknown.headline).toContain("couldn't check this computer's memory");
+    expect(unknown.headline).not.toMatch(/slow/);
+  });
+
+  // L2 (2026-10-21): the fallback headline calls the pick slow only when its own row does.
+  it("L2: the fallback headline agrees with the pick's own speed", () => {
+    const catalog = JSON.parse(readFileSync(fileURLToPath(new URL("../../../../catalog/models.json", import.meta.url)), "utf8")) as {
+      models: VerdictModel[];
+    };
+    const quick = verdict(profile({ ramBytes: 16 * GB, bestVramBytes: 3 * GB, gpus: [{ model: "Test GPU 3GB", vramBytes: 3 * GB }] }), catalog.models);
+    const qPick = quick.fits.find((f) => f.modelId === quick.recommendedModelId)!;
+    expect(qPick.tokPerSec!).toBeGreaterThanOrEqual(9.5 / 0.75);
+    expect(quick.headline).toMatch(/^This computer can run a smaller private brain/);
+    expect(quick.headline).not.toMatch(/slow/);
+    const slow = verdict(profile({ ramBytes: 16 * GB }), catalog.models);
+    const sPick = slow.fits.find((f) => f.modelId === slow.recommendedModelId)!;
+    expect(sPick.tokPerSec!).toBeLessThan(9.5 / 0.75);
+    expect(slow.headline).toMatch(/feel slow/);
   });
 
   it("K3: an embedding brain on a graphics card isn't promised 'feel quick' — it doesn't write", () => {

@@ -8,7 +8,7 @@
 // Exit code 1 on any failure. Needs `gh` (authenticated, GH_TOKEN in CI), `tar`, and network.
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -22,6 +22,17 @@ const FORBIDDEN = [/\brequire\s*\(/, /\bimport\s*\(/, /\bprocess\b/, /\bfetch\b/
 const fail = (msg) => {
   throw new Error(msg);
 };
+
+// On Windows, Git Bash's tar can come first on PATH and reads "C:" as a remote host; use the
+// system tar there (046 checker N4).
+const TAR = process.platform === "win32" ? path.join(process.env.SystemRoot ?? "C:\Windows", "System32", "tar.exe") : "tar";
+
+// Every .js file under a dir, at any depth (046 checker N6).
+const jsFiles = (root, rel = "") =>
+  readdirSync(path.join(root, rel)).flatMap((f) => {
+    const r = path.join(rel, f);
+    return statSync(path.join(root, r)).isDirectory() ? jsFiles(root, r) : /\.[cm]?js$/.test(f) ? [r] : [];
+  });
 
 const dir = mkdtempSync(path.join(tmpdir(), "model-fit-verify-"));
 try {
@@ -52,15 +63,25 @@ try {
     fail(`provenance does not verify for ${REPO} / publish.yml / v${version}:\n${e.stderr?.toString() ?? e.message}`);
   }
 
-  execFileSync("tar", ["-xzf", tgz, "-C", dir]);
-  const src = path.join(dir, "package", "dist", "src");
-  const files = readdirSync(src).filter((f) => f.endsWith(".js"));
-  if (files.length === 0) fail("no shipped JavaScript found in dist/src");
+  execFileSync(TAR, ["-xzf", tgz, "-C", dir]);
+  const root = path.join(dir, "package");
+  const files = jsFiles(root).filter((f) => !f.startsWith("node_modules"));
+  if (files.length === 0) fail("no shipped JavaScript found");
   for (const f of files) {
-    const code = readFileSync(path.join(src, f), "utf8");
-    for (const re of FORBIDDEN) if (re.test(code)) fail(`dist/src/${f} matches ${re} — the module must stay pure`);
+    const code = readFileSync(path.join(root, f), "utf8");
+    for (const re of FORBIDDEN) if (re.test(code)) fail(`${f} matches ${re} — the module must stay pure`);
   }
-  const pkg = JSON.parse(readFileSync(path.join(dir, "package", "package.json"), "utf8"));
+  const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+  // Every code entry point must resolve inside dist/src, so a repointed main can't dodge the scan.
+  // Data exports (data/*.json) are fine anywhere.
+  const entries = [pkg.main, pkg.module, ...JSON.stringify(pkg.exports ?? {}).match(/"\.\/[^"]+"/g) ?? []]
+    .filter(Boolean)
+    .map((e) => e.replace(/"/g, ""));
+  for (const e of entries) {
+    if (!/\.[cm]?js$/.test(e)) continue;
+    const rel = path.relative(path.join(root, "dist", "src"), path.join(root, e));
+    if (rel.startsWith("..") || path.isAbsolute(rel)) fail(`entry point ${e} is outside dist/src`);
+  }
   for (const s of ["preinstall", "install", "postinstall", "prepare"]) if (pkg.scripts?.[s]) fail(`ships a "${s}" script`);
   if (Object.keys(pkg.dependencies ?? {}).length > 0) fail("ships runtime dependencies");
 
