@@ -412,8 +412,14 @@ describe("verdict — delegates the math (046)", () => {
     const quick = verdict(profile({ ramBytes: 16 * GB, bestVramBytes: 3 * GB, gpus: [{ model: "Test GPU 3GB", vramBytes: 3 * GB }] }), catalog.models);
     const qPick = quick.fits.find((f) => f.modelId === quick.recommendedModelId)!;
     expect(qPick.tokPerSec!).toBeGreaterThanOrEqual(9.5 / 0.75);
-    expect(quick.headline).toMatch(/^This computer can run a smaller private brain/);
-    expect(quick.headline).not.toMatch(/slow/);
+    // A 3B-or-bigger pick that isn't slow is a tight fit, not "smaller" (checker iteration 9).
+    expect(quick.headline).toMatch(/^This computer can run a private brain, but it's a tight fit/);
+    expect(quick.headline).not.toMatch(/slow|smaller/);
+    // Only a pick under 3B is "smaller".
+    const tiny = verdict(profile({ ramBytes: 2 * GB }), catalog.models);
+    const tPick = catalog.models.find((m) => m.id === tiny.recommendedModelId)!;
+    expect(tPick.params).toBeLessThan(3);
+    expect(tiny.headline).toMatch(/^This computer can run a smaller private brain/);
     const slow = verdict(profile({ ramBytes: 16 * GB }), catalog.models);
     const sPick = slow.fits.find((f) => f.modelId === slow.recommendedModelId)!;
     expect(sPick.tokPerSec!).toBeLessThan(9.5 / 0.75);

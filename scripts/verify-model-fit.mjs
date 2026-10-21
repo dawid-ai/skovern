@@ -16,7 +16,22 @@ const PKG = "@dawid-ai/model-fit";
 const REPO = "dawid-ai/model-fit";
 const WORKFLOW = `${REPO}/.github/workflows/publish.yml`;
 // Anything that reaches outside pure math. A string in a comment is a false alarm worth having.
-const FORBIDDEN = [/\brequire\s*\(/, /\bimport\s*\(/, /\bprocess\b/, /\bfetch\b/, /\beval\s*\(/, /\bFunction\s*\(/, /\bglobalThis\b/, /XMLHttpRequest/, /WebSocket/, /child_process/, /node:/];
+const FORBIDDEN = [
+  /\brequire\s*\(/,
+  /\bimport\s*\(/,
+  /\bprocess\b/,
+  /\bfetch\b/,
+  /\beval\s*\(/,
+  /\bFunction\s*\(/,
+  /\.constructor\s*\(/,
+  /\bglobalThis\b/,
+  /XMLHttpRequest/,
+  /WebSocket/,
+  /child_process/,
+  /node:/,
+  // A bare import or re-export of a Node built-in (`from "fs"`), 046 checker iteration 9 N8.
+  /\bfrom\s*["'](fs|fs\/promises|net|tls|dgram|dns|http|https|http2|os|path|child_process|worker_threads|cluster|vm|module|inspector)["']/,
+];
 
 // Throw rather than process.exit(): exiting with a fetch socket still open crashes Node on Windows.
 const fail = (msg) => {
@@ -25,7 +40,7 @@ const fail = (msg) => {
 
 // On Windows, Git Bash's tar can come first on PATH and reads "C:" as a remote host; use the
 // system tar there (046 checker N4).
-const TAR = process.platform === "win32" ? path.join(process.env.SystemRoot ?? "C:\Windows", "System32", "tar.exe") : "tar";
+const TAR = process.platform === "win32" ? path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : "tar";
 
 // Every .js file under a dir, at any depth (046 checker N6).
 const jsFiles = (root, rel = "") =>
@@ -65,8 +80,18 @@ try {
 
   execFileSync(TAR, ["-xzf", tgz, "-C", dir]);
   const root = path.join(dir, "package");
-  const files = jsFiles(root).filter((f) => !f.startsWith("node_modules"));
+  const files = jsFiles(root);
   if (files.length === 0) fail("no shipped JavaScript found");
+  // No bundled dependencies and no native code anywhere in the tarball (046 checker iteration 9).
+  const everything = (rel = "") =>
+    readdirSync(path.join(root, rel)).flatMap((f) => {
+      const r = path.join(rel, f);
+      return statSync(path.join(root, r)).isDirectory() ? [r, ...everything(r)] : [r];
+    });
+  for (const f of everything()) {
+    if (f.split(/[\\/]/).includes("node_modules")) fail(`ships ${f}`);
+    if (/\.(node|wasm)$/.test(f)) fail(`ships native code (${f})`);
+  }
   for (const f of files) {
     const code = readFileSync(path.join(root, f), "utf8");
     for (const re of FORBIDDEN) if (re.test(code)) fail(`${f} matches ${re} — the module must stay pure`);
@@ -77,8 +102,12 @@ try {
   const entries = [pkg.main, pkg.module, ...JSON.stringify(pkg.exports ?? {}).match(/"\.\/[^"]+"/g) ?? []]
     .filter(Boolean)
     .map((e) => e.replace(/"/g, ""));
+  if (pkg.bin) fail("ships a bin script");
+  if (pkg.bundleDependencies || pkg.bundledDependencies) fail("bundles dependencies");
   for (const e of entries) {
-    if (!/\.[cm]?js$/.test(e)) continue;
+    // Data and type files may sit anywhere; every other entry point must be JavaScript.
+    if (/\.(json|d\.ts)$/.test(e)) continue;
+    if (!/\.[cm]?js$/.test(e)) fail(`entry point ${e} isn't a .js file`);
     const rel = path.relative(path.join(root, "dist", "src"), path.join(root, e));
     if (rel.startsWith("..") || path.isAbsolute(rel)) fail(`entry point ${e} is outside dist/src`);
   }

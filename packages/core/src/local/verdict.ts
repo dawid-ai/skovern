@@ -177,7 +177,9 @@ export function verdict(profile: HardwareProfile, models: VerdictModel[]): Verdi
       const lead = unknownMem
         ? "We couldn't check this computer's memory, so we'd start small"
         : notSlow(start)
-          ? "This computer can run a smaller private brain"
+          ? start.m.params >= GOOD_PARAMS
+            ? "This computer can run a private brain, but it's a tight fit"
+            : "This computer can run a smaller private brain"
           : "This computer can run a private brain, but it'll feel slow";
       headline =
         `${lead} — the free cloud brain or your subscription will likely serve you better. ` +
