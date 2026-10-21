@@ -54,6 +54,8 @@ export function ollamaDist(): OllamaDist | null {
       filename: "ollama-test.zip",
     };
   }
+  // Unpackaged seam: "off" = no helper build for this computer (keeps the e2e machine-independent).
+  if (!app.isPackaged && process.env["SKOVERN_OLLAMA_DIST"] === "off") return null;
   return PINS[`${process.platform}-${process.arch}`] ?? null;
 }
 
@@ -62,6 +64,13 @@ export function ollamaDist(): OllamaDist | null {
 function distFetch(): typeof fetch {
   const override = !app.isPackaged ? process.env["SKOVERN_OLLAMA_DIST_URL"] : undefined;
   return override ? (((_: unknown, init?: RequestInit) => fetch(override, init)) as typeof fetch) : fetch;
+}
+
+/** Unpackaged test seam: `SKOVERN_FREE_DISK_BYTES` pins the free-space probe for the set-up's disk
+ *  check, so the e2e doesn't depend on the runner's disk. Undefined (the real probe) otherwise. */
+export function freeDiskSeam(): (() => Promise<number>) | undefined {
+  const n = !app.isPackaged ? Number(process.env["SKOVERN_FREE_DISK_BYTES"]) : NaN;
+  return Number.isFinite(n) && n >= 0 ? async () => n : undefined;
 }
 
 /** Where Skovern keeps the helper: `<userData>/ollama/<version>/`. App-owned, never user input. */

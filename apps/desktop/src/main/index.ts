@@ -29,7 +29,7 @@ import { runPlugin, sandboxCheck } from "./plugin-host.js";
 import { claudeCliProvider } from "./claude-cli.js";
 import { brainSwitchPlan } from "./brain-switch.js";
 import { classifyAddress, connectProbe, deleteLocalModel, disposeLocal, downloadedEmbeddedModelId, downloadedModelsView, embeddedFilenameFor, embeddedFilenames, engineForModel, freeMemory, freeOutgoingBrain, isEmbeddedModel, localModels, localStatus, makeEngine, modelLoaded, ollamaPathCatalogModel, openModelsFolder, pullModel, warmEmbeddedModel } from "./local.js";
-import { installManagedOllama } from "./ollama-dist.js";
+import { freeDiskSeam, installManagedOllama } from "./ollama-dist.js";
 import { setUpAndGet } from "./ollama-setup.js";
 import { normalizeEndpoint } from "./connect-endpoint.js";
 import { appendMessage, createTokenCoalescer, deleteChat, getChat, listChats, newChat, renameChat, sendChatStatus, sendChatToken } from "./chat-store.js";
@@ -872,6 +872,7 @@ app
           allowAutoStart: () => setOllamaLaunch("always"),
           pull: pullModel,
           sink: fileFetchSink(),
+          probeFreeBytes: freeDiskSeam(),
         });
         send({ modelId, percent: 100, status: "done", done: true, ok: true });
         return { ok: true, message: "Downloaded — it's ready to use." };
@@ -948,7 +949,9 @@ app
       installed: ollamaInstalled(),
       running: await makeEngine().detect(),
       // Only surfaced under the unpackaged fake-spawn seam, so an e2e can prove a launch fired.
-      ...(!app.isPackaged && process.env["SKOVERN_OLLAMA_SPAWN_FAKE"] === "1" ? { launchAttempts: fakeLaunchCount() } : {}),
+      ...(!app.isPackaged && (process.env["SKOVERN_OLLAMA_SPAWN_FAKE"] === "1" || process.env["SKOVERN_OLLAMA_SPAWN_FAKE"] === "serve")
+        ? { launchAttempts: fakeLaunchCount() }
+        : {}),
     }));
 
     // Start Ollama once, on the user's explicit request (the in-chat "Start Ollama" CTA is the
