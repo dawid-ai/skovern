@@ -6,6 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import type { FetchSink } from "@skovern/core";
 import { DownloadError, SAFETY_FAILED, downloadVerified, type DownloadProgress } from "./download.js";
+import { checkZipEntries, readZipEntries } from "./zip-entries.js";
 
 // Loop 047: Skovern sets up Ollama for a user who doesn't have it. We fetch Ollama's own
 // command-line build (no tray app, no Startup shortcut, no PATH change, no self-updater) into
@@ -83,36 +84,43 @@ function exeName(): string {
 }
 
 /** The helper we set up, as an absolute path, or null if it isn't set up. Only a finished
- *  `<version>/` dir counts — a `.partial` never does. */
+ *  `<version>/` dir counts — a `.partial` never does. After an app update moves the pin, the
+ *  helper set up under the old pin keeps working until a set-up replaces it (checker N7). */
 export function managedOllamaBin(): string | null {
+  if (!ollamaDist()) return null;
+  const current = currentManagedBin();
+  if (current) return current;
+  let names: string[] = [];
+  try {
+    names = readdirSync(managedOllamaRoot());
+  } catch {
+    return null;
+  }
+  const versions = names.filter((n) => /^\d+\.\d+\.\d+$/.test(n)).sort(byVersionDesc);
+  for (const v of versions) {
+    const bin = path.join(managedOllamaRoot(), v, exeName());
+    if (existsSync(bin)) return bin;
+  }
+  return null;
+}
+
+/** The helper for the CURRENT pin, or null. Set-up uses this, so a new pin does get set up. */
+function currentManagedBin(): string | null {
   const dist = ollamaDist();
   if (!dist) return null;
   const bin = path.join(managedOllamaRoot(), dist.version, exeName());
   return existsSync(bin) ? bin : null;
 }
 
-/** Why a zip entry name is unsafe to unpack, or null when it's fine. Pure. Rejects anything that
- *  could land outside the target dir: `..` segments, absolute paths, drive letters, UNC paths. */
-export function unsafeEntryReason(name: string): string | null {
-  if (name.length === 0) return "an empty file name";
-  if (name.includes("\0")) return "a file name with a null byte";
-  if (/^[A-Za-z]:/.test(name)) return `a drive letter path (${name})`;
-  if (name.startsWith("/") || name.startsWith("\\")) return `an absolute path (${name})`;
-  if (name.split(/[\\/]/).some((seg) => seg === "..")) return `a path that climbs out of its folder (${name})`;
-  return null;
+function byVersionDesc(a: string, b: string): number {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return (pb[i] ?? 0) - (pa[i] ?? 0);
+  return 0;
 }
 
-/** The first unsafe entry's reason across a zip listing, or null. Pure. */
-export function checkZipEntries(names: string[]): string | null {
-  for (const n of names) {
-    const r = unsafeEntryReason(n);
-    if (r) return r;
-  }
-  return null;
-}
-
-/** After unpacking: every entry must be a plain file or folder that really sits inside `root`
- *  (no symlink or junction can point out). Returns the reason it isn't, or null. */
+/** After unpacking, a second line of defense: every entry must be a plain file or folder (no link
+ *  or junction). The first line is `checkZipEntries`, which runs before anything unpacks. */
 export function checkUnpacked(root: string): string | null {
   const base = path.resolve(root);
   const walk = (dir: string): string | null => {
@@ -120,8 +128,6 @@ export function checkUnpacked(root: string): string | null {
       const p = path.join(dir, name);
       const st = lstatSync(p);
       if (st.isSymbolicLink()) return `a link (${path.relative(base, p)})`;
-      const rel = path.relative(base, path.resolve(p));
-      if (rel.startsWith("..") || path.isAbsolute(rel)) return `a file outside its folder (${p})`;
       if (st.isDirectory()) {
         const r = walk(p);
         if (r) return r;
@@ -136,13 +142,6 @@ export function checkUnpacked(root: string): string | null {
 // zip); Linux (CI) uses `unzip`. Fixed args, absolute paths we built, no shell.
 function tarBin(): string {
   return process.platform === "win32" ? path.join(process.env["SystemRoot"] ?? "C:\\Windows", "System32", "tar.exe") : "tar";
-}
-async function listZip(zip: string): Promise<string[]> {
-  const { stdout } =
-    process.platform === "linux"
-      ? await execFileP("unzip", ["-Z1", zip], { maxBuffer: 16 * 1024 * 1024 })
-      : await execFileP(tarBin(), ["-tf", zip], { maxBuffer: 16 * 1024 * 1024 });
-  return stdout.split(/\r?\n/).filter((l) => l.length > 0);
 }
 async function unpackZip(zip: string, dest: string): Promise<void> {
   if (process.platform === "linux") await execFileP("unzip", ["-q", "-o", zip, "-d", dest]);
@@ -162,11 +161,11 @@ export async function installManagedOllama(
 ): Promise<string> {
   const dist = ollamaDist();
   if (!dist) throw new DownloadError("Skovern can't set up the helper on this kind of computer yet.");
-  const existing = managedOllamaBin();
+  const existing = currentManagedBin();
   if (existing) return existing;
 
   const root = managedOllamaRoot();
-  const zip = path.join(root, dist.filename);
+  const zip = path.join(root, `${dist.version}-${dist.filename}`); // versioned: an old pin's partial is never resumed (N8)
   try {
     await downloadVerified(dist, zip, sink, onProgress, fetchImpl);
   } catch (err) {
@@ -181,7 +180,10 @@ export async function installManagedOllama(
   const partial = `${final}.partial`;
   await rm(partial, { recursive: true, force: true });
   try {
-    const bad = checkZipEntries(await listZip(zip));
+    // Read the zip's own file list first: a link, an unsafe name, or a mismatched header stops it
+    // before the system unzip writes a single file (checker B1).
+    const listing = await readZipEntries(zip);
+    const bad = "reason" in listing ? listing.reason : checkZipEntries(listing.entries);
     if (bad) throw new DownloadError(`The helper download contained ${bad}, so it wasn't set up.`);
     await mkdir(partial, { recursive: true });
     await unpackZip(zip, partial);

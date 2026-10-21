@@ -53,8 +53,11 @@ function receiptsOf(dir: string): { host: string; phase: string; ok: boolean; by
 const sentFor = (dir: string, host: string) => receiptsOf(dir).some((r) => r.host === host && r.phase === "sent");
 
 /** A fixture set for one app run: the catalog, the helper download, and the fake Ollama. */
-async function fixtures(dir: string, opts: { pullError?: string; dropFirstHelper?: boolean; ollamaUp?: boolean } = {}) {
-  const seen = { helperRequests: 0, helperSawReceipt: false, pullRequests: 0, pullSawReceipt: false };
+async function fixtures(
+  dir: string,
+  opts: { pullError?: string; dropFirstHelper?: boolean; ollamaUp?: boolean; slowPullMs?: number; neverUp?: boolean } = {},
+) {
+  const seen = { helperRequests: 0, helperSawReceipt: false, pullRequests: 0, pullSawReceipt: false, ranges: [] as string[] };
   const state = { up: opts.ollamaUp ?? false };
   const catalogUrl = await listen((_q, s) => {
     s.writeHead(200, { "content-type": "application/json" });
@@ -63,6 +66,7 @@ async function fixtures(dir: string, opts: { pullError?: string; dropFirstHelper
   const helperUrl = await listen((req, s) => {
     seen.helperRequests++;
     seen.helperSawReceipt ||= sentFor(dir, "github.com");
+    seen.ranges.push(req.headers.range ?? "");
     const range = /bytes=(\d+)-/.exec(req.headers.range ?? "");
     if (opts.dropFirstHelper && seen.helperRequests === 1) {
       // Send half, then cut the connection: the download must resume, not restart.
@@ -73,7 +77,7 @@ async function fixtures(dir: string, opts: { pullError?: string; dropFirstHelper
     const from = range ? Number(range[1]) : 0;
     s.writeHead(range ? 206 : 200, { "content-type": "application/zip" });
     s.end(ZIP.subarray(from));
-    state.up = true; // the helper is "installed" → our fake Ollama answers from now on
+    if (!opts.neverUp) state.up = true; // the helper is "installed" → our fake Ollama answers from now on
   });
   const ollamaUrl = await listen((req, s) => {
     const url = req.url ?? "";
@@ -83,7 +87,9 @@ async function fixtures(dir: string, opts: { pullError?: string; dropFirstHelper
     }
     if (req.method === "GET" && url === "/api/tags") {
       s.writeHead(200, { "content-type": "application/json" });
-      s.end(JSON.stringify({ models: [] }));
+      // The 037 flip case: an Ollama of the user's own with a BIGGER pulled brain that isn't in the
+      // catalog, green on 24 GB. It must never become the pick (checker N11).
+      s.end(JSON.stringify({ models: opts.ollamaUp ? [{ name: "mybig:33b", size: 20_000_000_000, details: { quantization_level: "Q4_K_M", parameter_size: "33B" } }] : [] }));
       return;
     }
     if (req.method === "POST" && url === "/api/pull") {
@@ -95,8 +101,10 @@ async function fixtures(dir: string, opts: { pullError?: string; dropFirstHelper
         return;
       }
       s.write(JSON.stringify({ status: "pulling abc", completed: 600, total: 1000 }) + "\n");
-      s.write(JSON.stringify({ status: "pulling abc", completed: 1000, total: 1000 }) + "\n");
-      s.end(JSON.stringify({ status: "success" }) + "\n");
+      setTimeout(() => {
+        s.write(JSON.stringify({ status: "pulling abc", completed: 1000, total: 1000 }) + "\n");
+        s.end(JSON.stringify({ status: "success" }) + "\n");
+      }, opts.slowPullMs ?? 0);
       return;
     }
     if (req.method === "POST" && url === "/api/generate") {
@@ -272,6 +280,16 @@ test("M3 + M5: set it up → helper, unpack, start, brain in order → receipted
     expect(r.find((x) => x.host === "registry.ollama.ai" && x.phase === "done")!.bytesReceived).toBe(1000);
     expect(ollamaDirEntries(dir)).toEqual(["0.0.0-test"]); // unpacked, zip removed
 
+    // M11 / checker B3: now the helper is set up, running, and the brain downloaded — the pick and
+    // the headline still name the 32B. A pick that read any of that state would move here.
+    const after = await page.evaluate(async () => {
+      const [m, s] = await Promise.all([window.skovern.local.models(), window.skovern.local.status()]);
+      return { pick: m.models.find((x) => x.recommended)?.id ?? null, headline: s.verdict.headline, helper: m.helper };
+    });
+    expect(after.pick).toBe("qwen2.5:32b");
+    expect(after.headline).toContain("Qwen2.5 32B");
+    expect(after.helper).toBeNull(); // set up → no second consent
+
     await page.getByRole("navigation", { name: "Main" }).getByRole("button", { name: "Chat" }).click();
     await page.getByRole("button", { name: "New chat" }).click();
     await page.getByLabel("Message your brain").fill("hello");
@@ -295,6 +313,42 @@ test("M3 + M5: set it up → helper, unpack, start, brain in order → receipted
     setTimeout(() => (fx.state.up = true), 1_500);
     await expect(page.getByText(REPLY)).toBeVisible({ timeout: 30_000 });
     expect(await page.evaluate(() => window.skovern.settings.ollamaStatus().then((s) => s.launchAttempts ?? 0))).toBeGreaterThan(0);
+  } finally {
+    await app.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("M4(f) + M6: leaving and coming back mid-set-up shows the running set-up — nothing to start twice — and the bar fits 800×600", async () => {
+  test.setTimeout(180_000);
+  const dir = fresh();
+  const fx = await fixtures(dir, { slowPullMs: 8_000 });
+  const app = await launch(dir, envFor(fx));
+  try {
+    const page = await app.firstWindow();
+    await toGuided(page, "m4f@shop.test");
+    await app.evaluate(async ({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setBounds({ width: 800, height: 600 }));
+    await hero(page).getByRole("button", { name: "Get this one" }).click();
+    await page.getByRole("button", { name: "Set it up" }).click();
+    await expect(hero(page).locator(".pull-progress")).toContainText("Getting the brain", { timeout: 30_000 });
+    const bar = hero(page).locator(".pull-progress");
+    await bar.scrollIntoViewIfNeeded();
+    await expect(bar).toBeInViewport();
+
+    // Leave the screen and come back while the brain is still downloading.
+    await page.getByRole("button", { name: "← Back" }).click();
+    await page.getByRole("button", { name: "Set up my private brain →" }).click();
+    await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible();
+    await expect(hero(page).locator(".pull-progress")).toContainText("Getting the brain", { timeout: 15_000 });
+    await expect(hero(page).getByRole("button", { name: "Get this one" })).toHaveCount(0);
+    // Even a direct second call is refused while one runs.
+    const second = await page.evaluate(() => window.skovern.local.setUp("qwen2.5:32b"));
+    expect(second.ok).toBe(false);
+    expect(second.message).toMatch(/already getting a brain ready/);
+
+    await expect(page.getByText("Local: qwen2.5:32b")).toBeVisible({ timeout: 60_000 });
+    expect(fx.seen.helperRequests).toBe(1);
+    expect(fx.seen.pullRequests).toBe(1);
   } finally {
     await app.close();
     rmSync(dir, { recursive: true, force: true });
@@ -335,6 +389,8 @@ test.describe("M4: when something goes wrong, it says so plainly and can be trie
       await expect(page.getByRole("dialog", { name: "Set up the helper" })).toHaveCount(0);
       await expect(page.getByText("Local: qwen2.5:32b")).toBeVisible({ timeout: 60_000 });
       expect(fx.seen.helperRequests).toBe(2);
+      expect(fx.seen.ranges[1]).toMatch(/^bytes=\d+-$/); // resumed from where it stopped (checker N3)
+      expect(fx.seen.ranges[1]).not.toBe("bytes=0-");
     } finally {
       await app.close();
       rmSync(dir, { recursive: true, force: true });
@@ -343,7 +399,7 @@ test.describe("M4: when something goes wrong, it says so plainly and can be trie
 
   test("(c) the helper won't start → plain message, no brain download, built-ins still offered", async () => {
     test.setTimeout(120_000);
-    const { dir, fx, app, page } = await runTo("m4c@shop.test", {}, { SKOVERN_OLLAMA_SPAWN_FAKE: "1" }, /didn't start/);
+    const { dir, fx, app, page } = await runTo("m4c@shop.test", { neverUp: true }, { SKOVERN_OLLAMA_SPAWN_FAKE: "1" }, /didn't start/);
     try {
       expect(fx.seen.pullRequests).toBe(0);
       const more = page.locator("details.local-other-options");

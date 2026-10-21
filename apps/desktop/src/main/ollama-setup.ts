@@ -10,6 +10,9 @@ import type { SetupPhase } from "../shared/local.js";
 // the receipt names the registry and says so in its label.
 const REGISTRY_HOST = "registry.ollama.ai";
 
+/** Skovern couldn't write the receipt, so the download didn't start. */
+export const RECEIPT_FAILED = "Skovern couldn't write down this download in your Receipts, so it didn't start. Try again.";
+
 /** Messages Skovern wrote itself (core's own wording) pass through; anything carrying Ollama's raw
  *  text is replaced by a plain one (closes `ollama-pull-raw-error-text`). */
 export function plainPullMessage(err: unknown): string {
@@ -37,8 +40,20 @@ export async function receiptedOllamaPull(
   onProgress: (p: PullProgress) => void,
   sink: FetchSink,
 ): Promise<void> {
-  const base = { kind: "fetch" as const, host: REGISTRY_HOST, task: `Downloading ${modelId} (through Ollama)`, direction: "in" as const };
-  await sink.append({ ...base, ts: new Date().toISOString(), bytesSent: 0, bytesReceived: 0, ok: false, phase: "sent" });
+  // The label says where the bytes really come from: Ollama's registry hands the files out from its
+  // storage service (checker N6).
+  const base = {
+    kind: "fetch" as const,
+    host: REGISTRY_HOST,
+    task: `Downloading ${modelId} through Ollama (files come from its storage service)`,
+    direction: "in" as const,
+  };
+  try {
+    await sink.append({ ...base, ts: new Date().toISOString(), bytesSent: 0, bytesReceived: 0, ok: false, phase: "sent" });
+  } catch {
+    // No receipt, no download — and no raw file error on screen (checker N5).
+    throw new DownloadError(RECEIPT_FAILED);
+  }
   // Ollama reports progress per file ("pulling <digest>"); keep the largest count per file.
   const perFile = new Map<string, number>();
   const received = () => [...perFile.values()].reduce((a, b) => a + b, 0);
@@ -56,7 +71,7 @@ export async function receiptedOllamaPull(
     });
   } catch (err) {
     await done(false);
-    throw new Error(plainPullMessage(err));
+    throw new DownloadError(plainPullMessage(err));
   }
   await done(true);
 }
@@ -65,9 +80,11 @@ export interface SetupDeps {
   /** Is any Ollama (the user's own, or one Skovern set up) on this computer? */
   installed: () => boolean;
   install: typeof installManagedOllama;
+  /** Is Ollama answering right now? */
+  running: () => Promise<boolean>;
   /** Start Ollama and wait until it answers. */
   start: () => Promise<boolean>;
-  /** Remember the consent: from now on Skovern starts Ollama when the brain needs it. */
+  /** Remember the consent to set the helper up: from now on Skovern starts it when the brain needs it. */
   allowAutoStart: () => void;
   pull: (modelId: string, onProgress: (p: PullProgress) => void) => Promise<void>;
   sink: FetchSink;
@@ -94,10 +111,14 @@ export async function setUpAndGet(modelId: string, brainBytes: number, onTick: (
   if (needHelper) {
     onTick({ phase: "helper", percent: 0 });
     await deps.install(deps.sink, (p) => onTick(p.percent >= 100 ? { phase: "unpack", percent: 100 } : { phase: "helper", percent: p.percent }));
+    // The consent the user just gave covers starting the helper we set up, from now on. A user's
+    // OWN Ollama keeps their own start setting — this click starts it once, like the in-chat
+    // start (loop 033), and never changes the setting (checker B2).
+    deps.allowAutoStart();
   }
-  deps.allowAutoStart();
   onTick({ phase: "start", percent: 0 });
-  if (!(await deps.start())) throw new DownloadError(WONT_START);
+  // Already answering → don't start a second copy (checker N4).
+  if (!(await deps.running()) && !(await deps.start())) throw new DownloadError(WONT_START);
   onTick({ phase: "brain", percent: 0 });
   await deps.pull(modelId, (p) => onTick({ phase: "brain", percent: p.percent ?? 0 }));
 }

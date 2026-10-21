@@ -71,6 +71,27 @@ export function LocalBrainSetup({
     // click anything this session.
     setSavedId(b.provider === "local" ? b.model : null);
     setBusy(false);
+    // 047 (checker B4): a set-up started before this screen opened is still running in main —
+    // show its progress and nothing to click, then refresh when it ends.
+    const run = await window.skovern.local.setUpStatus();
+    if (run && !unsubPull.current) {
+      setPulling((prev) => ({ ...prev, [run.modelId]: run }));
+      unsubPull.current = window.skovern.local.onPullProgress((p) => {
+        if (!p.done) {
+          setPulling((prev) => ({ ...prev, [p.modelId]: p }));
+          return;
+        }
+        unsubPull.current?.();
+        unsubPull.current = null;
+        setPulling((prev) => {
+          const next = { ...prev };
+          delete next[p.modelId];
+          return next;
+        });
+        if (!p.ok) setFailed((prev) => ({ ...prev, [p.modelId]: p.status }));
+        void refresh();
+      });
+    }
   }, []);
 
   useEffect(() => {

@@ -859,15 +859,25 @@ app
     // Loop 047: set the helper (Ollama) up if needed, start it, then get the brain — one flow,
     // after the user's consent in the renderer. Only a CATALOG brain that runs through Ollama is
     // accepted (never free text), and progress streams back on `local:pullProgress` with a phase.
+    // ONE set-up at a time, owned by main — so leaving the screen and coming back can't start a
+    // second one, and the fresh screen shows the running one's progress (checker B4).
+    let setUpRun: PullProgressView | null = null;
+    registerTrusted(TRUST, "local:setUpStatus", (): PullProgressView | null => setUpRun);
     registerTrusted(TRUST, "local:setUp", async (rawId: unknown): Promise<LocalActionResult> => {
+      if (setUpRun) return { ok: false, message: "Skovern is already getting a brain ready — hang tight." };
       const modelId = typeof rawId === "string" ? rawId : "";
       const target = await ollamaPathCatalogModel(modelId);
       if (!target) return { ok: false, message: "That brain isn't one Skovern can set up." };
-      const send = (view: PullProgressView): void => mainWindow?.webContents.send("local:pullProgress", view);
+      const send = (view: PullProgressView): void => {
+        setUpRun = view.done ? null : view;
+        mainWindow?.webContents.send("local:pullProgress", view);
+      };
+      send({ modelId, phase: "helper", percent: 0, status: "starting", done: false, ok: true });
       try {
         await setUpAndGet(modelId, target.sizeBytes ?? 0, (t) => send({ modelId, phase: t.phase, percent: t.percent, status: t.phase, done: false, ok: true }), {
           installed: ollamaInstalled,
           install: installManagedOllama,
+          running: () => makeEngine().detect(),
           start: () => ensureOllamaRunning(() => makeEngine().detect(), 20_000),
           allowAutoStart: () => setOllamaLaunch("always"),
           pull: pullModel,
@@ -877,7 +887,8 @@ app
         send({ modelId, percent: 100, status: "done", done: true, ok: true });
         return { ok: true, message: "Downloaded — it's ready to use." };
       } catch (err) {
-        const message = err instanceof DownloadError || err instanceof Error ? err.message : "The set-up didn't finish. Try again.";
+        // Only messages Skovern wrote reach the screen; anything else gets a plain one (checker N5).
+        const message = err instanceof DownloadError ? err.message : "The set-up didn't finish. Try again — it picks up where it left off.";
         send({ modelId, percent: 0, status: message, done: true, ok: false });
         return { ok: false, message };
       }

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -16,7 +16,8 @@ vi.mock("electron", () => ({
   },
 }));
 
-import { checkZipEntries, installManagedOllama, managedOllamaBin, managedOllamaRoot, ollamaDist, unsafeEntryReason } from "./ollama-dist.js";
+import { installManagedOllama, managedOllamaBin, managedOllamaRoot, ollamaDist } from "./ollama-dist.js";
+import { checkZipEntries, unsafeEntryReason } from "./zip-entries.js";
 
 const EXE = process.platform === "win32" ? "ollama.exe" : "ollama";
 
@@ -61,12 +62,25 @@ describe("M8: unsafe zip entry names are refused with a reason", () => {
     ["c:evil.dll", /drive letter/],
     ["", /empty/],
     ["ok\0.exe", /null byte/],
+    ["lib/x.dll:stream", /hidden file stream/],
+    ["lib/evil.", /Windows would change/],
+    ["lib/evil ", /Windows would change/],
+    ["NUL", /device name/],
+    ["lib/con.txt", /device name/],
+    ["lib/COM1", /device name/],
   ])("%j → refused", (name, reason) => {
     expect(unsafeEntryReason(name)).toMatch(reason);
   });
 
-  it("ordinary names pass, including dots that aren't '..'", () => {
-    expect(checkZipEntries(["ollama.exe", "lib/", "lib/ollama/ggml.dll", "lib/ollama/..hidden", "a.b/c"])).toBeNull();
+  const file = (name: string) => ({ name, unixType: name.endsWith("/") ? 0o040000 : 0o100000 });
+  it("ordinary names pass, including dots that aren't '..' and names like 'console'", () => {
+    expect(checkZipEntries(["ollama.exe", "lib/", "lib/ollama/ggml.dll", "lib/ollama/..hidden", "a.b/c", "console.dll"].map(file))).toBeNull();
+    expect(checkZipEntries([{ name: "plain.txt", unixType: 0 }])).toBeNull(); // no unix bits (a Windows-made zip)
+  });
+
+  it("a link or special file is refused by type, whatever its name", () => {
+    expect(checkZipEntries([file("ollama.exe"), { name: "lib/x", unixType: 0o120000 }])).toMatch(/link or special file/);
+    expect(checkZipEntries([{ name: "lib/fifo", unixType: 0o010000 }])).toMatch(/link or special file/);
   });
 });
 
@@ -124,14 +138,40 @@ describe("installManagedOllama", () => {
     expect(readdirSync(managedOllamaRoot())).toEqual([]); // .partial and zip both removed
   });
 
-  it("M8: a zip carrying a symlink is never set up", async () => {
-    const zip = makeZip([{ name: EXE, data: "x" }, { name: "lib/link", data: "../../..", symlink: true }]);
+  // Checker B1: a link followed by a file UNDER it would write through the link. The zip's own
+  // file list is read first, so the system unzip never runs and nothing lands anywhere.
+  it.each([
+    ["an absolute target", () => path.join(state.dir, "outside")],
+    ["a climbing target", () => "../../.."],
+  ])("M8: a link + a file under it (%s) is refused before unpacking — nothing written outside", async (_label, target) => {
+    const zip = makeZip([
+      { name: EXE, data: "x" },
+      { name: "lnk", data: target(), symlink: true },
+      { name: "lnk/startup.bat", data: "pwned" },
+    ]);
     useZip(zip);
-    // On Linux the link unpacks and the after-check refuses it; on Windows the unzip itself may
-    // refuse it. Either way: rejected, not set up, nothing left.
-    await expect(installManagedOllama(sink(), undefined, serveBytes(zip))).rejects.toThrow(/a link|couldn't set up the helper/);
+    await expect(installManagedOllama(sink(), undefined, serveBytes(zip))).rejects.toThrow(/a link or special file \(lnk\)/);
     expect(managedOllamaBin()).toBeNull();
-    expect(readdirSync(managedOllamaRoot())).toEqual([]);
+    expect(allFiles(state.dir).filter((f) => f.endsWith("startup.bat"))).toEqual([]);
+    expect(readdirSync(managedOllamaRoot())).toEqual([]); // the unzip never ran: no .partial
+  });
+
+  it("M8: a local header that names a different file than the list is refused", async () => {
+    const zip = makeZip([{ name: EXE, data: "x" }, { name: "lib/ok.dll", localName: "../../evil.dll", data: "pwned" }]);
+    useZip(zip);
+    await expect(installManagedOllama(sink(), undefined, serveBytes(zip))).rejects.toThrow(/two names disagree/);
+    expect(allFiles(state.dir).filter((f) => f.includes("evil"))).toEqual([]);
+  });
+
+  it("N7: after an app update moves the pin, the helper set up before keeps working", async () => {
+    const old = path.join(managedOllamaRoot(), "0.30.0", EXE);
+    mkdirSync(path.dirname(old), { recursive: true });
+    writeFileSync(old, "older helper");
+    useZip(fakeOllamaZip()); // the current pin is 0.0.0-test, not set up yet
+    expect(managedOllamaBin()).toBe(old);
+    const fresh = await installManagedOllama(sink(), undefined, serveBytes(fakeOllamaZip())); // set-up installs the new pin
+    expect(fresh).toBe(path.join(managedOllamaRoot(), "0.0.0-test", EXE));
+    expect(readdirSync(managedOllamaRoot())).toEqual(["0.0.0-test"]); // the old one is removed
   });
 
   it("a zip without the executable isn't set up", async () => {

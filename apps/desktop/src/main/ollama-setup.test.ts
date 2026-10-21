@@ -5,7 +5,7 @@ vi.mock("electron", () => ({ app: { getPath: () => "", isPackaged: false } }));
 const dist = vi.hoisted(() => ({ value: { version: "1", url: "https://github.com/x.zip", sha256: "a", sizeBytes: 1_000, filename: "x.zip" } as unknown }));
 vi.mock("./ollama-dist.js", () => ({ ollamaDist: () => dist.value, installManagedOllama: vi.fn() }));
 
-import { plainPullMessage, receiptedOllamaPull, setUpAndGet, type SetupDeps } from "./ollama-setup.js";
+import { RECEIPT_FAILED, plainPullMessage, receiptedOllamaPull, setUpAndGet, type SetupDeps } from "./ollama-setup.js";
 
 const GB = 1024 ** 3;
 
@@ -33,7 +33,8 @@ describe("receiptedOllamaPull (047: a brain Ollama downloads is receipted too)",
   it("if the 'sent' receipt can't be written, nothing is pulled", async () => {
     const pull = vi.fn(async () => {});
     const sink = { append: () => Promise.reject(new Error("disk")) };
-    await expect(receiptedOllamaPull(engine(pull), "m", () => {}, sink)).rejects.toThrow("disk");
+    // …and the user sees a plain message, never the raw file error (checker N5).
+    await expect(receiptedOllamaPull(engine(pull), "m", () => {}, sink)).rejects.toThrow(RECEIPT_FAILED);
     expect(pull).not.toHaveBeenCalled();
   });
 
@@ -82,6 +83,7 @@ function deps(over: Partial<SetupDeps> = {}): SetupDeps & { log: string[] } {
       on?.({ completed: 1000, total: 1000, percent: 100 });
       return "/x/ollama.exe";
     }) as unknown as SetupDeps["install"],
+    running: async () => false,
     start: async () => (log.push("start"), true),
     allowAutoStart: () => void log.push("allowAutoStart"),
     pull: async (_id, on) => {
@@ -103,18 +105,33 @@ describe("setUpAndGet (047: one flow after the consent)", () => {
     expect([...new Set(phases)]).toEqual(["helper", "unpack", "start", "brain"]);
   });
 
-  it("Ollama already here (the user's own, or set up before): no helper download", async () => {
+  // Checker B2: a user's own Ollama keeps their start setting — this click starts it once.
+  it("Ollama already here (the user's own): no helper download, and their start setting is left alone", async () => {
     const d = deps({ installed: () => true });
     await setUpAndGet("qwen2.5:32b", 20 * GB, () => {}, d);
-    expect(d.log).toEqual(["allowAutoStart", "start", "pull"]);
+    expect(d.log).toEqual(["start", "pull"]);
+    expect(d.log).not.toContain("allowAutoStart");
+  });
+
+  // Checker N4: already answering → no second `ollama serve`.
+  it("Ollama already running: it isn't started again", async () => {
+    const d = deps({ installed: () => true, running: async () => true });
+    await setUpAndGet("qwen2.5:32b", 20 * GB, () => {}, d);
+    expect(d.log).toEqual(["pull"]);
   });
 
   it("M4(e): not enough room for helper + brain → refused before anything downloads", async () => {
-    const d = deps({ probeFreeBytes: async () => 5 * GB });
+    // Room for the brain alone, but not for the helper (×2: zip + unpacked) on top — checker N2.
+    const saved = dist.value;
+    dist.value = { ...(saved as object), sizeBytes: 2 * GB };
+    const d = deps({ probeFreeBytes: async () => 21 * GB });
     await expect(setUpAndGet("qwen2.5:32b", 20 * GB, () => {}, d)).rejects.toThrow(
       "There isn't enough free space on this computer for this brain and its helper. Free up some room and try again.",
     );
     expect(d.log).toEqual([]);
+    // The same space is plenty when the helper is already here.
+    await expect(setUpAndGet("qwen2.5:32b", 20 * GB, () => {}, deps({ installed: () => true, probeFreeBytes: async () => 21 * GB }))).resolves.toBeUndefined();
+    dist.value = saved;
   });
 
   it("M4(c): the helper won't start → plain message, no brain download", async () => {

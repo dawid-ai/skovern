@@ -71,6 +71,8 @@ const api = {
     // 047: set the helper up (if needed), start it, then get this catalog brain.
     setUp: (modelId: string): Promise<LocalActionResult> =>
       ipcRenderer.invoke("local:setUp", modelId) as Promise<LocalActionResult>,
+    // 047: the set-up running right now (main owns it), so a fresh screen can show it.
+    setUpStatus: (): Promise<PullProgressView | null> => ipcRenderer.invoke("local:setUpStatus") as Promise<PullProgressView | null>,
     // Connect your own brain by address (loop 044): probe a typed address before saving.
     connect: (address: string): Promise<ConnectProbeView> =>
       ipcRenderer.invoke("local:connect", address) as Promise<ConnectProbeView>,

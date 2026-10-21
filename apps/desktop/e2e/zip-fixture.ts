@@ -22,6 +22,8 @@ export interface ZipEntry {
   data?: string | Buffer;
   /** A Unix symlink whose target is `data`. */
   symlink?: boolean;
+  /** A different name in the local header than in the file list (a smuggling trick). */
+  localName?: string;
 }
 
 export function makeZip(entries: ZipEntry[]): Buffer {
@@ -30,6 +32,7 @@ export function makeZip(entries: ZipEntry[]): Buffer {
   let offset = 0;
   for (const e of entries) {
     const name = Buffer.from(e.name, "utf8");
+    const localName = Buffer.from(e.localName ?? e.name, "utf8");
     const data = Buffer.isBuffer(e.data) ? e.data : Buffer.from(e.data ?? "", "utf8");
     const crc = crc32(data);
     const local = Buffer.alloc(30);
@@ -38,8 +41,8 @@ export function makeZip(entries: ZipEntry[]): Buffer {
     local.writeUInt32LE(crc, 14);
     local.writeUInt32LE(data.length, 18);
     local.writeUInt32LE(data.length, 22);
-    local.writeUInt16LE(name.length, 26);
-    locals.push(local, name, data);
+    local.writeUInt16LE(localName.length, 26);
+    locals.push(local, localName, data);
 
     const central = Buffer.alloc(46);
     central.writeUInt32LE(0x02014b50, 0);
@@ -53,7 +56,7 @@ export function makeZip(entries: ZipEntry[]): Buffer {
     central.writeUInt32LE((mode << 16) >>> 0, 38);
     central.writeUInt32LE(offset, 42);
     centrals.push(central, name);
-    offset += local.length + name.length + data.length;
+    offset += local.length + localName.length + data.length;
   }
   const cd = Buffer.concat(centrals);
   const end = Buffer.alloc(22);
