@@ -3,6 +3,7 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { OllamaLaunch } from "../shared/settings.js";
+import { managedOllamaBin } from "./ollama-dist.js";
 
 // Ollama is an OPTIONAL upgrade, never a requirement. This module detects whether it's
 // installed and — only with the user's consent (`ollamaLaunch: "always"`) — starts it. The
@@ -33,9 +34,13 @@ function knownOllamaPaths(): string[] {
   return ["/usr/local/bin/ollama", "/usr/bin/ollama", path.join(home, ".local", "bin", "ollama")];
 }
 
-/** Resolve the `ollama` executable path, or null. Scans PATH + known locations. Shell-free
- *  (no `which`/`where` subprocess) so it can't be a shell-injection surface. */
+/** Resolve the `ollama` executable path, or null. The helper Skovern set up (loop 047) wins: it's
+ *  an absolute path inside userData whose zip passed the pinned sha256, so a PATH-planted
+ *  `ollama.exe` can never take its place. Otherwise scans PATH + known locations (a user's own
+ *  Ollama). Shell-free (no `which`/`where` subprocess) so it can't be a shell-injection surface. */
 export function resolveOllamaBin(): string | null {
+  const managed = managedOllamaBin();
+  if (managed) return managed;
   const exe = process.platform === "win32" ? "ollama.exe" : "ollama";
   const dirs = (process.env["PATH"] ?? "").split(path.delimiter).filter(Boolean);
   for (const dir of dirs) {
@@ -46,9 +51,11 @@ export function resolveOllamaBin(): string | null {
   return null;
 }
 
-/** Is Ollama installed on this computer? Unpackaged test seam SKOVERN_OLLAMA_INSTALLED
- *  ("1"/"0") pins the answer so the consent flow is CI-drivable without a real install. */
+/** Is Ollama installed on this computer (a user's own, or the helper Skovern set up)? Unpackaged
+ *  test seam SKOVERN_OLLAMA_INSTALLED ("1"/"0") pins the answer for a user's own Ollama so the
+ *  consent flow is CI-drivable without a real install. */
 export function ollamaInstalled(): boolean {
+  if (managedOllamaBin()) return true; // the helper Skovern set up (047) — real, never seamed
   if (!app.isPackaged) {
     const seam = process.env["SKOVERN_OLLAMA_INSTALLED"];
     if (seam === "1") return true;
@@ -222,6 +229,21 @@ function logGpuEnv(): void {
   }
 }
 
+/** The environment for `ollama serve`. For the helper Skovern set up (047), it listens on loopback
+ *  only, whatever the user's environment says, and no extra web origins may call it. A user's own
+ *  Ollama keeps their own config. Pure → unit-tested. */
+export function serveEnv(managed: boolean, base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  // Keep ONE model in VRAM at a time: switching models evicts the previous one instead of
+  // stacking them. An average user testing a few models would otherwise fill VRAM and each
+  // new model would spill to CPU (the slowdown we just chased).
+  const env: NodeJS.ProcessEnv = { ...base, OLLAMA_MAX_LOADED_MODELS: "1" };
+  if (managed) {
+    env["OLLAMA_HOST"] = "127.0.0.1:11434";
+    delete env["OLLAMA_ORIGINS"];
+  }
+  return env;
+}
+
 function startOllamaProcess(): boolean {
   // Test seam: "1" = a fake that attempts but never serves (proves the FAILURE path); "serve" =
   // a fake that skips the real spawn and lets the readiness poll hit a fixture Ollama the test
@@ -241,11 +263,8 @@ function startOllamaProcess(): boolean {
     // Shell-free, fixed args, no user input. Pipe stderr (dev only) so we can SEE whether our
     // spawned Ollama uses the GPU; not detached so it dies with us.
     ollamaChild = spawn(bin, ["serve"], {
-      // Keep ONE model in VRAM at a time: switching models evicts the previous one instead of
-      // stacking them. An average user testing a few models would otherwise fill VRAM and each
-      // new model would spill to CPU (the slowdown we just chased). Only applies to the Ollama
-      // WE launch; a user running their own Ollama keeps their own config.
-      env: { ...process.env, OLLAMA_MAX_LOADED_MODELS: "1" },
+      // Only applies to the Ollama WE launch; a user running their own Ollama keeps their config.
+      env: serveEnv(bin === managedOllamaBin(), process.env),
       stdio: ["ignore", "ignore", app.isPackaged ? "ignore" : "pipe"],
     });
     ollamaChild.on("error", () => {}); // a failed spawn must never crash main

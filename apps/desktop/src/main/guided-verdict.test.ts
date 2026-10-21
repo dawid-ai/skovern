@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { verdict, type HardwareProfile } from "@skovern/core";
-import { allCandidates, builtInCandidates } from "./guided-verdict.js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { allCandidates, builtInCandidates, guidedVerdict } from "./guided-verdict.js";
 
 // Loop 037 — the flip-kill. The guided recommendation scores our BUILT-IN (gguf) catalog only,
 // so it never lurches when a background Ollama starts/stops. We reproduce the exact composition
@@ -33,7 +35,9 @@ describe("guided verdict — built-in only (flip-kill, loop 037)", () => {
     expect(ids).not.toContain("qwen2.5:32b");
   });
 
-  it("U2: even though a bigger Ollama model scores green on 24 GB, the pick is ALWAYS a built-in", () => {
+  // 047: still true of the BUILT-IN-ONLY verdict this test calls; the app's pick is now
+  // `guidedVerdict` (below), which may name a bigger brain that runs through Ollama.
+  it("U2: even though a bigger Ollama model scores green on 24 GB, the built-in-only verdict picks a built-in", () => {
     const gpu24 = profile({ bestVramBytes: 24 * GB });
     // Sanity: the 22B Ollama-only model really would be green+capable here (so the exclusion,
     // not a fit miss, is what keeps it out of the pick).
@@ -100,5 +104,46 @@ describe("speed only for what we actually know (046)", () => {
     expect(mystery.tier).toBe("green");
     expect(mystery.tokPerSec).toBeNull();
     expect(fits.find((f) => f.modelId === "sized:latest")!.tokPerSec).toBeGreaterThan(0);
+  });
+});
+
+// 047: the app's ONE pick. A brain that runs through Ollama wins only when it's good AND bigger than
+// the best good built-in; Ollama's state is never an input. Fixture = the SHIPPED catalog.
+describe("guidedVerdict — Ollama brains join the pick (047)", () => {
+  const shipped = JSON.parse(readFileSync(fileURLToPath(new URL("../../../../catalog/models.json", import.meta.url)), "utf8")) as {
+    models: Parameters<typeof guidedVerdict>[1];
+  };
+  const card = (vramGb: number, ramGb = 64) =>
+    profile({ ramBytes: ramGb * GB, bestVramBytes: vramGb * GB, gpus: [{ model: "AMD Radeon RX 7900 XTX", vramBytes: vramGb * GB }] });
+
+  it("G1: 24 GB card + Skovern can set Ollama up → the 32B (Dawid's box)", () => {
+    const v = guidedVerdict(card(24), shipped.models, true);
+    expect(v.recommendedModelId).toBe("qwen2.5:32b");
+    expect(v.canRunGoodOne).toBe(true);
+    expect(v.headline).toContain("Qwen2.5 32B");
+  });
+
+  it("G2: same card, but no helper build for this computer → the best built-in, as before", () => {
+    expect(guidedVerdict(card(24), shipped.models, false).recommendedModelId).toBe("qwen2.5:14b");
+  });
+
+  it("G3: a small or slow computer is never asked to set up a helper", () => {
+    for (const p of [profile({ ramBytes: 16 * GB }), profile({ ramBytes: 8 * GB }), card(8, 16), card(6, 16), card(3, 16), card(12, 32)]) {
+      const pick = guidedVerdict(p, shipped.models, true).recommendedModelId;
+      const entry = shipped.models.find((m) => m.id === pick);
+      expect(entry?.gguf, JSON.stringify(p.bestVramBytes)).toBeDefined(); // a built-in
+    }
+  });
+
+  it("G4: an equal-size Ollama brain never beats a built-in (llama3.2:3b vs qwen2.5:3b)", () => {
+    const v = guidedVerdict(card(4, 16), shipped.models, true);
+    expect(shipped.models.find((m) => m.id === v.recommendedModelId)?.gguf).toBeDefined();
+  });
+
+  it("M11: pure — the same inputs always give the same pick (Ollama state isn't an input at all)", () => {
+    expect(guidedVerdict.length).toBe(3);
+    const a = guidedVerdict(card(24), shipped.models, true);
+    const b = guidedVerdict(card(24), structuredClone(shipped.models), true);
+    expect(b).toEqual(a);
   });
 });

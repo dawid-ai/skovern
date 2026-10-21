@@ -66,6 +66,9 @@ const api = {
     models: (): Promise<LocalModelsView> => ipcRenderer.invoke("local:models") as Promise<LocalModelsView>,
     pull: (modelId: string): Promise<LocalActionResult> =>
       ipcRenderer.invoke("local:pull", modelId) as Promise<LocalActionResult>,
+    // 047: set the helper up (if needed), start it, then get this catalog brain.
+    setUp: (modelId: string): Promise<LocalActionResult> =>
+      ipcRenderer.invoke("local:setUp", modelId) as Promise<LocalActionResult>,
     // Connect your own brain by address (loop 044): probe a typed address before saving.
     connect: (address: string): Promise<ConnectProbeView> =>
       ipcRenderer.invoke("local:connect", address) as Promise<ConnectProbeView>,

@@ -1,4 +1,4 @@
-import type { VerdictModel } from "@skovern/core";
+import { verdict, type HardwareProfile, type Verdict, type VerdictModel } from "@skovern/core";
 
 // The candidate set the recommendation scores: our BUILT-IN (gguf) catalog ONLY.
 //
@@ -38,4 +38,30 @@ export function builtInCandidates(catalogModels: CandidateInput[]): VerdictModel
  *  only (037 flip-kill), so widening the DISPLAY set can never widen what becomes the pick. */
 export function allCandidates(models: CandidateInput[]): VerdictModel[] {
   return models.map(toVerdictModel);
+}
+
+/** The catalog brains that run through Ollama (no `gguf` block) — gettable when Skovern can set
+ *  Ollama up on this computer (loop 047). Always gettable then: we set the helper up ourselves. */
+export function ollamaPathCandidates(catalogModels: CandidateInput[]): VerdictModel[] {
+  return catalogModels.filter((m) => m.gguf === undefined).map(toVerdictModel);
+}
+
+/** THE recommendation (loop 047): one function both the headline (`localStatus`) and the hero
+ *  (`localModels`) call, so they always name the same brain.
+ *
+ *  Inputs are hardware + catalog + whether Skovern can set Ollama up on this KIND of computer —
+ *  never whether any Ollama is installed or running — so the pick can't flip (loop 037 holds).
+ *  A brain that needs Ollama wins only when it's a GOOD pick and bigger than the best good
+ *  built-in: a small or slow computer never gets asked to set up a helper. */
+export function guidedVerdict(profile: HardwareProfile, catalogModels: CandidateInput[], canSetUpOllama: boolean): Verdict {
+  const builtIns = builtInCandidates(catalogModels);
+  const base = verdict(profile, builtIns);
+  if (!canSetUpOllama) return base;
+  const wide = verdict(profile, [...builtIns, ...ollamaPathCandidates(catalogModels)]);
+  if (!wide.canRunGoodOne || wide.recommendedModelId === null) return base;
+  if (builtIns.some((m) => m.id === wide.recommendedModelId)) return base;
+  const paramsOf = (vs: VerdictModel[], id: string | null) => vs.find((m) => m.id === id)?.params ?? 0;
+  const widePick = paramsOf(ollamaPathCandidates(catalogModels), wide.recommendedModelId);
+  const basePick = base.canRunGoodOne ? paramsOf(builtIns, base.recommendedModelId) : 0;
+  return widePick > basePick ? wide : base;
 }

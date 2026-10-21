@@ -10,7 +10,9 @@ import {
   type LocalModelInfo,
   type PullProgress,
 } from "@skovern/core";
-import { allCandidates, builtInCandidates } from "./guided-verdict.js";
+import { allCandidates, guidedVerdict } from "./guided-verdict.js";
+import { ollamaDist } from "./ollama-dist.js";
+import { receiptedOllamaPull } from "./ollama-setup.js";
 import { fileFetchSink } from "./receipts.js";
 import { connectEngineOptions, hostIsOffBox, normalizeEndpoint } from "./connect-endpoint.js";
 import { scanHardware } from "./hardware.js";
@@ -435,7 +437,7 @@ export async function localStatus(): Promise<LocalStatusView> {
     detectAndList(engine),
   ]);
   rememberEmbedded(catalog.models);
-  const v = verdict(profile, builtInCandidates(catalog.models));
+  const v = guidedVerdict(profile, catalog.models, canSetUpOllama());
   const installed = ollamaInstalled();
   return {
     ollamaReady: det.ready,
@@ -471,12 +473,19 @@ export async function localModels(): Promise<LocalModelsView> {
   //  - DISPLAY tier of EVERY row (built-in + Ollama catalog suggestions + own pulled models)
   //    comes from a verdict over ALL of them, so an Ollama model shows its REAL fit — a small
   //    one on a big card is green, not a default amber (BUG A / loop 042).
-  //  - The RECOMMENDATION comes from a separate built-in-only pass — the SAME call as
-  //    `localStatus`, so the headline and the hero still name the same model, and a background
-  //    Ollama can never become the pick (037 flip-kill preserved).
+  //  - The RECOMMENDATION comes from `guidedVerdict` — the SAME call as `localStatus`, so the
+  //    headline and the hero name the same model. Its inputs never include Ollama's state, so a
+  //    background Ollama can't move the pick (037 flip-kill preserved; 047 widened the set).
   const vDisplay = verdict(profile, allCandidates([...catalog.models, ...ownHave]));
   const tierOf = (id: string) => vDisplay.fits.find((f) => f.modelId === id);
-  const recommendedModelId = verdict(profile, builtInCandidates(catalog.models)).recommendedModelId;
+  const recommendedModelId = guidedVerdict(profile, catalog.models, canSetUpOllama()).recommendedModelId;
+  const pick = catalog.models.find((c) => c.id === recommendedModelId);
+  // The pick runs through Ollama and there's none on this computer yet → Skovern sets it up first.
+  const dist = ollamaDist();
+  const helper =
+    pick && pick.gguf === undefined && dist && !ollamaInstalled()
+      ? { sizeBytes: dist.sizeBytes, size: fmtGB(dist.sizeBytes) ?? "", totalSize: fmtGB(dist.sizeBytes + (pick.sizeBytes ?? 0)) ?? "" }
+      : null;
 
   const suggested: LocalModelView[] = catalog.models.map((c: CatalogModel) => {
     const fit = tierOf(c.id);
@@ -528,11 +537,26 @@ export async function localModels(): Promise<LocalModelsView> {
       ? "Ollama isn't running — start it and choose \"Check my computer again\" to see your models."
       : catalog.notice ?? "";
 
-  return { ollamaReady: det.ready, models: [...have, ...suggested], notice };
+  return { ollamaReady: det.ready, models: [...have, ...suggested], notice, helper };
+}
+
+/** The catalog brain with this id that runs through Ollama (no `gguf` block), or null. Gates
+ *  `local:setUp` to catalog brains only — never free text (047). */
+export async function ollamaPathCatalogModel(modelId: string): Promise<CatalogModel | null> {
+  const catalog = await loadCatalog(fileFetchSink(), catalogUrl());
+  return catalog.models.find((c) => c.id === modelId && c.gguf === undefined) ?? null;
+}
+
+/** Can Skovern set Ollama up on this KIND of computer (a pinned helper build exists)? A platform
+ *  fact, not Ollama's state — so it's safe as a pick input (047). */
+function canSetUpOllama(): boolean {
+  return ollamaDist() !== null;
 }
 
 /** Start pulling a model, forwarding progress. Routes to the embedded downloader for a
  *  gguf model, or Ollama's pull otherwise. Rejects (descriptively) on failure. */
 export function pullModel(modelId: string, onProgress: (p: PullProgress) => void): Promise<void> {
+  // Ollama downloads the brain itself, so Skovern writes its receipt around the pull (047).
+  if (!isEmbeddedModel(modelId)) return receiptedOllamaPull(makeEngine(), modelId, onProgress, fileFetchSink());
   return engineForModel(modelId).pull(modelId, onProgress);
 }

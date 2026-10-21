@@ -46,6 +46,8 @@ declare global {
         rescan(): Promise<LocalStatusView>;
         models(): Promise<LocalModelsView>;
         pull(modelId: string): Promise<LocalActionResult>;
+        /** 047: set the helper up if needed, start it, then get this catalog brain. */
+        setUp(modelId: string): Promise<LocalActionResult>;
         connect(address: string): Promise<ConnectProbeView>;
         classify(address: string): Promise<{ valid: boolean; offBox: boolean; endpoint: string | null }>;
         /** Listen for live pull progress. Returns an unsubscribe. */

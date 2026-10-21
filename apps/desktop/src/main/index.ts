@@ -28,14 +28,16 @@ import { toCsv } from "./csv.js";
 import { runPlugin, sandboxCheck } from "./plugin-host.js";
 import { claudeCliProvider } from "./claude-cli.js";
 import { brainSwitchPlan } from "./brain-switch.js";
-import { classifyAddress, connectProbe, deleteLocalModel, disposeLocal, downloadedEmbeddedModelId, downloadedModelsView, embeddedFilenameFor, embeddedFilenames, engineForModel, freeMemory, freeOutgoingBrain, isEmbeddedModel, localModels, localStatus, makeEngine, modelLoaded, openModelsFolder, pullModel, warmEmbeddedModel } from "./local.js";
+import { classifyAddress, connectProbe, deleteLocalModel, disposeLocal, downloadedEmbeddedModelId, downloadedModelsView, embeddedFilenameFor, embeddedFilenames, engineForModel, freeMemory, freeOutgoingBrain, isEmbeddedModel, localModels, localStatus, makeEngine, modelLoaded, ollamaPathCatalogModel, openModelsFolder, pullModel, warmEmbeddedModel } from "./local.js";
+import { installManagedOllama } from "./ollama-dist.js";
+import { setUpAndGet } from "./ollama-setup.js";
 import { normalizeEndpoint } from "./connect-endpoint.js";
 import { appendMessage, createTokenCoalescer, deleteChat, getChat, listChats, newChat, renameChat, sendChatStatus, sendChatToken } from "./chat-store.js";
 import { resolveChatReply } from "./chat-reply.js";
 import { validateOllamaName } from "./ollama-name.js";
 import { disposeOllama, ensureOllamaRunning, fakeLaunchCount, ollamaInstalled, pickOllamaAction, sweepOrphanedOllama } from "./ollama-launch.js";
 import { getSettings, setOllamaLaunch, type OllamaLaunch } from "./settings-store.js";
-import { sweepOrphanParts } from "./download.js";
+import { DownloadError, sweepOrphanParts } from "./download.js";
 import { initialNewness, observeThread } from "./dm-newness.js";
 import { helloManifest } from "../plugins/hello/manifest.js";
 import { aiVisibilityManifest } from "../plugins/ai-visibility/manifest.js";
@@ -849,6 +851,32 @@ app
       } catch (err) {
         // The engine's message is already plain-language + safe (no key/prompt).
         const message = err instanceof Error ? err.message : "The download didn't finish. Try again.";
+        send({ modelId, percent: 0, status: message, done: true, ok: false });
+        return { ok: false, message };
+      }
+    });
+
+    // Loop 047: set the helper (Ollama) up if needed, start it, then get the brain — one flow,
+    // after the user's consent in the renderer. Only a CATALOG brain that runs through Ollama is
+    // accepted (never free text), and progress streams back on `local:pullProgress` with a phase.
+    registerTrusted(TRUST, "local:setUp", async (rawId: unknown): Promise<LocalActionResult> => {
+      const modelId = typeof rawId === "string" ? rawId : "";
+      const target = await ollamaPathCatalogModel(modelId);
+      if (!target) return { ok: false, message: "That brain isn't one Skovern can set up." };
+      const send = (view: PullProgressView): void => mainWindow?.webContents.send("local:pullProgress", view);
+      try {
+        await setUpAndGet(modelId, target.sizeBytes ?? 0, (t) => send({ modelId, phase: t.phase, percent: t.percent, status: t.phase, done: false, ok: true }), {
+          installed: ollamaInstalled,
+          install: installManagedOllama,
+          start: () => ensureOllamaRunning(() => makeEngine().detect(), 20_000),
+          allowAutoStart: () => setOllamaLaunch("always"),
+          pull: pullModel,
+          sink: fileFetchSink(),
+        });
+        send({ modelId, percent: 100, status: "done", done: true, ok: true });
+        return { ok: true, message: "Downloaded — it's ready to use." };
+      } catch (err) {
+        const message = err instanceof DownloadError || err instanceof Error ? err.message : "The set-up didn't finish. Try again.";
         send({ modelId, percent: 0, status: message, done: true, ok: false });
         return { ok: false, message };
       }
