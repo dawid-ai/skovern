@@ -32,11 +32,45 @@ const FORBIDDEN = [
   // A bare import or re-export of a Node built-in (`from "fs"`), 046 checker iteration 9 N8.
   /\bfrom\s*["'](fs|fs\/promises|net|tls|dgram|dns|http|https|http2|os|path|child_process|worker_threads|cluster|vm|module|inspector)["']/,
 ];
+// Every static import or re-export must be a relative path that stays inside the package, so no
+// `electron`, `original-fs`, or any other package can reach the main process through it (SEC-046
+// hardening 1). Like FORBIDDEN, this scan is a tripwire, not proof.
+const IMPORT_SPEC = /\b(?:from|import)\s*["']([^"']*)["']/g;
 
 // Throw rather than process.exit(): exiting with a fetch socket still open crashes Node on Windows.
 const fail = (msg) => {
   throw new Error(msg);
 };
+
+// The one locked model-fit version and its hash. Every lockfile key for the package must name the
+// same version, its resolution must be a registry integrity hash (no tarball URL, git, or file),
+// and every importer must use that version, so the gate can't verify one version while another
+// installs (SEC-046-2).
+function lockedModelFit(lock) {
+  // Only pnpm's own spelling counts: a hand-written double-quoted key or an npm: alias would dodge
+  // the regexes below, so any other line naming the package fails (046 SEC H-A).
+  for (const line of lock.split("\n")) {
+    if (!line.includes("dawid-ai/model-fit")) continue;
+    if (!/^( {6}'@dawid-ai\/model-fit':| {2}'@dawid-ai\/model-fit@[^']*':( \{\})?)$/.test(line)) fail(`unexpected lockfile line: ${line.trim()}`);
+  }
+  // Every package in the lockfile resolves from the registry by hash: no tarball URL, git, or file.
+  for (const [, res] of lock.matchAll(/^\s+resolution: (.*)$/gm)) {
+    if (!/^\{integrity: sha512-[A-Za-z0-9+/]+={0,2}\}$/.test(res)) fail(`a lockfile resolution isn't a registry integrity hash: ${res}`);
+  }
+  const versions = [...new Set([...lock.matchAll(/^ {2}'@dawid-ai\/model-fit@([^']*)':/gm)].map((k) => k[1]))];
+  if (versions.length !== 1) fail(`pnpm-lock.yaml must lock exactly one ${PKG} version, found ${versions.join(", ") || "none"}`);
+  const [version] = versions;
+  if (!/^\d+\.\d+\.\d+$/.test(version)) fail(`locked version "${version}" isn't a plain release version`);
+  const resolutions = [...lock.matchAll(/^ {2}'@dawid-ai\/model-fit@[^']*':\n {4}resolution: (.*)$/gm)].map((r) => r[1]);
+  if (resolutions.length !== 1) fail(`expected one resolution for ${PKG}, found ${resolutions.length}`);
+  const r = /^\{integrity: (sha512-[A-Za-z0-9+/]+={0,2})\}$/.exec(resolutions[0]);
+  if (!r) fail(`${PKG} resolution isn't a registry integrity hash: ${resolutions[0]}`);
+  const used = [...lock.matchAll(/^ {6}'@dawid-ai\/model-fit':\n {8}specifier: .*\n {8}version: (.*)$/gm)].map((u) => u[1]);
+  if (used.length === 0) fail(`no importer uses ${PKG}`);
+  const other = used.find((v) => v !== version);
+  if (other !== undefined) fail(`an importer uses ${PKG} ${other}, not the verified ${version}`);
+  return { version, integrity: r[1] };
+}
 
 // On Windows, Git Bash's tar can come first on PATH and reads "C:" as a remote host; use the
 // system tar there (046 checker N4).
@@ -51,10 +85,7 @@ const jsFiles = (root, rel = "") =>
 
 const dir = mkdtempSync(path.join(tmpdir(), "model-fit-verify-"));
 try {
-  const lock = readFileSync("pnpm-lock.yaml", "utf8");
-  const m = lock.match(/'@dawid-ai\/model-fit@(\d+\.\d+\.\d+)':\n\s+resolution: \{integrity: (sha512-[A-Za-z0-9+/=]+)\}/);
-  if (!m) fail("no locked version with an integrity hash in pnpm-lock.yaml");
-  const [, version, integrity] = m;
+  const { version, integrity } = lockedModelFit(readFileSync("pnpm-lock.yaml", "utf8"));
   const tgz = path.join(dir, `model-fit-${version}.tgz`);
   const res = await fetch(`https://registry.npmjs.org/${PKG}/-/model-fit-${version}.tgz`);
   if (!res.ok) fail(`tarball download failed: HTTP ${res.status}`);
@@ -71,7 +102,7 @@ try {
   try {
     execFileSync(
       "gh",
-      ["attestation", "verify", tgz, "--bundle", bundle, "--digest-alg", "sha512", "--repo", REPO, "--signer-workflow", WORKFLOW, "--source-ref", `refs/tags/v${version}`],
+      ["attestation", "verify", tgz, "--bundle", bundle, "--digest-alg", "sha512", "--repo", REPO, "--signer-workflow", WORKFLOW, "--source-ref", `refs/tags/v${version}`, "--deny-self-hosted-runners"],
       { stdio: "pipe" },
     );
   } catch (e) {
@@ -95,6 +126,15 @@ try {
   for (const f of files) {
     const code = readFileSync(path.join(root, f), "utf8");
     for (const re of FORBIDDEN) if (re.test(code)) fail(`${f} matches ${re} — the module must stay pure`);
+    // An escape (`process`, `"./../x.js"`) would hide a name from both scans; the
+    // shipped JS has none (046 SEC H-B).
+    if (code.includes("\\")) fail(`${f} contains a backslash escape — the scans can't see through it`);
+    for (const [, spec] of code.matchAll(IMPORT_SPEC)) {
+      const target = path.relative(root, path.resolve(root, path.dirname(f), spec));
+      if (!/^\.\.?\//.test(spec) || target.startsWith("..") || path.isAbsolute(target)) {
+        fail(`${f} imports "${spec}" — only files inside the package are allowed`);
+      }
+    }
   }
   const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
   // Every code entry point must resolve inside dist/src, so a repointed main can't dodge the scan.

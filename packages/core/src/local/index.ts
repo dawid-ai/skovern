@@ -4,7 +4,7 @@
 export { ollamaEngine, ollamaResidentModels, ollamaUnload } from "./ollama.js";
 export type { OllamaOptions } from "./ollama.js";
 export { localProvider } from "./provider.js";
-export { verdict } from "./verdict.js";
+export { verdict, UNIFIED_USABLE } from "./verdict.js";
 export type {
   LocalEngine,
   LocalGenerateResult,

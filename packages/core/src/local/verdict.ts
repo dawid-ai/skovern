@@ -17,9 +17,12 @@ const GB = 1024 * 1024 * 1024;
 // Below this, a "GPU" is really an iGPU too small to accelerate a useful model — treat the
 // machine as CPU-only rather than promise acceleration it can't give.
 const MIN_USEFUL_VRAM = 2 * GB;
-// Unified memory (Apple) is shared with the OS and your apps; only part is usable for a model.
-// ponytail: a constant until Loop B reads Metal's real working-set limit.
-const UNIFIED_USABLE = 0.66;
+// Unified memory (Apple Silicon, AMD Ryzen AI Max, NVIDIA GB10) is shared with the OS and your
+// apps; only part is usable for a model. Exported so the hardware scan can tell whether a chip's
+// shared pool beats its own carve-out.
+// ponytail: a constant until Loop B reads the real limit (Metal's working set, AMD's shared-memory
+// cap, which is closer to half on Windows and Linux).
+export const UNIFIED_USABLE = 0.66;
 // A model with more params than this on CPU-only is "painfully slow" territory.
 const CPU_SLOW_PARAMS = 7;
 // "Good" = capable enough to be worth running locally at all.
@@ -77,7 +80,8 @@ function fitOne(profile: HardwareProfile, m: VerdictModel): ModelFit {
     // We couldn't read memory at all — be honest, don't guess a pass.
     f = amber("We couldn't check", "This computer didn't tell us how much memory it has, so we're not sure how well it'll run.");
   } else if (r.runMode === "gpu") {
-    // A Mac has no separate graphics card — its brain runs in the computer's shared memory.
+    // A unified-memory machine (a Mac, a Ryzen AI Max, a GB10) has no separate graphics card — its
+    // brain runs in the computer's shared memory.
     const where = profile.unifiedMemory ? "in this computer's memory" : "on your graphics card";
     if (r.level === "marginal") {
       const mem = profile.unifiedMemory ? "this computer's memory" : "your graphics card's memory";

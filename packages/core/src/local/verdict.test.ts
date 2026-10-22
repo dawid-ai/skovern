@@ -78,6 +78,18 @@ describe("verdict — honesty table", () => {
     expect(v.recommendedModelId).toBe("qwen2.5:7b");
   });
 
+  // Dawid (2026-10-22): a unified-memory box that isn't a Mac. The hardware scan marks a Ryzen AI
+  // Max as shared memory; its named chip gives the speed (256 GB/s), not the processor's.
+  it("ryzen ai max (128GB shared): judged like a Mac, quick on its chip, picks the biggest", () => {
+    const halo = profile({ ramBytes: 128 * GB, cpuCores: 16, unifiedMemory: true, gpus: [{ model: "AMD Radeon(TM) 8060S Graphics", vramBytes: null }] });
+    const v = verdict(halo, MODELS);
+    expect(v.fits.every((f) => f.tier === "green")).toBe(true);
+    expect(v.canRunGoodOne).toBe(true);
+    expect(v.recommendedModelId).toBe("qwen2.5:14b");
+    expect(v.fits.find((f) => f.modelId === "qwen2.5:14b")!.label).toBe("Runs great here");
+    expect(v.fits.find((f) => f.modelId === "qwen2.5:14b")!.note).toMatch(/in this computer's memory/);
+  });
+
   it("potato (8GB, no usable GPU): CPU-only — small ones work but slowly, big one won't", () => {
     const v = verdict(profile({ ramBytes: 8 * GB }), MODELS);
     // nothing is green on CPU — the honesty rule: CPU never = fast
