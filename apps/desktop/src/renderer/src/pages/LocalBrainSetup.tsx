@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { LocalModelView, LocalStatusView, PullProgressView } from "../../../shared/local.js";
 import { partitionModels } from "./local-partition.js";
 import { ConnectBrain } from "./ConnectBrain.js";
+import { speedWords } from "./speed-words.js";
 
 // "On this computer — free & private": the local-brain setup view, reached from
 // Settings (its own place, per the IA rule). Full-width: two callout cards up top —
@@ -235,10 +236,11 @@ export function LocalBrainSetup({
           <h3>{m.label}</h3>
         </div>
         <p className="hint">
-          {TIER_WORD[m.tier] ?? ""}
+          {m.fitLabel || TIER_WORD[m.tier] || ""}
           {m.size ? ` · ${m.size}` : ""}
           {m.note ? ` — ${m.note}` : m.tradeoff ? ` — ${m.tradeoff}` : ""}
         </p>
+        {speedWords(m.tokPerSec) && <p className="hint local-speed">{speedWords(m.tokPerSec)}</p>}
         {transparency(m, false)}
         <div className="callout-action">{action(m)}</div>
       </div>
@@ -279,8 +281,9 @@ export function LocalBrainSetup({
                   <td>
                     <span className="local-fit">
                       <span className={`fit-dot fit-${m.tier}`} aria-hidden="true" />
-                      {TIER_WORD[m.tier] ?? ""}
+                      {m.fitLabel || TIER_WORD[m.tier] || ""}
                     </span>
+                    {speedWords(m.tokPerSec) && <span className="local-speed">{speedWords(m.tokPerSec)}</span>}
                   </td>
                   <td>{m.size ?? "—"}</td>
                   <td>

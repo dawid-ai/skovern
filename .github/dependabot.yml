@@ -1,0 +1,14 @@
+version: 2
+updates:
+  # Loop 046: new @dawid-ai/model-fit releases (data or formula updates) arrive as a PR here.
+  # Scoped to that one package so it stays a small, reviewable stream. Review-only: never auto-merge.
+  # CI's "Verify @dawid-ai/model-fit provenance and purity" step must pass (SEC-046-1).
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    allow:
+      - dependency-name: "@dawid-ai/model-fit"
+    versioning-strategy: increase
+    commit-message:
+      prefix: "deps"

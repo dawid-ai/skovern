@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# Read-only token: nothing in CI needs to write to the repo (SEC-046 hardening 5).
+permissions:
+  contents: read
+
 jobs:
   gates:
     runs-on: ubuntu-latest
@@ -15,6 +19,14 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      # SEC-046-1: @dawid-ai/model-fit runs in the main process, so every version (and every
+      # Dependabot bump) must prove it was built by its own repo's publish workflow from its tag.
+      # It reads only the lockfile, so it runs before install: no code from an unverified version
+      # runs first.
+      - name: Verify @dawid-ai/model-fit provenance and purity
+        run: node scripts/verify-model-fit.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
       - run: pnpm install --frozen-lockfile
       - name: Typecheck
         run: pnpm typecheck

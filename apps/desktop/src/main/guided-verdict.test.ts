@@ -67,15 +67,38 @@ describe("display tiers — Ollama rows get their REAL fit, not a default amber 
     const gpu24 = profile({ bestVramBytes: 24 * GB });
     // A small Ollama-only model alongside the huge ones: the display verdict must judge each on
     // its own merits, not blanket-amber every non-built-in.
-    const cat = [...CATALOG, { id: "llama3.2:1b", label: "Llama 3.2 1B (Ollama)", params: 1 }];
+    // 046: a genuinely huge one (70B ≈ 41 GB) joins, because with real KV math a Q4 32B (~20 GB)
+    // DOES fit a 24 GB card (llmfit agrees) — the "huge model shows its honest non-green tier"
+    // guard now rides the 70B.
+    const cat = [
+      ...CATALOG,
+      { id: "llama3.2:1b", label: "Llama 3.2 1B (Ollama)", params: 1 },
+      { id: "llama3.1:70b", label: "Llama 3.1 70B (Ollama)", params: 70 },
+    ];
     const fitOf = (id: string) => verdict(gpu24, allCandidates(cat)).fits.find((f) => f.modelId === id)!.tier;
 
     expect(fitOf("llama3.2:1b")).toBe("green"); // a 1B on a 24 GB card is fast — the BUG A case
     expect(fitOf("gemma2:22b")).toBe("green"); // 22B still fits 24 GB → green
-    expect(fitOf("qwen2.5:32b")).toBe("amber"); // 32B is bigger than 24 GB VRAM → honest amber (not defaulted)
+    expect(fitOf("qwen2.5:32b")).toBe("green"); // params 32, no size: ~20.1 GB of 24 GB (84%) → fits with room
+    expect(fitOf("llama3.1:70b")).toBe("amber"); // ~43 GB: far bigger than the card, so it spills to RAM → honest amber (not defaulted)
 
     // The recommendation is UNCHANGED — the built-in-only pass still picks the biggest built-in,
     // never the (bigger, greener) Ollama models. Widening the DISPLAY set didn't widen the pick.
     expect(verdict(gpu24, builtInCandidates(cat)).recommendedModelId).toBe("qwen2.5:14b");
+  });
+});
+
+describe("speed only for what we actually know (046)", () => {
+  it("a model with no params and no size gets a tier but never a made-up speed", () => {
+    const gpu24 = profile({ bestVramBytes: 24 * GB });
+    const cat = [
+      { id: "mystery:latest", label: "mystery:latest" }, // nothing known → 3B placeholder, guessed
+      { id: "sized:latest", label: "sized:latest", sizeBytes: 2 * GB }, // size known → real estimate
+    ];
+    const fits = verdict(gpu24, allCandidates(cat)).fits;
+    const mystery = fits.find((f) => f.modelId === "mystery:latest")!;
+    expect(mystery.tier).toBe("green");
+    expect(mystery.tokPerSec).toBeNull();
+    expect(fits.find((f) => f.modelId === "sized:latest")!.tokPerSec).toBeGreaterThan(0);
   });
 });

@@ -27,6 +27,7 @@
     "systeminformation": "^5.31.16"
   },
   "devDependencies": {
+    "@dawid-ai/model-fit": "0.2.0",
     "@skovern/site": "workspace:^",
     "@playwright/test": "^1.61.1",
     "@testcontainers/postgresql": "^10.13.2",

@@ -32,6 +32,8 @@ export interface LocalModelView {
   embedded?: boolean;
   tier: FitTier;
   usable: boolean;
+  /** Short label next to the tier dot, from the SAME fit as `tier`; amber says why (046). */
+  fitLabel: string;
   /** Warm one-liner for this model on this computer. */
   note: string;
   /** True for the single best pick — highlighted in the UI. */
@@ -44,6 +46,9 @@ export interface LocalModelView {
   tradeoff?: string;
   /** Human size ("2.0 GB"), when known. */
   size?: string;
+  /** Estimated tokens per second here (046) — from the SAME fit as `tier`. Null when it won't run
+   *  here, memory is unknown, or we don't know the model's size at all. */
+  tokPerSec: number | null;
 }
 
 /** Result of `local:status` — is Ollama here, and how does this computer look. */

@@ -13,14 +13,16 @@ import type { VerdictModel } from "@skovern/core";
 
 const GB = 1024 * 1024 * 1024;
 
-type CandidateInput = { id: string; label: string; params?: number; sizeBytes?: number; gguf?: unknown };
+type CandidateInput = { id: string; label: string; params?: number; sizeBytes?: number; quant?: string; gguf?: unknown };
 
 // A catalog model may not state its parameter size; estimate from the file size so the verdict
-// can still score it (Q4 ≈ 0.6 GB per billion params).
+// can still score it (Q4 ≈ 0.6 GB per billion params). With neither, the 3B placeholder still
+// gives it a tier, but it's marked guessed so no made-up speed is ever shown for it (046).
 function toVerdictModel(m: CandidateInput): VerdictModel {
+  const guessed = m.params === undefined && !m.sizeBytes;
   const params = m.params ?? (m.sizeBytes ? m.sizeBytes / (0.6 * GB) : 3);
   // Built-in models are always fetchable (we download them), so fetchable is unconditionally true.
-  return { id: m.id, label: m.label, params, sizeBytes: m.sizeBytes, fetchable: true };
+  return { id: m.id, label: m.label, params, sizeBytes: m.sizeBytes, quant: m.quant, fetchable: true, ...(guessed ? { paramsGuessed: true } : {}) };
 }
 
 /** The built-in-only candidate set for the guided recommendation. A model is built-in when it
