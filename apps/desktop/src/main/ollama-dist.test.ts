@@ -167,6 +167,7 @@ describe("installManagedOllama", () => {
     const old = path.join(managedOllamaRoot(), "0.30.0", EXE);
     mkdirSync(path.dirname(old), { recursive: true });
     writeFileSync(old, "older helper");
+    writeFileSync(path.join(managedOllamaRoot(), "0.30.0-ollama-windows-amd64.zip.part"), "half of an old pin's zip"); // N-b
     useZip(fakeOllamaZip()); // the current pin is 0.0.0-test, not set up yet
     expect(managedOllamaBin()).toBe(old);
     const fresh = await installManagedOllama(sink(), undefined, serveBytes(fakeOllamaZip())); // set-up installs the new pin

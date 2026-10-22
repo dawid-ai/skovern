@@ -1,12 +1,13 @@
 import { open } from "node:fs/promises";
 
 // Loop 047 (checker B1, iteration-2 N-a): read a zip's own directory BEFORE anything unpacks it,
-// and accept only the plain shape Ollama's build has, so the system unzip can't see anything this
-// check didn't: one end record at the very end (no comment), a file list that fills exactly the
-// space before it, stored or deflated entries with no flags beyond the harmless ones, names of
-// plain printable ASCII that match byte for byte in both headers, and no extra fields except
-// timestamps (an Info-ZIP Unicode-path or attribute field could hand the unzip a different name
-// or file type). Read-only. No dependency.
+// and accept only the plain shape Ollama's build has: one end record at the very end (no comment,
+// no zip64 pointer before it), a file list that fills exactly the space before it, entries with no
+// comments, stored or deflated with no flags beyond the harmless ones, names of plain printable
+// ASCII that match byte for byte in both headers, and no extra fields except timestamps. This
+// narrows what the system unzip can read differently; it doesn't close it. A file that is also a
+// valid tar or other archive can still be read as that by bsdtar (checker iteration 3, N2), which
+// is why the zip's sha256 pin, checked before this, is the primary control. Read-only.
 
 export interface ZipEntry {
   name: string;
@@ -21,6 +22,7 @@ const MAX_ENTRIES = 10_000;
 const EOCD_SIG = 0x06054b50;
 const CDH_SIG = 0x02014b50;
 const LFH_SIG = 0x04034b50;
+const ZIP64_LOCATOR_SIG = 0x07064b50;
 // General-purpose flags we accept: bits 1–2 (deflate speed hints) and 11 (UTF-8 names). Anything
 // else — encryption, a data descriptor (bit 3), patched data — is refused.
 const OK_FLAGS = 0x0806;
@@ -64,6 +66,12 @@ export async function readZipEntries(zipPath: string): Promise<{ entries: ZipEnt
     if (disk !== 0 || cdDisk !== 0 || onDisk !== count || e.readUInt16LE(20) !== 0) return { reason: "a damaged file list" };
     // The file list must end exactly where the end record starts.
     if (count > MAX_ENTRIES || cdOffset + cdSize !== eocdPos) return { reason: "a damaged file list" };
+    // A zip64 locator right before the end record makes libarchive read a DIFFERENT file list
+    // (checker iteration 3, N1). Refuse it outright.
+    if (eocdPos >= 20) {
+      const loc = await read(eocdPos - 20, 4);
+      if (loc && loc.readUInt32LE(0) === ZIP64_LOCATOR_SIG) return { reason: "a file list we don't read (zip64)" };
+    }
 
     const cd = await read(cdOffset, cdSize);
     if (!cd) return { reason: "a damaged file list" };
@@ -80,6 +88,8 @@ export async function readZipEntries(zipPath: string): Promise<{ entries: ZipEnt
       const localOffset = cd.readUInt32LE(p + 42);
       const end = p + 46 + nameLen + extraLen + commentLen;
       if (end > cd.length) return { reason: "a damaged file list" };
+      // Entry comments carry nothing we need, and could hide a zip64 locator (N1).
+      if (commentLen !== 0) return { reason: "a file list with comments" };
       const nameBytes = cd.subarray(p + 46, p + 46 + nameLen);
       const extra = cd.subarray(p + 46 + nameLen, p + 46 + nameLen + extraLen);
       p = end;

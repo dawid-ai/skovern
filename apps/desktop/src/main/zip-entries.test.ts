@@ -5,8 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { extraField, fakeOllamaZip, makeZip } from "../../e2e/zip-fixture.js";
 import { readZipEntries } from "./zip-entries.js";
 
-// Loop 047, checker iteration 2 (N-a): the zip's own file list is read strictly, so the system
-// unzip can never see a name, file type, or entry this check didn't.
+// Loop 047, checker iterations 2–3: the zip's own file list is read strictly, narrowing what the
+// system unzip could read differently. The sha256 pin, checked first, is the primary control.
 
 let dir = "";
 beforeEach(() => {
@@ -46,6 +46,26 @@ describe("readZipEntries refuses anything another reader could see differently",
     ["a damaged extra field", { extra: Buffer.from([0x0a, 0x00, 0xff, 0x00]) }, /damaged extra field/],
   ] as const)("%s", async (_label, entry, reason) => {
     expect(await reasonOf(makeZip([{ name: "lib/a.dll", data: "x", ...entry }]))).toMatch(reason);
+  });
+
+  it("a zip64 locator right before the end record (libarchive would follow it — iteration 3, N1)", async () => {
+    // The locator hides in the data of an ALLOWED timestamp extra that ends the file list, so the
+    // name, flag, and extra-ID rules all pass — only the zip64 refusal can catch it.
+    const locator = Buffer.alloc(20);
+    locator.writeUInt32LE(0x07064b50, 0);
+    const z = makeZip([{ name: "a.dll", data: "x", extra: extraField(0x5455, locator) }]);
+    expect(await reasonOf(z)).toMatch(/zip64/);
+    // Same zip without the signature reads fine.
+    expect(await reasonOf(makeZip([{ name: "a.dll", data: "x", extra: extraField(0x5455, Buffer.alloc(20)) }]))).toBeNull();
+  });
+
+  it("an entry comment in the file list", async () => {
+    const z = makeZip([{ name: "a.dll", data: "x" }]);
+    const cdStart = z.readUInt32LE(z.length - 22 + 16);
+    // Give the entry a 1-byte comment by taking it from the name length (keeps the list size exact).
+    z.writeUInt16LE(z.readUInt16LE(cdStart + 28) - 1, cdStart + 28);
+    z.writeUInt16LE(1, cdStart + 32);
+    expect(await reasonOf(z)).toMatch(/comments/);
   });
 
   it("a comment after the end record (where a fake end record could hide)", async () => {

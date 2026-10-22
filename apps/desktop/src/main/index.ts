@@ -871,15 +871,19 @@ app
       setUpRun = { modelId, phase: "helper", percent: 0, status: "starting", done: false, ok: true };
       const target = await ollamaPathCatalogModel(modelId).catch(() => null);
       if (!target) {
+        // Release the claim WITH a done event, so a screen that adopted it doesn't freeze (N5).
+        const message = "That brain isn't one Skovern can set up.";
         setUpRun = null;
-        return { ok: false, message: "That brain isn't one Skovern can set up." };
+        mainWindow?.webContents.send("local:pullProgress", { modelId, percent: 0, status: message, done: true, ok: false });
+        return { ok: false, message };
       }
       const send = (view: PullProgressView): void => {
         setUpRun = view.done ? null : view;
         mainWindow?.webContents.send("local:pullProgress", view);
       };
-      send({ modelId, phase: "helper", percent: 0, status: "starting", done: false, ok: true });
       try {
+        // Inside the try, so a failed first send still frees the slot (checker iteration 3, N6).
+        send({ modelId, phase: "helper", percent: 0, status: "starting", done: false, ok: true });
         await setUpAndGet(modelId, target.sizeBytes ?? 0, (t) => send({ modelId, phase: t.phase, percent: t.percent, status: t.phase, done: false, ok: true }), {
           installed: ollamaInstalled,
           install: installManagedOllama,
