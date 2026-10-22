@@ -866,8 +866,14 @@ app
     registerTrusted(TRUST, "local:setUp", async (rawId: unknown): Promise<LocalActionResult> => {
       if (setUpRun) return { ok: false, message: "Skovern is already getting a brain ready — hang tight." };
       const modelId = typeof rawId === "string" ? rawId : "";
-      const target = await ollamaPathCatalogModel(modelId);
-      if (!target) return { ok: false, message: "That brain isn't one Skovern can set up." };
+      // Claim the one slot BEFORE the first await, so two calls in the same moment (a double
+      // click, a second window) can't both get past the check (checker iteration 2, B4).
+      setUpRun = { modelId, phase: "helper", percent: 0, status: "starting", done: false, ok: true };
+      const target = await ollamaPathCatalogModel(modelId).catch(() => null);
+      if (!target) {
+        setUpRun = null;
+        return { ok: false, message: "That brain isn't one Skovern can set up." };
+      }
       const send = (view: PullProgressView): void => {
         setUpRun = view.done ? null : view;
         mainWindow?.webContents.send("local:pullProgress", view);

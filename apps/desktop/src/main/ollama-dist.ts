@@ -201,7 +201,9 @@ export async function installManagedOllama(
 
   // Keep only the version we just set up.
   for (const name of await readdir(root).catch(() => [] as string[])) {
-    if (name !== dist.version && !name.endsWith(".zip.part")) await rm(path.join(root, name), { recursive: true, force: true }).catch(() => {});
+    // Old pins' partial downloads go too (checker iteration 2, N-b). An older helper that's still
+    // running can't be deleted on Windows; it stays until the next set-up (accepted, see contract).
+    if (name !== dist.version) await rm(path.join(root, name), { recursive: true, force: true }).catch(() => {});
   }
   return path.join(final, exeName());
 }

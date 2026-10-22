@@ -55,6 +55,7 @@ export function LocalBrainSetup({
   const [helper, setHelper] = useState<LocalModelsView["helper"]>(null);
   const [consentFor, setConsentFor] = useState<string | null>(null);
   const unsubPull = useRef<(() => void) | null>(null);
+  const mounted = useRef(false);
 
   const refresh = useCallback(async () => {
     setBusy(true);
@@ -74,7 +75,8 @@ export function LocalBrainSetup({
     // 047 (checker B4): a set-up started before this screen opened is still running in main —
     // show its progress and nothing to click, then refresh when it ends.
     const run = await window.skovern.local.setUpStatus();
-    if (run && !unsubPull.current) {
+    // The screen may have closed while we asked — then don't subscribe at all (checker N-d).
+    if (run && !unsubPull.current && mounted.current) {
       setPulling((prev) => ({ ...prev, [run.modelId]: run }));
       unsubPull.current = window.skovern.local.onPullProgress((p) => {
         if (!p.done) {
@@ -95,8 +97,13 @@ export function LocalBrainSetup({
   }, []);
 
   useEffect(() => {
+    mounted.current = true;
     void refresh();
-    return () => unsubPull.current?.();
+    return () => {
+      mounted.current = false;
+      unsubPull.current?.();
+      unsubPull.current = null;
+    };
   }, [refresh]);
 
   async function useModel(id: string) {

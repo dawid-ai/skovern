@@ -55,13 +55,15 @@ const sentFor = (dir: string, host: string) => receiptsOf(dir).some((r) => r.hos
 /** A fixture set for one app run: the catalog, the helper download, and the fake Ollama. */
 async function fixtures(
   dir: string,
-  opts: { pullError?: string; dropFirstHelper?: boolean; ollamaUp?: boolean; slowPullMs?: number; neverUp?: boolean } = {},
+  opts: { pullError?: string; dropFirstHelper?: boolean; ollamaUp?: boolean; slowPullMs?: number; neverUp?: boolean; catalogDelayMs?: number } = {},
 ) {
   const seen = { helperRequests: 0, helperSawReceipt: false, pullRequests: 0, pullSawReceipt: false, ranges: [] as string[] };
   const state = { up: opts.ollamaUp ?? false };
   const catalogUrl = await listen((_q, s) => {
-    s.writeHead(200, { "content-type": "application/json" });
-    s.end(SHIPPED);
+    setTimeout(() => {
+      s.writeHead(200, { "content-type": "application/json" });
+      s.end(SHIPPED);
+    }, opts.catalogDelayMs ?? 0);
   });
   const helperUrl = await listen((req, s) => {
     seen.helperRequests++;
@@ -349,6 +351,33 @@ test("M4(f) + M6: leaving and coming back mid-set-up shows the running set-up �
     await expect(page.getByText("Local: qwen2.5:32b")).toBeVisible({ timeout: 60_000 });
     expect(fx.seen.helperRequests).toBe(1);
     expect(fx.seen.pullRequests).toBe(1);
+  } finally {
+    await app.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Checker iteration 2, B4: two calls in the same moment (a double click, a second window) — one
+// set-up runs, the other is refused, and nothing is downloaded twice.
+test("M4(f): two set-up calls at once → one runs, one is refused", async () => {
+  test.setTimeout(120_000);
+  const dir = fresh();
+  const fx = await fixtures(dir, { catalogDelayMs: 300 });
+  const app = await launch(dir, envFor(fx));
+  try {
+    const page = await app.firstWindow();
+    await toGuided(page, "m4f-race@shop.test");
+    // Let the 3 s catalog cache lapse, so both calls really wait on the (slow) catalog together —
+    // the moment a check-then-await guard would let both through.
+    await page.waitForTimeout(3_500);
+    const results = await page.evaluate(() => Promise.all([window.skovern.local.setUp("qwen2.5:32b"), window.skovern.local.setUp("qwen2.5:32b")]));
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    expect(results.filter((r) => !r.ok).map((r) => r.message)).toEqual([expect.stringMatching(/already getting a brain ready/)]);
+    expect(fx.seen.helperRequests).toBe(1);
+    expect(fx.seen.pullRequests).toBe(1);
+    // A brain Skovern can't set up frees the slot again.
+    expect((await page.evaluate(() => window.skovern.local.setUp("not-a-catalog-brain"))).message).toMatch(/isn't one Skovern can set up/);
+    expect(await page.evaluate(() => window.skovern.local.setUpStatus())).toBeNull();
   } finally {
     await app.close();
     rmSync(dir, { recursive: true, force: true });

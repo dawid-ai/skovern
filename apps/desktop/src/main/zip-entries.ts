@@ -1,9 +1,12 @@
 import { open } from "node:fs/promises";
 
-// Loop 047 (checker B1): read a zip's own directory BEFORE anything unpacks it, so a link, an
-// unsafe name, or a local header that disagrees with the directory is refused up front — the
-// system unzip never gets a chance to write through a link. Read-only: the end record, the
-// central directory, and each entry's local header. No dependency.
+// Loop 047 (checker B1, iteration-2 N-a): read a zip's own directory BEFORE anything unpacks it,
+// and accept only the plain shape Ollama's build has, so the system unzip can't see anything this
+// check didn't: one end record at the very end (no comment), a file list that fills exactly the
+// space before it, stored or deflated entries with no flags beyond the harmless ones, names of
+// plain printable ASCII that match byte for byte in both headers, and no extra fields except
+// timestamps (an Info-ZIP Unicode-path or attribute field could hand the unzip a different name
+// or file type). Read-only. No dependency.
 
 export interface ZipEntry {
   name: string;
@@ -18,53 +21,96 @@ const MAX_ENTRIES = 10_000;
 const EOCD_SIG = 0x06054b50;
 const CDH_SIG = 0x02014b50;
 const LFH_SIG = 0x04034b50;
+// General-purpose flags we accept: bits 1–2 (deflate speed hints) and 11 (UTF-8 names). Anything
+// else — encryption, a data descriptor (bit 3), patched data — is refused.
+const OK_FLAGS = 0x0806;
+const OK_METHODS = new Set([0, 8]); // stored, deflate
+// Extra fields we accept: NTFS timestamps (0x000a) and extended timestamps (0x5455).
+const OK_EXTRAS = new Set([0x000a, 0x5455]);
 
-/** Why this zip can't be trusted to unpack, or null with its entries. Rejects zip64, a missing
- *  or malformed directory, and local headers whose name differs from the directory's. */
+/** Why these extra-field bytes aren't just timestamps, or null. */
+function badExtra(buf: Buffer): string | null {
+  let i = 0;
+  while (i < buf.length) {
+    if (i + 4 > buf.length) return "a damaged extra field";
+    const id = buf.readUInt16LE(i);
+    const len = buf.readUInt16LE(i + 2);
+    if (i + 4 + len > buf.length) return "a damaged extra field";
+    if (!OK_EXTRAS.has(id)) return `an extra field we don't accept (0x${id.toString(16).padStart(4, "0")})`;
+    i += 4 + len;
+  }
+  return null;
+}
+
+/** Why this zip can't be trusted to unpack, or its entries. */
 export async function readZipEntries(zipPath: string): Promise<{ entries: ZipEntry[] } | { reason: string }> {
   const fh = await open(zipPath, "r");
+  const read = async (pos: number, len: number): Promise<Buffer | null> => {
+    const b = Buffer.alloc(len);
+    const { bytesRead } = await fh.read(b, 0, len, pos);
+    return bytesRead === len ? b : null;
+  };
   try {
     const size = (await fh.stat()).size;
-    // The end record sits in the last 22 bytes + up to 64 KB of comment.
-    const tailLen = Math.min(size, 22 + 0xffff);
-    const tail = Buffer.alloc(tailLen);
-    await fh.read(tail, 0, tailLen, size - tailLen);
-    let eocd = -1;
-    for (let i = tailLen - 22; i >= 0; i--) {
-      if (tail.readUInt32LE(i) === EOCD_SIG) {
-        eocd = i;
-        break;
-      }
-    }
-    if (eocd < 0) return { reason: "a damaged file list" };
-    const count = tail.readUInt16LE(eocd + 10);
-    const cdSize = tail.readUInt32LE(eocd + 12);
-    const cdOffset = tail.readUInt32LE(eocd + 16);
+    if (size < 22) return { reason: "a damaged file list" };
+    // Exactly one place for the end record: the last 22 bytes, with no comment after it.
+    const eocdPos = size - 22;
+    const e = await read(eocdPos, 22);
+    if (!e || e.readUInt32LE(0) !== EOCD_SIG) return { reason: "a file list we don't read (a comment or a damaged end)" };
+    const [disk, cdDisk, onDisk, count] = [e.readUInt16LE(4), e.readUInt16LE(6), e.readUInt16LE(8), e.readUInt16LE(10)];
+    const cdSize = e.readUInt32LE(12);
+    const cdOffset = e.readUInt32LE(16);
     if (count === 0xffff || cdSize === 0xffffffff || cdOffset === 0xffffffff) return { reason: "a file list we don't read (zip64)" };
-    if (count > MAX_ENTRIES || cdOffset + cdSize > size) return { reason: "a damaged file list" };
+    if (disk !== 0 || cdDisk !== 0 || onDisk !== count || e.readUInt16LE(20) !== 0) return { reason: "a damaged file list" };
+    // The file list must end exactly where the end record starts.
+    if (count > MAX_ENTRIES || cdOffset + cdSize !== eocdPos) return { reason: "a damaged file list" };
 
-    const cd = Buffer.alloc(cdSize);
-    await fh.read(cd, 0, cdSize, cdOffset);
+    const cd = await read(cdOffset, cdSize);
+    if (!cd) return { reason: "a damaged file list" };
     const entries: ZipEntry[] = [];
     let p = 0;
     for (let i = 0; i < count; i++) {
       if (p + 46 > cd.length || cd.readUInt32LE(p) !== CDH_SIG) return { reason: "a damaged file list" };
+      const flags = cd.readUInt16LE(p + 8);
+      const method = cd.readUInt16LE(p + 10);
       const nameLen = cd.readUInt16LE(p + 28);
       const extraLen = cd.readUInt16LE(p + 30);
       const commentLen = cd.readUInt16LE(p + 32);
       const external = cd.readUInt32LE(p + 38);
       const localOffset = cd.readUInt32LE(p + 42);
-      const name = cd.subarray(p + 46, p + 46 + nameLen).toString("utf8");
-      p += 46 + nameLen + extraLen + commentLen;
+      const end = p + 46 + nameLen + extraLen + commentLen;
+      if (end > cd.length) return { reason: "a damaged file list" };
+      const nameBytes = cd.subarray(p + 46, p + 46 + nameLen);
+      const extra = cd.subarray(p + 46 + nameLen, p + 46 + nameLen + extraLen);
+      p = end;
 
-      // The local header is what a streaming unzip reads — it must name the same file.
-      const lfh = Buffer.alloc(30 + nameLen);
-      await fh.read(lfh, 0, lfh.length, localOffset);
-      if (lfh.readUInt32LE(0) !== LFH_SIG || lfh.readUInt16LE(26) !== nameLen || lfh.subarray(30).toString("utf8") !== name) {
+      // Plain printable ASCII only, so no two readers can decode a name differently.
+      if (nameBytes.some((b) => b < 0x20 || b > 0x7e)) return { reason: "a file name with unusual characters" };
+      const name = nameBytes.toString("latin1");
+      if ((flags & ~OK_FLAGS) !== 0) return { reason: `a file stored in a way we don't accept (${name})` };
+      if (!OK_METHODS.has(method)) return { reason: `a file packed in a way we don't accept (${name})` };
+      const xc = badExtra(extra);
+      if (xc) return { reason: `${xc} (${name})` };
+
+      // The local header is what a streaming unzip reads: same name bytes, same flags and method,
+      // and only timestamp extras.
+      if (localOffset >= cdOffset) return { reason: `a damaged file list (${name})` };
+      const lfh = await read(localOffset, 30);
+      if (!lfh || lfh.readUInt32LE(0) !== LFH_SIG) return { reason: `a damaged file list (${name})` };
+      const lNameLen = lfh.readUInt16LE(26);
+      const lExtraLen = lfh.readUInt16LE(28);
+      const lRest = await read(localOffset + 30, lNameLen + lExtraLen);
+      if (!lRest || lNameLen !== nameLen || !lRest.subarray(0, lNameLen).equals(nameBytes)) {
         return { reason: `a file whose two names disagree (${name})` };
       }
+      if (lfh.readUInt16LE(6) !== flags || lfh.readUInt16LE(8) !== method) return { reason: `a file whose two headers disagree (${name})` };
+      const xl = badExtra(lRest.subarray(lNameLen));
+      if (xl) return { reason: `${xl} (${name})` };
+
       entries.push({ name, unixType: (external >>> 16) & S_IFMT });
     }
+    // Nothing hidden after the last entry.
+    if (p !== cd.length) return { reason: "a damaged file list" };
     return { entries };
   } finally {
     await fh.close();
