@@ -37,6 +37,13 @@ const XTX = hw({ gpus: [{ model: "AMD Radeon RX 7900 XTX", vramBytes: 24 * GiB, 
 const UNKNOWN_GPU = hw({ gpus: [{ model: "Test GPU 24GB", vramBytes: 24 * GiB }], bestVramBytes: 24 * GiB });
 const CPU_16 = hw({ ramBytes: 16 * GiB, cpuCores: 8 });
 const NO_MEMORY = hw({ ramBytes: null, cpuCores: null });
+// What the hardware scan reports for a 128 GB Ryzen AI Max with its default carve-out: shared memory.
+const RYZEN_AI_MAX = hw({
+  ramBytes: 127.5 * GiB,
+  gpus: [{ model: "AMD Radeon(TM) 8060S Graphics", vramBytes: 0.5 * GiB, vendor: "Advanced Micro Devices, Inc." }],
+  bestVramBytes: 0.5 * GiB,
+  unifiedMemory: true,
+});
 
 // What the app should show for a shipped catalog model on a machine — computed from the SAME
 // module, with the same options Skovern's verdict passes (4096 context, 66% of unified memory, a
@@ -247,6 +254,26 @@ test("E3 + E5: CPU-only — small brains show a slower speed, red rows show none
       await expect(r.locator(".local-speed")).toHaveCount(0);
       await expect(r.getByRole("button", { name: /Get this one|Use this one|Needs Ollama/ })).toBeVisible(); // not a gate
     }
+  } finally {
+    await app.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("E7: a unified-memory box that isn't a Mac — named, judged on shared memory, never CPU-only", async () => {
+  test.setTimeout(180_000);
+  const { app, page, dir } = await openBrainTable(RYZEN_AI_MAX);
+  try {
+    await expect(page.locator(".local-specs")).toContainText("AMD Radeon(TM) 8060S Graphics (shares this computer's memory with your apps)");
+    await expect(page.locator(".local-specs")).not.toContainText("Apple");
+    await expect(page.locator(".local-headline")).toContainText("Good news");
+    const r14 = row(page, "Qwen2.5 14B");
+    await expect(r14.locator(".local-fit")).toHaveText("Runs great here");
+    await expect(r14.locator(".local-speed")).toHaveText(expectedWords(RYZEN_AI_MAX, "qwen2.5:14b"));
+    const r32 = row(page, "Qwen2.5 32B");
+    await expect(r32.locator(".fit-dot.fit-green")).toBeVisible();
+    await expect(r32.locator(".local-fit")).toHaveText("Fits here");
+    await expect(page.locator("table.local-table")).not.toContainText("processor");
   } finally {
     await app.close();
     rmSync(dir, { recursive: true, force: true });

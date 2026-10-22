@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const si = vi.hoisted(() => ({ mem: vi.fn(), graphics: vi.fn(), cpu: vi.fn(), fsSize: vi.fn() }));
 vi.mock("systeminformation", () => ({ default: si }));
 
-import { scanHardware } from "./hardware.js";
+import { isUnifiedApu, scanHardware, usesSharedMemory } from "./hardware.js";
 
 const MB = 1024 * 1024;
 const GB = 1024 * MB;
@@ -51,6 +51,55 @@ describe("scanHardware", () => {
     expect(p.unifiedMemory).toBe(true);
   });
 
+  // Dawid (2026-10-22): unified-memory boxes with no separate card (Mac minis, the newest NVIDIA
+  // boxes) must not read as CPU-only. A Ryzen AI Max on Windows reports only its BIOS carve-out
+  // (512 MB here) as VRAM, which alone would mean "no usable card".
+  it("judges a Ryzen AI Max on its shared memory when the carve-out is small", async () => {
+    si.mem.mockResolvedValue({ total: 127.5 * GB });
+    si.graphics.mockResolvedValue({
+      controllers: [{ model: "AMD Radeon(TM) 8060S Graphics", vram: 512, vendor: "Advanced Micro Devices, Inc." }],
+    });
+    si.cpu.mockResolvedValue({ cores: 16, manufacturer: "AMD", brand: "Ryzen AI MAX+ 395 w/ Radeon 8060S" });
+    si.fsSize.mockResolvedValue([{ available: 500 * GB }]);
+
+    const p = await scanHardware(() => Promise.resolve(512 * MB));
+    expect(p.unifiedMemory).toBe(true);
+  });
+
+  it("keeps a Ryzen AI Max on its carve-out when the user gave the graphics most of the memory", async () => {
+    // AMD Variable Graphics Memory at 96 of 128 GB: Windows sees 32 GB of RAM and 96 GB of VRAM.
+    si.mem.mockResolvedValue({ total: 32 * GB });
+    si.graphics.mockResolvedValue({ controllers: [{ model: "AMD Radeon(TM) 8060S Graphics", vram: 4096, vendor: "AMD" }] });
+    si.cpu.mockResolvedValue({ cores: 16, manufacturer: "AMD", brand: "Ryzen AI MAX+ 395 w/ Radeon 8060S" });
+    si.fsSize.mockResolvedValue([{ available: 500 * GB }]);
+
+    const p = await scanHardware(() => Promise.resolve(96 * GB));
+    expect(p.unifiedMemory).toBe(false);
+    expect(p.bestVramBytes).toBe(96 * GB);
+  });
+
+  it("judges an NVIDIA GB10 (DGX Spark) on its shared memory; its VRAM reads as unknown", async () => {
+    si.mem.mockResolvedValue({ total: 119 * GB });
+    si.graphics.mockResolvedValue({ controllers: [{ model: "NVIDIA GB10", vram: null, vendor: "NVIDIA" }] });
+    si.cpu.mockResolvedValue({ cores: 20, manufacturer: "ARM", brand: "Cortex-X925" });
+    si.fsSize.mockResolvedValue([{ available: 3000 * GB }]);
+
+    const p = await scanHardware(noReg);
+    expect(p.unifiedMemory).toBe(true);
+    // Shared memory is the answer, so no "couldn't detect your graphics memory" note.
+    expect(p.notes.some((n) => /graphics memory/i.test(n))).toBe(false);
+  });
+
+  it("leaves an ordinary laptop iGPU (Radeon 890M) as no usable card", async () => {
+    si.mem.mockResolvedValue({ total: 32 * GB });
+    si.graphics.mockResolvedValue({ controllers: [{ model: "AMD Radeon(TM) 890M Graphics", vram: 512, vendor: "AMD" }] });
+    si.cpu.mockResolvedValue({ cores: 12, manufacturer: "AMD", brand: "Ryzen AI 9 HX 370 w/ Radeon 890M" });
+    si.fsSize.mockResolvedValue([{ available: 500 * GB }]);
+
+    const p = await scanHardware(noReg);
+    expect(p.unifiedMemory).toBe(false);
+  });
+
   it("degrades honestly when graphics can't be read (null + a note, never a crash)", async () => {
     si.mem.mockResolvedValue({ total: 8 * GB });
     si.graphics.mockRejectedValue(new Error("no WMI"));
@@ -89,5 +138,31 @@ describe("scanHardware", () => {
     expect(p.notes.some((n) => /graphics memory/i.test(n))).toBe(false);
     // the registry VRAM is attributed to the discrete card, so the screen names it (not "Graphics card")
     expect(p.gpus.find((g) => g.model.includes("7900 XTX"))?.vramBytes).toBe(24 * GB);
+  });
+});
+
+describe("unified-memory chips", () => {
+  it("names the Ryzen AI Max and GB10 parts as they're reported, and nothing else", () => {
+    for (const name of [
+      "AMD Radeon(TM) 8060S Graphics",
+      "AMD Radeon 8050S",
+      "Radeon 8040S Graphics",
+      "Strix Halo [Radeon Graphics / Radeon 8050S / 8060S Graphics]",
+      "AMD RYZEN AI MAX+ 395 w/ Radeon 8060S",
+      "NVIDIA GB10",
+    ]) {
+      expect(isUnifiedApu(name), name).toBe(true);
+    }
+    for (const name of ["AMD Radeon(TM) 890M Graphics", "Ryzen AI 9 HX 370", "Intel(R) Arc(TM) 140V GPU", "NVIDIA GeForce RTX 4090", "AMD Radeon RX 7900 XTX", "NVIDIA GB100"]) {
+      expect(isUnifiedApu(name), name).toBe(false);
+    }
+  });
+
+  it("uses the shared pool only when it beats the carve-out, and never with unknown RAM", () => {
+    expect(usesSharedMemory(true, false, null, null)).toBe(true); // Apple: always
+    expect(usesSharedMemory(false, true, 128 * GB, 16 * GB)).toBe(true); // 84 GB shared beats 16 GB
+    expect(usesSharedMemory(false, true, 64 * GB, 64 * GB)).toBe(false); // 64 GB carve-out beats 42 GB shared
+    expect(usesSharedMemory(false, true, null, 2 * GB)).toBe(false); // RAM unknown: keep the card reading
+    expect(usesSharedMemory(false, false, 128 * GB, null)).toBe(false); // not a unified chip
   });
 });

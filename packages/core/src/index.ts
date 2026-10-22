@@ -34,7 +34,7 @@ export type {
   GenerateResult,
 } from "./router/types.js";
 
-export { ollamaEngine, ollamaResidentModels, ollamaUnload, localProvider, verdict } from "./local/index.js";
+export { ollamaEngine, ollamaResidentModels, ollamaUnload, localProvider, verdict, UNIFIED_USABLE } from "./local/index.js";
 export type {
   OllamaOptions,
   LocalEngine,

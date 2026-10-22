@@ -13,7 +13,7 @@ import {
 import { allCandidates, builtInCandidates } from "./guided-verdict.js";
 import { fileFetchSink } from "./receipts.js";
 import { connectEngineOptions, hostIsOffBox, normalizeEndpoint } from "./connect-endpoint.js";
-import { scanHardware } from "./hardware.js";
+import { isUnifiedApu, scanHardware } from "./hardware.js";
 import { createCachedCatalogLoader, snapshotCatalog } from "./catalog.js";
 import { modelDownloaded, listDownloadedModels, deleteDownloadedModel, modelsDir } from "./download.js";
 import { isActiveFile, modelDeletionPlan } from "./model-manage.js";
@@ -397,7 +397,13 @@ function hardwareView(p: HardwareProfile): HardwareView {
   const disk = fmtGB(p.diskFreeBytes);
   let gpu: string;
   if (p.unifiedMemory) {
-    gpu = "Apple unified memory (shared with your apps)";
+    // A Ryzen AI Max or a GB10 is named, so the screen doesn't call it Apple.
+    const chip = p.gpus.find((g) => isUnifiedApu(g.model)) ?? p.gpus[0];
+    gpu = p.gpus.some((g) => /apple/i.test(g.model))
+      ? "Apple unified memory (shared with your apps)"
+      : chip
+        ? `${chip.model} (shares this computer's memory with your apps)`
+        : "Shared memory (your apps use it too)";
   } else if (p.bestVramBytes !== null) {
     const best = p.gpus.find((g) => g.vramBytes === p.bestVramBytes);
     gpu = `${best?.model ?? "Graphics card"} (${fmtGB(p.bestVramBytes)})`;

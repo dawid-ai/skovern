@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import si from "systeminformation";
-import type { GpuInfo, HardwareProfile } from "@skovern/core";
+import { UNIFIED_USABLE, type GpuInfo, type HardwareProfile } from "@skovern/core";
 
 // Best-effort, cross-platform hardware scan for the honesty engine. Runs in the
 // TRUSTED main process only (systeminformation shells out to platform tools —
@@ -48,6 +48,25 @@ export function isDiscreteGpu(model: string): boolean {
   const m = model.toLowerCase();
   if (/\buhd\b|\biris\b|integrated|\(r\) graphics|vega \d+ graphics|radeon graphics/.test(m)) return false;
   return /radeon rx|radeon pro|geforce|\brtx\b|\bgtx\b|nvidia|intel arc|\barc\b|instinct|quadro|firepro/.test(m);
+}
+
+// A non-Apple chip whose graphics run from the computer's own memory, with the bandwidth to make
+// that worth it: AMD Ryzen AI Max ("Strix Halo", Radeon 8060S/8050S/8040S) and NVIDIA GB10 (DGX
+// Spark and its partner boxes). Matched on the GPU name or the CPU brand. Without this, such a box
+// reports a small or unreadable carve-out and reads as CPU-only. Ordinary iGPUs (Radeon 890M,
+// Intel Arc 140V) stay out: too little bandwidth to beat the processor by much.
+// ponytail: a name list; extend it as new unified chips ship.
+export function isUnifiedApu(name: string): boolean {
+  return /ryzen ai max|strix halo|radeon(\(tm\))? 80[4-6]0s|\bgb10\b|dgx spark/i.test(name);
+}
+
+/** Whether to judge the machine on its shared memory: always on Apple Silicon; on another unified
+ *  chip only when the shared pool beats its carve-out. A user who gave the GPU most of the memory
+ *  (AMD Variable Graphics Memory, 96 of 128 GB) has Windows report 32 GB of RAM and 96 GB of VRAM,
+ *  and the dedicated pool is the bigger one. Unknown RAM keeps the carve-out reading. */
+export function usesSharedMemory(apple: boolean, apu: boolean, ramBytes: number | null, bestVramBytes: number | null): boolean {
+  if (apple) return true;
+  return apu && ramBytes !== null && (bestVramBytes ?? 0) < ramBytes * UNIFIED_USABLE;
 }
 
 // Windows: read dedicated VRAM authoritatively from the registry. `si.graphics().vram` is flaky
@@ -100,11 +119,13 @@ export async function scanHardware(
 
   const cpuCores = cpu && typeof cpu.cores === "number" && cpu.cores > 0 ? cpu.cores : null;
 
-  // Apple Silicon shares one pool of memory between CPU and GPU (unified memory).
+  // Apple Silicon shares one pool of memory between CPU and GPU (unified memory); so do the
+  // non-Apple chips `isUnifiedApu` names.
   const cpuVendor = `${cpu?.manufacturer ?? ""} ${cpu?.vendor ?? ""}`.toLowerCase();
   const controllers = graphics?.controllers ?? [];
   const appleGpu = controllers.some((c) => `${c.vendor ?? ""} ${c.model ?? ""}`.toLowerCase().includes("apple"));
-  const unifiedMemory = appleGpu || cpuVendor.includes("apple");
+  const apple = appleGpu || cpuVendor.includes("apple");
+  const apu = isUnifiedApu(`${cpu?.brand ?? ""}`) || controllers.some((c) => isUnifiedApu(`${c.model ?? ""}`));
 
   // Capture EVERY controller; pick the best VRAM. A weak iGPU next to a strong
   // dGPU must not hide the dGPU — max() over all of them does that.
@@ -119,6 +140,7 @@ export async function scanHardware(
   // The authoritative registry value backstops si's flaky read (and vice-versa): use the larger,
   // so a null or capped source can never silently downgrade a real GPU to CPU-only.
   const bestVramBytes = bestVram(siBestVram, registryVram);
+  const unifiedMemory = usesSharedMemory(apple, apu, ramBytes, bestVramBytes);
 
   // When the registry supplied the VRAM that si couldn't read, attribute it to the strongest
   // discrete GPU so the profile is consistent — the setup screen can then name the actual card
