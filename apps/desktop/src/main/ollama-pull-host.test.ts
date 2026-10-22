@@ -22,5 +22,6 @@ describe("ollamaPullHost", () => {
     expect(fromOllamaRegistry("qwen2.5:32b")).toBe(true);
     expect(fromOllamaRegistry("hf.co/user/repo:Q4_K_M")).toBe(false);
     expect(fromOllamaRegistry("tracker.example/x/y")).toBe(false);
+    expect(fromOllamaRegistry("http://registry.ollama.ai/library/x")).toBe(false); // plain http, even to the registry
   });
 });

@@ -39,5 +39,6 @@ export function ollamaPullHost(name: string): string {
 /** Does this name download from Ollama's own registry? Catalog brains that can become the pick and
  *  trigger the set-up must (SEC-047-2). */
 export function fromOllamaRegistry(name: string): boolean {
-  return ollamaPullHost(name) === OLLAMA_REGISTRY;
+  // A scheme ("http://registry.ollama.ai/…") would make Ollama fetch the manifest over plain http.
+  return !name.includes("://") && ollamaPullHost(name) === OLLAMA_REGISTRY;
 }
