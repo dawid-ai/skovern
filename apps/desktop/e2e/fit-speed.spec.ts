@@ -264,7 +264,7 @@ test("E7: a unified-memory box that isn't a Mac — named, judged on shared memo
   test.setTimeout(180_000);
   const { app, page, dir } = await openBrainTable(RYZEN_AI_MAX);
   try {
-    await expect(page.locator(".local-specs")).toContainText("AMD Radeon(TM) 8060S Graphics (shares this computer's memory with your apps)");
+    await expect(page.locator(".local-specs")).toContainText("AMD Ryzen AI Max graphics (shares this computer's memory with your apps)");
     await expect(page.locator(".local-specs")).not.toContainText("Apple");
     await expect(page.locator(".local-headline")).toContainText("Good news");
     const r14 = row(page, "Qwen2.5 14B");
@@ -277,6 +277,24 @@ test("E7: a unified-memory box that isn't a Mac — named, judged on shared memo
   } finally {
     await app.close();
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("E8: the hardware line names each shared-memory chip plainly — a GB10 by its chip, a Mac as Apple", async () => {
+  test.setTimeout(180_000);
+  const cases: [Hw, string][] = [
+    [hw({ ramBytes: 119 * GiB, cpuCores: 20, gpus: [{ model: "GB20B [GB10]", vramBytes: null }], unifiedMemory: true }), "NVIDIA GB10 graphics (shares this computer's memory with your apps)"],
+    [hw({ ramBytes: 16 * GiB, cpuCores: 8, gpus: [{ model: "Apple M1", vramBytes: null }], unifiedMemory: true }), "Apple unified memory (shared with your apps)"],
+  ];
+  for (const [profile, line] of cases) {
+    const { app, page, dir } = await openBrainTable(profile);
+    try {
+      await expect(page.locator(".local-specs")).toContainText(line);
+      await expect(page.locator(".local-specs")).not.toContainText("[");
+    } finally {
+      await app.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   }
 });
 

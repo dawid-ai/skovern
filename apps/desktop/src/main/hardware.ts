@@ -54,10 +54,21 @@ export function isDiscreteGpu(model: string): boolean {
 // that worth it: AMD Ryzen AI Max ("Strix Halo", Radeon 8060S/8050S/8040S) and NVIDIA GB10 (DGX
 // Spark and its partner boxes). Matched on the GPU name or the CPU brand. Without this, such a box
 // reports a small or unreadable carve-out and reads as CPU-only. Ordinary iGPUs (Radeon 890M,
-// Intel Arc 140V) stay out: too little bandwidth to beat the processor by much.
-// ponytail: a name list; extend it as new unified chips ship.
+// Intel Arc 140V) stay out: too little bandwidth to beat the processor by much. Each chip carries
+// the plain name the setup screen shows, since Linux reports names like "GB20B [GB10]".
+// ponytail: a name list; extend it as new unified chips ship (NVIDIA N1X is next).
+const UNIFIED_CHIPS: { match: RegExp; label: string }[] = [
+  { match: /ryzen(\(tm\)|™)? ai max|strix halo|radeon(\(tm\)|™)? 80[4-6]0s\b/i, label: "AMD Ryzen AI Max graphics" },
+  { match: /\bgb10\b|dgx spark/i, label: "NVIDIA GB10 graphics" },
+];
+
+/** The plain name of a unified-memory chip a GPU name or CPU brand belongs to, or null. */
+export function unifiedChipLabel(name: string): string | null {
+  return UNIFIED_CHIPS.find((c) => c.match.test(name))?.label ?? null;
+}
+
 export function isUnifiedApu(name: string): boolean {
-  return /ryzen ai max|strix halo|radeon(\(tm\))? 80[4-6]0s|\bgb10\b|dgx spark/i.test(name);
+  return unifiedChipLabel(name) !== null;
 }
 
 /** Whether to judge the machine on its shared memory: always on Apple Silicon; on another unified
@@ -125,12 +136,16 @@ export async function scanHardware(
   const controllers = graphics?.controllers ?? [];
   const appleGpu = controllers.some((c) => `${c.vendor ?? ""} ${c.model ?? ""}`.toLowerCase().includes("apple"));
   const apple = appleGpu || cpuVendor.includes("apple");
-  const apu = isUnifiedApu(`${cpu?.brand ?? ""}`) || controllers.some((c) => isUnifiedApu(`${c.model ?? ""}`));
+  // On Linux, si fills `model` from lspci ("Device 2e12" when its PCI list is old) and puts
+  // nvidia-smi's "NVIDIA GB10" in `name`, so a unified chip is looked for in both.
+  const modelOf = (c: (typeof controllers)[number]): string =>
+    !isUnifiedApu(c.model ?? "") && isUnifiedApu(c.name ?? "") ? c.name! : (c.model ?? "");
+  const apu = isUnifiedApu(`${cpu?.brand ?? ""}`) || controllers.some((c) => isUnifiedApu(modelOf(c)));
 
   // Capture EVERY controller; pick the best VRAM. A weak iGPU next to a strong
   // dGPU must not hide the dGPU — max() over all of them does that.
   const gpus: GpuInfo[] = controllers.map((c) => ({
-    model: typeof c.model === "string" && c.model.length > 0 ? c.model : "Unknown graphics",
+    model: modelOf(c).length > 0 ? modelOf(c) : "Unknown graphics",
     vramBytes: vramBytesOf(c.vram),
     vendor: typeof c.vendor === "string" ? c.vendor : undefined,
   }));

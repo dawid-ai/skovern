@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const si = vi.hoisted(() => ({ mem: vi.fn(), graphics: vi.fn(), cpu: vi.fn(), fsSize: vi.fn() }));
 vi.mock("systeminformation", () => ({ default: si }));
 
-import { isUnifiedApu, scanHardware, usesSharedMemory } from "./hardware.js";
+import { isUnifiedApu, scanHardware, unifiedChipLabel, usesSharedMemory } from "./hardware.js";
 
 const MB = 1024 * 1024;
 const GB = 1024 * MB;
@@ -78,16 +78,32 @@ describe("scanHardware", () => {
     expect(p.bestVramBytes).toBe(96 * GB);
   });
 
-  it("judges an NVIDIA GB10 (DGX Spark) on its shared memory; its VRAM reads as unknown", async () => {
+  // On DGX OS, si fills `model` from lspci and puts nvidia-smi's name in `name`. An old PCI list
+  // reads "Device 2e12"; a current one reads "GB20B [GB10]". The VRAM is unreadable either way.
+  it.each([
+    { model: "Device 2e12", name: "NVIDIA GB10", shown: "NVIDIA GB10" },
+    { model: "GB20B [GB10]", name: undefined, shown: "GB20B [GB10]" },
+  ])("judges an NVIDIA GB10 (DGX Spark) reporting $model on its shared memory", async ({ model, name, shown }) => {
     si.mem.mockResolvedValue({ total: 119 * GB });
-    si.graphics.mockResolvedValue({ controllers: [{ model: "NVIDIA GB10", vram: null, vendor: "NVIDIA" }] });
+    si.graphics.mockResolvedValue({ controllers: [{ model, name, vram: null, vendor: "NVIDIA Corporation" }] });
     si.cpu.mockResolvedValue({ cores: 20, manufacturer: "ARM", brand: "Cortex-X925" });
     si.fsSize.mockResolvedValue([{ available: 3000 * GB }]);
 
     const p = await scanHardware(noReg);
     expect(p.unifiedMemory).toBe(true);
+    expect(p.gpus[0]?.model).toBe(shown);
     // Shared memory is the answer, so no "couldn't detect your graphics memory" note.
     expect(p.notes.some((n) => /graphics memory/i.test(n))).toBe(false);
+  });
+
+  it("finds a Ryzen AI Max by its CPU brand when Linux names the graphics generically", async () => {
+    si.mem.mockResolvedValue({ total: 128 * GB });
+    si.graphics.mockResolvedValue({ controllers: [{ model: "AMD Radeon Graphics", vram: 256, vendor: "AMD" }] });
+    si.cpu.mockResolvedValue({ cores: 16, manufacturer: "AMD", brand: "RYZEN AI MAX+ 395 w/ Radeon 8060S" });
+    si.fsSize.mockResolvedValue([{ available: 500 * GB }]);
+
+    const p = await scanHardware(noReg);
+    expect(p.unifiedMemory).toBe(true);
   });
 
   it("leaves an ordinary laptop iGPU (Radeon 890M) as no usable card", async () => {
@@ -145,15 +161,28 @@ describe("unified-memory chips", () => {
   it("names the Ryzen AI Max and GB10 parts as they're reported, and nothing else", () => {
     for (const name of [
       "AMD Radeon(TM) 8060S Graphics",
+      "AMD Radeon™ 8060S Graphics",
       "AMD Radeon 8050S",
       "Radeon 8040S Graphics",
-      "Strix Halo [Radeon Graphics / Radeon 8050S / 8060S Graphics]",
+      "Strix Halo [Radeon Graphics]",
       "AMD RYZEN AI MAX+ 395 w/ Radeon 8060S",
-      "NVIDIA GB10",
+      "AMD Ryzen™ AI Max+ PRO 395",
     ]) {
-      expect(isUnifiedApu(name), name).toBe(true);
+      expect(unifiedChipLabel(name), name).toBe("AMD Ryzen AI Max graphics");
     }
-    for (const name of ["AMD Radeon(TM) 890M Graphics", "Ryzen AI 9 HX 370", "Intel(R) Arc(TM) 140V GPU", "NVIDIA GeForce RTX 4090", "AMD Radeon RX 7900 XTX", "NVIDIA GB100"]) {
+    for (const name of ["NVIDIA GB10", "GB20B [GB10]", "NVIDIA DGX Spark"]) {
+      expect(unifiedChipLabel(name), name).toBe("NVIDIA GB10 graphics");
+    }
+    for (const name of [
+      "AMD Radeon(TM) 890M Graphics",
+      "AMD Radeon 8060",
+      "Ryzen AI 9 HX 370",
+      "Intel(R) Arc(TM) 140V GPU",
+      "NVIDIA GeForce RTX 4090",
+      "AMD Radeon RX 7900 XTX",
+      "NVIDIA GB100",
+      "GB10B",
+    ]) {
       expect(isUnifiedApu(name), name).toBe(false);
     }
   });
