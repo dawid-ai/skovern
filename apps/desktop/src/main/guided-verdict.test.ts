@@ -140,6 +140,14 @@ describe("guidedVerdict — Ollama brains join the pick (047)", () => {
     expect(shipped.models.find((m) => m.id === v.recommendedModelId)?.gguf).toBeDefined();
   });
 
+  // SEC-047-2: a catalog id that points the download at another server never becomes the pick.
+  it("G5: a bigger catalog brain hosted off Ollama's registry is never the pick", () => {
+    const withForeign = [...shipped.models, { id: "tracker.example/x/huge:40b", label: "Huge 40B", params: 40, sizeBytes: 21_000_000_000, quant: "Q4_K_M" }];
+    const v = guidedVerdict(card(48), withForeign, true);
+    expect(v.recommendedModelId).not.toBe("tracker.example/x/huge:40b");
+    expect(v.recommendedModelId).toBe("qwen2.5:32b");
+  });
+
   it("M11: pure — the same inputs always give the same pick (Ollama state isn't an input at all)", () => {
     expect(guidedVerdict.length).toBe(3);
     const a = guidedVerdict(card(24), shipped.models, true);

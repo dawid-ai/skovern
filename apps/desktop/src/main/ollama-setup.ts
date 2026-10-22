@@ -1,14 +1,15 @@
 import type { FetchSink, LocalEngine, PullProgress } from "@skovern/core";
 import { DownloadError, ensureDiskSpace } from "./download.js";
 import { installManagedOllama, ollamaDist } from "./ollama-dist.js";
+import { ollamaPullHost } from "./ollama-name.js";
 import type { SetupPhase } from "../shared/local.js";
 
 // Loop 047: "set up the helper, then get the brain" — and the receipt for a brain Ollama
 // downloads itself. Kept out of `local.ts` (already over the module-size smell).
 
-// Ollama downloads brains from its registry (the files redirect to a Cloudflare storage host);
-// the receipt names the registry and says so in its label.
-const REGISTRY_HOST = "registry.ollama.ai";
+// Ollama downloads a brain from the host its name names — its own registry unless the name carries
+// one (e.g. "hf.co/…") — and the files may come from that host's storage service. The receipt
+// names that host (SEC-047-2) and says so in its label.
 
 /** Skovern couldn't write the receipt, so the download didn't start. */
 export const RECEIPT_FAILED = "Skovern couldn't write down this download in your Receipts, so it didn't start. Try again.";
@@ -44,8 +45,8 @@ export async function receiptedOllamaPull(
   // storage service (checker N6).
   const base = {
     kind: "fetch" as const,
-    host: REGISTRY_HOST,
-    task: `Downloading ${modelId} through Ollama (files come from its storage service)`,
+    host: ollamaPullHost(modelId),
+    task: `Downloading ${modelId} through Ollama (files may come from its storage service)`,
     direction: "in" as const,
   };
   try {

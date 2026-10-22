@@ -30,6 +30,13 @@ describe("receiptedOllamaPull (047: a brain Ollama downloads is receipted too)",
     expect(receipts[1]).toMatchObject({ ok: true, phase: "done", bytesReceived: 1020 });
   });
 
+  // SEC-047-2: the receipt names the server the name really points at, not always the registry.
+  it("a name that carries a host is receipted to that host", async () => {
+    const receipts: FetchReceipt[] = [];
+    await receiptedOllamaPull(engine(async () => {}), "hf.co/user/repo:Q4_K_M", () => {}, { append: (r) => void receipts.push(r) });
+    expect(receipts.map((r) => r.host)).toEqual(["hf.co", "hf.co"]);
+  });
+
   it("if the 'sent' receipt can't be written, nothing is pulled", async () => {
     const pull = vi.fn(async () => {});
     const sink = { append: () => Promise.reject(new Error("disk")) };

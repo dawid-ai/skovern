@@ -1,4 +1,5 @@
 import { verdict, type HardwareProfile, type Verdict, type VerdictModel } from "@skovern/core";
+import { fromOllamaRegistry } from "./ollama-name.js";
 
 // The candidate set the recommendation scores: our BUILT-IN (gguf) catalog ONLY.
 //
@@ -40,10 +41,11 @@ export function allCandidates(models: CandidateInput[]): VerdictModel[] {
   return models.map(toVerdictModel);
 }
 
-/** The catalog brains that run through Ollama (no `gguf` block) — gettable when Skovern can set
- *  Ollama up on this computer (loop 047). Always gettable then: we set the helper up ourselves. */
+/** The catalog brains that run through Ollama (no `gguf` block) and download from Ollama's own
+ *  registry — gettable when Skovern can set Ollama up on this computer (loop 047). A catalog id that
+ *  names another server never becomes the pick (SEC-047-2). */
 export function ollamaPathCandidates(catalogModels: CandidateInput[]): VerdictModel[] {
-  return catalogModels.filter((m) => m.gguf === undefined).map(toVerdictModel);
+  return catalogModels.filter((m) => m.gguf === undefined && fromOllamaRegistry(m.id)).map(toVerdictModel);
 }
 
 /** THE recommendation (loop 047): one function both the headline (`localStatus`) and the hero

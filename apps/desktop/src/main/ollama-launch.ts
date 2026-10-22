@@ -229,18 +229,36 @@ function logGpuEnv(): void {
   }
 }
 
-/** The environment for `ollama serve`. For the helper Skovern set up (047), it listens on loopback
- *  only, whatever the user's environment says, and no extra web origins may call it. A user's own
- *  Ollama keeps their own config. Pure → unit-tested. */
+// What the helper Skovern set up may see of Skovern's environment (SEC-047-1, H-1): what a Windows
+// program needs to run and find its home and temp folders, plus the variables that pick a graphics
+// card. Nothing else — no API keys from a dev shell, no inherited OLLAMA_* config. Matched without
+// case, as Windows does.
+const HELPER_ENV = new Set(
+  [
+    "PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "SYSTEMDRIVE", "COMSPEC", "USERPROFILE", "HOME",
+    "HOMEDRIVE", "HOMEPATH", "USERNAME", "LOCALAPPDATA", "APPDATA", "PROGRAMDATA", "PROGRAMFILES",
+    "PROGRAMFILES(X86)", "TEMP", "TMP", "TMPDIR", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE",
+    "CUDA_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES", "GGML_VK_VISIBLE_DEVICES",
+    "GPU_DEVICE_ORDINAL",
+  ].map((k) => k.toUpperCase()),
+);
+
+/** The environment for `ollama serve`. Pure → unit-tested.
+ *  - The helper Skovern set up (047): only the allowlisted variables, loopback only, and Ollama's
+ *    cloud features OFF — otherwise it calls ollama.com at start and every 4 hours with a per-install
+ *    key, none of it in the Receipts (SEC-047-1). Brain downloads aren't cloud features; they still
+ *    work, and Skovern receipts them.
+ *  - A user's own Ollama keeps their own config. */
 export function serveEnv(managed: boolean, base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   // Keep ONE model in VRAM at a time: switching models evicts the previous one instead of
   // stacking them. An average user testing a few models would otherwise fill VRAM and each
   // new model would spill to CPU (the slowdown we just chased).
-  const env: NodeJS.ProcessEnv = { ...base, OLLAMA_MAX_LOADED_MODELS: "1" };
-  if (managed) {
-    env["OLLAMA_HOST"] = "127.0.0.1:11434";
-    delete env["OLLAMA_ORIGINS"];
-  }
+  if (!managed) return { ...base, OLLAMA_MAX_LOADED_MODELS: "1" };
+  const env: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(base)) if (HELPER_ENV.has(k.toUpperCase())) env[k] = v;
+  env["OLLAMA_HOST"] = "127.0.0.1:11434";
+  env["OLLAMA_MAX_LOADED_MODELS"] = "1";
+  env["OLLAMA_NO_CLOUD"] = "1";
   return env;
 }
 

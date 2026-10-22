@@ -25,7 +25,10 @@ export interface OllamaDist {
 }
 
 // From github.com/ollama/ollama/releases/tag/v0.40.6 (2026-10-16): the asset digest and the
-// release's sha256sum.txt agree. The zip carries CUDA, Vulkan (AMD/Intel) and CPU backends.
+// release's sha256sum.txt agree, and its `ollama.exe` carries a valid Authenticode signature from
+// CN=Ollama Inc. (EV, DigiCert G5 CS ECC SHA384 2021 CA1). The zip carries CUDA, Vulkan (AMD/Intel)
+// and CPU backends. To move the pin: both hash sources agree, the signer is still Ollama Inc., and
+// the release is a few days old (ledger `ollama-dist-pin-bump`).
 // ponytail: Windows x64 only; macOS/Linux set-up is loop 049.
 const PINS: Partial<Record<string, OllamaDist>> = {
   "win32-x64": {

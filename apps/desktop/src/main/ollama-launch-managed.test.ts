@@ -66,11 +66,25 @@ describe("M9: the helper Skovern set up wins over PATH", () => {
 
 describe("M9: the helper listens on this computer only", () => {
   it("forces loopback and drops extra web origins for the helper we set up", () => {
-    const env = serveEnv(true, { OLLAMA_HOST: "0.0.0.0:11434", OLLAMA_ORIGINS: "*", KEEP: "1" });
+    const env = serveEnv(true, { OLLAMA_HOST: "0.0.0.0:11434", OLLAMA_ORIGINS: "*", Path: "C:/Windows" });
     expect(env["OLLAMA_HOST"]).toBe("127.0.0.1:11434");
     expect(env["OLLAMA_ORIGINS"]).toBeUndefined();
     expect(env["OLLAMA_MAX_LOADED_MODELS"]).toBe("1");
-    expect(env["KEEP"]).toBe("1");
+    expect(env["Path"]).toBe("C:/Windows"); // allowlisted, matched without case
+  });
+
+  // SEC-047-1: no unreceipted calls to ollama.com from the helper Skovern set up.
+  it("turns Ollama's cloud features off and drops any inherited cloud config", () => {
+    const env = serveEnv(true, { OLLAMA_NO_CLOUD: "0", OLLAMA_CLOUD_BASE_URL: "https://evil.test", OLLAMA_MODELS: "D:/x" });
+    expect(env["OLLAMA_NO_CLOUD"]).toBe("1");
+    expect(env["OLLAMA_CLOUD_BASE_URL"]).toBeUndefined();
+    expect(env["OLLAMA_MODELS"]).toBeUndefined();
+  });
+
+  // H-1: the helper sees only what it needs — no API keys or tokens from Skovern's environment.
+  it("passes only allowlisted variables", () => {
+    const env = serveEnv(true, { OPENAI_API_KEY: "sk-x", GH_TOKEN: "t", SystemRoot: "C:/Windows", CUDA_VISIBLE_DEVICES: "0", TEMP: "C:/t" });
+    expect(Object.keys(env).sort()).toEqual(["CUDA_VISIBLE_DEVICES", "OLLAMA_HOST", "OLLAMA_MAX_LOADED_MODELS", "OLLAMA_NO_CLOUD", "SystemRoot", "TEMP"]);
   });
 
   it("leaves a user's own Ollama config alone", () => {

@@ -12,6 +12,7 @@ import {
 } from "@skovern/core";
 import { allCandidates, guidedVerdict } from "./guided-verdict.js";
 import { ollamaDist } from "./ollama-dist.js";
+import { fromOllamaRegistry } from "./ollama-name.js";
 import { receiptedOllamaPull } from "./ollama-setup.js";
 import { fileFetchSink } from "./receipts.js";
 import { connectEngineOptions, hostIsOffBox, normalizeEndpoint } from "./connect-endpoint.js";
@@ -544,7 +545,9 @@ export async function localModels(): Promise<LocalModelsView> {
  *  `local:setUp` to catalog brains only — never free text (047). */
 export async function ollamaPathCatalogModel(modelId: string): Promise<CatalogModel | null> {
   const catalog = await loadCatalog(fileFetchSink(), catalogUrl());
-  return catalog.models.find((c) => c.id === modelId && c.gguf === undefined) ?? null;
+  // Only a brain from Ollama's own registry — never a name that points the download at another
+  // server (SEC-047-2).
+  return catalog.models.find((c) => c.id === modelId && c.gguf === undefined && fromOllamaRegistry(c.id)) ?? null;
 }
 
 /** Can Skovern set Ollama up on this KIND of computer (a pinned helper build exists)? A platform
