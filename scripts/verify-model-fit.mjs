@@ -47,6 +47,16 @@ const fail = (msg) => {
 // and every importer must use that version, so the gate can't verify one version while another
 // installs (SEC-046-2).
 function lockedModelFit(lock) {
+  // Only pnpm's own spelling counts: a hand-written double-quoted key or an npm: alias would dodge
+  // the regexes below, so any other line naming the package fails (046 SEC H-A).
+  for (const line of lock.split("\n")) {
+    if (!line.includes("dawid-ai/model-fit")) continue;
+    if (!/^( {6}'@dawid-ai\/model-fit':| {2}'@dawid-ai\/model-fit@[^']*':( \{\})?)$/.test(line)) fail(`unexpected lockfile line: ${line.trim()}`);
+  }
+  // Every package in the lockfile resolves from the registry by hash: no tarball URL, git, or file.
+  for (const [, res] of lock.matchAll(/^\s+resolution: (.*)$/gm)) {
+    if (!/^\{integrity: sha512-[A-Za-z0-9+/]+={0,2}\}$/.test(res)) fail(`a lockfile resolution isn't a registry integrity hash: ${res}`);
+  }
   const versions = [...new Set([...lock.matchAll(/^ {2}'@dawid-ai\/model-fit@([^']*)':/gm)].map((k) => k[1]))];
   if (versions.length !== 1) fail(`pnpm-lock.yaml must lock exactly one ${PKG} version, found ${versions.join(", ") || "none"}`);
   const [version] = versions;
@@ -116,6 +126,9 @@ try {
   for (const f of files) {
     const code = readFileSync(path.join(root, f), "utf8");
     for (const re of FORBIDDEN) if (re.test(code)) fail(`${f} matches ${re} — the module must stay pure`);
+    // An escape (`process`, `"./../x.js"`) would hide a name from both scans; the
+    // shipped JS has none (046 SEC H-B).
+    if (code.includes("\\")) fail(`${f} contains a backslash escape — the scans can't see through it`);
     for (const [, spec] of code.matchAll(IMPORT_SPEC)) {
       const target = path.relative(root, path.resolve(root, path.dirname(f), spec));
       if (!/^\.\.?\//.test(spec) || target.startsWith("..") || path.isAbsolute(target)) {
