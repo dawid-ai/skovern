@@ -96,6 +96,19 @@ describe("scanHardware", () => {
     expect(p.notes.some((n) => /graphics memory/i.test(n))).toBe(false);
   });
 
+  it("keeps lspci's name for an ordinary card that nvidia-smi also names", async () => {
+    si.mem.mockResolvedValue({ total: 64 * GB });
+    si.graphics.mockResolvedValue({
+      controllers: [{ model: "AD102 [GeForce RTX 4090]", name: "NVIDIA GeForce RTX 4090", vram: 24564, vendor: "NVIDIA Corporation" }],
+    });
+    si.cpu.mockResolvedValue({ cores: 16, manufacturer: "AMD", brand: "Ryzen 9 7950X" });
+    si.fsSize.mockResolvedValue([{ available: 500 * GB }]);
+
+    const p = await scanHardware(noReg);
+    expect(p.gpus[0]?.model).toBe("AD102 [GeForce RTX 4090]");
+    expect(p.unifiedMemory).toBe(false);
+  });
+
   it("finds a Ryzen AI Max by its CPU brand when Linux names the graphics generically", async () => {
     si.mem.mockResolvedValue({ total: 128 * GB });
     si.graphics.mockResolvedValue({ controllers: [{ model: "AMD Radeon Graphics", vram: 256, vendor: "AMD" }] });
@@ -165,6 +178,7 @@ describe("unified-memory chips", () => {
       "AMD Radeon 8050S",
       "Radeon 8040S Graphics",
       "Strix Halo [Radeon Graphics]",
+      "Strix Halo [Radeon Graphics / Radeon 8050S / 8060S Graphics]", // the real lspci name
       "AMD RYZEN AI MAX+ 395 w/ Radeon 8060S",
       "AMD Ryzen™ AI Max+ PRO 395",
     ]) {
@@ -176,6 +190,8 @@ describe("unified-memory chips", () => {
     for (const name of [
       "AMD Radeon(TM) 890M Graphics",
       "AMD Radeon 8060",
+      "Radeon 8060SX",
+      "XGB10",
       "Ryzen AI 9 HX 370",
       "Intel(R) Arc(TM) 140V GPU",
       "NVIDIA GeForce RTX 4090",
