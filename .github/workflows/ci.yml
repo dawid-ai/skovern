@@ -42,28 +42,30 @@ jobs:
           XDG_CURRENT_DESKTOP: GNOME
         working-directory: apps/desktop
         run: |
-          cat > /tmp/probe.cjs <<'JS'
-          const { app, safeStorage } = require("electron");
-          app.setName("Skovern");
-          app.whenReady().then(() => {
-            console.log("PROBE backend=" + (safeStorage.getSelectedStorageBackend?.() ?? "n/a") + " available=" + safeStorage.isEncryptionAvailable());
-            try {
-              const enc = safeStorage.encryptString("hello");
-              console.log("PROBE roundtrip=" + (safeStorage.decryptString(enc) === "hello"));
-            } catch (e) {
-              console.log("PROBE encrypt error: " + e.message);
-            }
-            app.quit();
-          });
+          cat > /tmp/idle.cjs <<"JS"
+          require("electron").app.setName("Skovern");
           JS
-          dbus-run-session -- bash -ec '
-            echo "PROBE dbus=$DBUS_SESSION_BUS_ADDRESS"
-            echo -n ci | gnome-keyring-daemon --unlock --components=secrets
-            xvfb-run -a ./node_modules/.bin/electron --no-sandbox /tmp/probe.cjs
-            pnpm exec electron-vite build > /dev/null
-            xvfb-run -a pnpm exec playwright test e2e/brain.spec.ts || true
-            for f in test-results/*/error-context.md; do echo "== $f"; head -80 "$f"; done
-          '
+          cat > ./pw-probe.mjs <<"JS"
+          import { _electron as electron } from "@playwright/test";
+          const ask = ({ safeStorage }) => {
+            let rt;
+            try { rt = safeStorage.decryptString(safeStorage.encryptString("hi")) === "hi"; } catch (e) { rt = "error: " + e.message; }
+            return { backend: safeStorage.getSelectedStorageBackend?.(), available: safeStorage.isEncryptionAvailable(), rt };
+          };
+          for (const [label, args] of [["idle-script", ["/tmp/idle.cjs"]], ["real-app", [".", "--user-data-dir=/tmp/pw-ud"]]]) {
+            const app = await electron.launch({ args, env: { ...process.env } });
+            try {
+              await app.firstWindow({ timeout: 15000 }).catch(() => {});
+              console.log("PROBE pw " + label + " " + JSON.stringify(await app.evaluate(ask)));
+            } catch (e) { console.log("PROBE pw " + label + " failed: " + e.message); }
+            await app.close().catch(() => {});
+          }
+          JS
+          pnpm exec electron-vite build > /dev/null
+          dbus-run-session -- bash -ec "
+            echo -n ci | gnome-keyring-daemon --unlock --components=secrets > /dev/null
+            xvfb-run -a node ./pw-probe.mjs || true
+          "
       - name: Test (unit + E2E under xvfb)
         env:
           XDG_CURRENT_DESKTOP: GNOME
