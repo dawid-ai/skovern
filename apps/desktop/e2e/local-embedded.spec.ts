@@ -181,7 +181,7 @@ test("no-Ollama user downloads and runs an embedded private brain", async () => 
     await page.getByRole("button", { name: "Settings" }).click();
     await page.getByLabel("Pick a brain").selectOption("local");
     await page.getByRole("button", { name: "Set up the local brain →" }).click();
-    await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "On this computer", exact: true })).toBeVisible();
 
     // EMBEDDED-FIRST (loop 028): the main "Runs right here" list holds the models that
     // download AND run with no Ollama (3B + 7B), each a LIVE "Get this one". Even with

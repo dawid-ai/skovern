@@ -118,6 +118,7 @@ test.describe("packaged Windows build (loop 029)", () => {
           SKOVERN_MODEL_DOWNLOAD_URL: "https://evildownload.test/model.gguf",
           SKOVERN_OLLAMA_URL: "https://evilollama.test",
           SKOVERN_LLAMA_FAKE: "1",
+          SKOVERN_PASSWORD_STORE: "gnome-libsecret",
         },
       });
 
@@ -131,6 +132,10 @@ test.describe("packaged Windows build (loop 029)", () => {
         expect(csp).not.toContain("unsafe-inline");
         expect(csp).not.toContain("ws://");
 
+        // P3 — SKOVERN_PASSWORD_STORE is ignored: the packaged app never appends the seam's value,
+        // so it never picks its keychain from the environment.
+        expect(await app.evaluate(({ app: a }) => a.commandLine.getSwitchValue("password-store"))).not.toBe("gnome-libsecret");
+
         // sign in (SKOVERN_API_URL points at the test auth server)
         await page.getByLabel("Your email").fill("fresh@shop.test");
         await page.getByRole("button", { name: "Send me a link" }).click();
@@ -143,7 +148,7 @@ test.describe("packaged Windows build (loop 029)", () => {
         await page.getByRole("button", { name: "Settings" }).click();
         await page.getByLabel("Pick a brain").selectOption("local");
         await page.getByRole("button", { name: "Set up the local brain →" }).click();
-        await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible({ timeout: 30_000 });
+        await expect(page.getByRole("heading", { name: "On this computer", exact: true })).toBeVisible({ timeout: 30_000 });
 
         const specs = page.locator("ul.local-specs");
         await expect(specs).toBeVisible({ timeout: 30_000 });

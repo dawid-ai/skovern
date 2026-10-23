@@ -139,7 +139,7 @@ async function setUpBuiltInBrain(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Set it up →" }).click();
   await expect(page.getByRole("heading", { name: "Let's set up your brain." })).toBeVisible();
   await page.getByRole("button", { name: "Set up my private brain →" }).click();
-  await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "On this computer", exact: true })).toBeVisible();
   // download + activate the built-in embedded model (fixture bytes) — no Ollama involved
   await page.getByRole("button", { name: "Get this one" }).first().click();
   await expect(page.getByText("Local: qwen2.5:3b")).toBeVisible({ timeout: 60_000 });
@@ -200,7 +200,7 @@ test("Issue 1: the onboarding brain-setup is inside a scroll container — the b
     // enter onboarding via the first-run banner, then the private-brain setup
     await page.getByRole("button", { name: "Set it up →" }).click();
     await page.getByRole("button", { name: "Set up my private brain →" }).click();
-    await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("heading", { name: "On this computer", exact: true })).toBeVisible({ timeout: 30_000 });
 
     // The regression: onboarding rendered the setup with NO scroll container, so it clipped.
     // The fix wraps it in `.content` (overflow-y: auto). Assert the wrapper exists AND the
@@ -457,7 +457,7 @@ test.describe("loop 037 — guided onboarding: one stable built-in pick, no Olla
     await expect(page.getByText(/Set up your brain to get started/i)).toBeVisible({ timeout: 30_000 });
     await page.getByRole("button", { name: "Set it up →" }).click();
     await page.getByRole("button", { name: "Set up my private brain →" }).click();
-    await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("heading", { name: "On this computer", exact: true })).toBeVisible({ timeout: 30_000 });
     await expect(page.locator(".local-verdict")).toBeVisible({ timeout: 30_000 }); // scan resolved
   }
 
@@ -650,7 +650,7 @@ test.describe("loop 038 — built-in floor: weak machines get a real pick", () =
     await expect(page.getByText(/Set up your brain to get started/i)).toBeVisible({ timeout: 30_000 });
     await page.getByRole("button", { name: "Set it up →" }).click();
     await page.getByRole("button", { name: "Set up my private brain →" }).click();
-    await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("heading", { name: "On this computer", exact: true })).toBeVisible({ timeout: 30_000 });
     await expect(page.locator(".local-verdict")).toBeVisible({ timeout: 30_000 });
   }
 
