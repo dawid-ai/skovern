@@ -53,6 +53,9 @@ jobs:
             echo "PROBE dbus=$DBUS_SESSION_BUS_ADDRESS"
             echo -n ci | gnome-keyring-daemon --unlock --components=secrets
             xvfb-run -a ./node_modules/.bin/electron --no-sandbox /tmp/probe.cjs
+            pnpm exec electron-vite build > /dev/null
+            xvfb-run -a pnpm exec playwright test e2e/brain.spec.ts || true
+            for f in test-results/*/error-context.md; do echo "== $f"; head -80 "$f"; done
           '
       - name: Test (unit + E2E under xvfb)
         env:
