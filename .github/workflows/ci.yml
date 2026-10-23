@@ -44,8 +44,15 @@ jobs:
         run: |
           cat > /tmp/probe.cjs <<'JS'
           const { app, safeStorage } = require("electron");
+          app.setName("Skovern");
           app.whenReady().then(() => {
             console.log("PROBE backend=" + (safeStorage.getSelectedStorageBackend?.() ?? "n/a") + " available=" + safeStorage.isEncryptionAvailable());
+            try {
+              const enc = safeStorage.encryptString("hello");
+              console.log("PROBE roundtrip=" + (safeStorage.decryptString(enc) === "hello"));
+            } catch (e) {
+              console.log("PROBE encrypt error: " + e.message);
+            }
             app.quit();
           });
           JS
