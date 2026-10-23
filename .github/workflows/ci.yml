@@ -37,6 +37,23 @@ jobs:
       # D-Bus session, unlocked with a throwaway password. Never `--password-store=basic`.
       - name: Install a keychain for safeStorage
         run: sudo apt-get update -q && sudo apt-get install -y -q gnome-keyring dbus-x11
+      - name: Probe safeStorage (diagnostic)
+        env:
+          XDG_CURRENT_DESKTOP: GNOME
+        working-directory: apps/desktop
+        run: |
+          cat > /tmp/probe.cjs <<'JS'
+          const { app, safeStorage } = require("electron");
+          app.whenReady().then(() => {
+            console.log("PROBE backend=" + (safeStorage.getSelectedStorageBackend?.() ?? "n/a") + " available=" + safeStorage.isEncryptionAvailable());
+            app.quit();
+          });
+          JS
+          dbus-run-session -- bash -ec '
+            echo "PROBE dbus=$DBUS_SESSION_BUS_ADDRESS"
+            echo -n ci | gnome-keyring-daemon --unlock --components=secrets
+            xvfb-run -a ./node_modules/.bin/electron --no-sandbox /tmp/probe.cjs
+          '
       - name: Test (unit + E2E under xvfb)
         env:
           XDG_CURRENT_DESKTOP: GNOME
