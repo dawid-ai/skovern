@@ -37,6 +37,7 @@ import { disposeOllama, ensureOllamaRunning, fakeLaunchCount, ollamaInstalled, p
 import { getSettings, setOllamaLaunch, type OllamaLaunch } from "./settings-store.js";
 import { sweepOrphanParts } from "./download.js";
 import { initialNewness, observeThread } from "./dm-newness.js";
+import { testPasswordStore } from "./password-store.js";
 import { helloManifest } from "../plugins/hello/manifest.js";
 import { aiVisibilityManifest } from "../plugins/ai-visibility/manifest.js";
 import type { CurrentAccount, RequestResult, VerifyResult } from "../shared/account.js";
@@ -52,12 +53,9 @@ import type { OllamaStatusView, SettingsView } from "../shared/settings.js";
 // and dev data live under a "Skovern" folder.
 app.setName("Skovern");
 
-// Unpackaged test seam: Playwright's Electron launcher appends `--password-store=basic`, which
-// leaves safeStorage unavailable on Linux, so a CI e2e run can't store a key or a session. This
-// switch is appended after Playwright's and wins. Only a real keychain backend is accepted; a
-// packaged app never reads it.
-const TEST_PASSWORD_STORE = !app.isPackaged ? process.env["SKOVERN_PASSWORD_STORE"] : undefined;
-if (TEST_PASSWORD_STORE === "gnome-libsecret") app.commandLine.appendSwitch("password-store", TEST_PASSWORD_STORE);
+// Unpackaged test seam (see password-store.ts): appended after Playwright's `basic`, so it wins.
+const TEST_PASSWORD_STORE = testPasswordStore(app.isPackaged, process.env);
+if (TEST_PASSWORD_STORE) app.commandLine.appendSwitch("password-store", TEST_PASSWORD_STORE);
 
 const { autoUpdater } = electronUpdater;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

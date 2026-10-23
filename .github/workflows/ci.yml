@@ -34,39 +34,11 @@ jobs:
         run: pnpm lint
       # Skovern stores keys and sessions only through the OS keychain (safeStorage) and refuses
       # when there is none, so the runner needs a real Secret Service: gnome-keyring in its own
-      # D-Bus session, unlocked with a throwaway password. Never `--password-store=basic`.
+      # D-Bus session, unlocked with a throwaway password. Playwright's Electron launcher forces
+      # `--password-store=basic` (no encryption on Linux); SKOVERN_PASSWORD_STORE, an unpackaged
+      # seam in the main process, selects gnome-libsecret over it.
       - name: Install a keychain for safeStorage
         run: sudo apt-get update -q && sudo apt-get install -y -q gnome-keyring dbus-x11
-      - name: Probe safeStorage (diagnostic)
-        env:
-          XDG_CURRENT_DESKTOP: GNOME
-        working-directory: apps/desktop
-        run: |
-          cat > /tmp/idle.cjs <<"JS"
-          require("electron").app.setName("Skovern");
-          JS
-          cat > ./pw-probe.mjs <<"JS"
-          import { _electron as electron } from "@playwright/test";
-          const ask = ({ safeStorage }) => {
-            let rt;
-            try { rt = safeStorage.decryptString(safeStorage.encryptString("hi")) === "hi"; } catch (e) { rt = "error: " + e.message; }
-            return { backend: safeStorage.getSelectedStorageBackend?.(), available: safeStorage.isEncryptionAvailable(), rt };
-          };
-          for (const [label, args] of [["idle-script", ["/tmp/idle.cjs"]], ["real-app", [".", "--user-data-dir=/tmp/pw-ud"]], ["real-app+seam", [".", "--user-data-dir=/tmp/pw-ud2"]]]) {
-            const env = label.endsWith("+seam") ? { ...process.env, SKOVERN_PASSWORD_STORE: "gnome-libsecret" } : { ...process.env };
-            const app = await electron.launch({ args, env });
-            try {
-              await app.firstWindow({ timeout: 15000 }).catch(() => {});
-              console.log("PROBE pw " + label + " " + JSON.stringify(await app.evaluate(ask)));
-            } catch (e) { console.log("PROBE pw " + label + " failed: " + e.message); }
-            await app.close().catch(() => {});
-          }
-          JS
-          pnpm exec electron-vite build > /dev/null
-          dbus-run-session -- bash -ec "
-            echo -n ci | gnome-keyring-daemon --unlock --components=secrets > /dev/null
-            xvfb-run -a node ./pw-probe.mjs || true
-          "
       - name: Test (unit + E2E under xvfb)
         env:
           SKOVERN_PASSWORD_STORE: gnome-libsecret
