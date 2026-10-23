@@ -132,9 +132,9 @@ test.describe("packaged Windows build (loop 029)", () => {
         expect(csp).not.toContain("unsafe-inline");
         expect(csp).not.toContain("ws://");
 
-        // P3 — SKOVERN_PASSWORD_STORE is ignored: the packaged app never appends the seam's value,
+        // P3 — SKOVERN_PASSWORD_STORE is ignored: the packaged app appends no password-store switch,
         // so it never picks its keychain from the environment.
-        expect(await app.evaluate(({ app: a }) => a.commandLine.getSwitchValue("password-store"))).not.toBe("gnome-libsecret");
+        expect(await app.evaluate(({ app: a }) => a.commandLine.getSwitchValue("password-store"))).toBe("");
 
         // sign in (SKOVERN_API_URL points at the test auth server)
         await page.getByLabel("Your email").fill("fresh@shop.test");
