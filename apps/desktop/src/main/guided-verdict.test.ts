@@ -161,6 +161,14 @@ describe("guidedVerdict — Ollama brains join the pick (047)", () => {
     }
   });
 
+  // A card missing from model-fit's speed table gets a cautious speed estimate, so its 32B row reads
+  // "Fits here" and no helper is set up. The table fix is 048's (ledger model-fit-accuracy-residuals).
+  it("G7: a 24 GB card the speed table doesn't know → the built-in 14B", () => {
+    const p = profile({ bestVramBytes: 24 * GB, gpus: [{ model: "Test GPU 24GB", vramBytes: 24 * GB }] });
+    expect(verdict(p, allCandidates(shipped.models)).fits.find((f) => f.modelId === "qwen2.5:32b")).toMatchObject({ label: "Fits here" });
+    expect(guidedVerdict(p, shipped.models, true).recommendedModelId).toBe("qwen2.5:14b");
+  });
+
   it("M11: pure — the same inputs always give the same pick (Ollama state isn't an input at all)", () => {
     expect(guidedVerdict.length).toBe(3);
     const a = guidedVerdict(card(24), shipped.models, true);
