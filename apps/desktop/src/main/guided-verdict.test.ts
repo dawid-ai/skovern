@@ -148,6 +148,19 @@ describe("guidedVerdict — Ollama brains join the pick (047)", () => {
     expect(v.recommendedModelId).toBe("qwen2.5:32b");
   });
 
+  // 2026-10-24: a big brain that only "Fits here" (writes slowly) never earns a helper download.
+  it("G6: Ryzen AI Max → the quick built-in 14B, not a slow 32B through the helper", () => {
+    const apu = "AMD Radeon(TM) 8060S Graphics";
+    for (const p of [
+      profile({ ramBytes: 128 * GB, bestVramBytes: 0.5 * GB, unifiedMemory: true, gpus: [{ model: apu, vramBytes: 0.5 * GB }] }),
+      profile({ ramBytes: 32 * GB, bestVramBytes: 96 * GB, gpus: [{ model: apu, vramBytes: 96 * GB }] }),
+    ]) {
+      const rows = verdict(p, allCandidates(shipped.models)).fits;
+      expect(rows.find((f) => f.modelId === "qwen2.5:32b")).toMatchObject({ tier: "green", label: "Fits here" });
+      expect(guidedVerdict(p, shipped.models, true).recommendedModelId).toBe("qwen2.5:14b");
+    }
+  });
+
   it("M11: pure — the same inputs always give the same pick (Ollama state isn't an input at all)", () => {
     expect(guidedVerdict.length).toBe(3);
     const a = guidedVerdict(card(24), shipped.models, true);

@@ -14,6 +14,9 @@ import { fromOllamaRegistry } from "./ollama-name.js";
 
 const GB = 1024 * 1024 * 1024;
 
+// The quick green label `verdict` gives a writing brain (core/src/local/verdict.ts).
+const RUNS_GREAT = "Runs great here";
+
 type CandidateInput = { id: string; label: string; params?: number; sizeBytes?: number; quant?: string; gguf?: unknown };
 
 // A catalog model may not state its parameter size; estimate from the file size so the verdict
@@ -53,17 +56,22 @@ export function ollamaPathCandidates(catalogModels: CandidateInput[]): VerdictMo
  *
  *  Inputs are hardware + catalog + whether Skovern can set Ollama up on this KIND of computer —
  *  never whether any Ollama is installed or running — so the pick can't flip (loop 037 holds).
- *  A brain that needs Ollama wins only when it's a GOOD pick and bigger than the best good
- *  built-in: a small or slow computer never gets asked to set up a helper. */
+ *  A brain that needs Ollama wins only when its row says "Runs great here" and it's bigger than
+ *  the best good built-in: a small or slow computer never gets asked to set up a helper, and a
+ *  helper is never set up for a brain that writes slower than a built-in one (Dawid, 2026-10-24). */
 export function guidedVerdict(profile: HardwareProfile, catalogModels: CandidateInput[], canSetUpOllama: boolean): Verdict {
   const builtIns = builtInCandidates(catalogModels);
   const base = verdict(profile, builtIns);
   if (!canSetUpOllama) return base;
-  const wide = verdict(profile, [...builtIns, ...ollamaPathCandidates(catalogModels)]);
+  // Keyed on the row's own label, so the pick agrees with what the user reads on that row.
+  const ollamaPath = ollamaPathCandidates(catalogModels);
+  const fits = verdict(profile, ollamaPath).fits;
+  const runsGreat = ollamaPath.filter((m) => fits.find((f) => f.modelId === m.id)?.label === RUNS_GREAT);
+  const wide = verdict(profile, [...builtIns, ...runsGreat]);
   if (!wide.canRunGoodOne || wide.recommendedModelId === null) return base;
   if (builtIns.some((m) => m.id === wide.recommendedModelId)) return base;
   const paramsOf = (vs: VerdictModel[], id: string | null) => vs.find((m) => m.id === id)?.params ?? 0;
-  const widePick = paramsOf(ollamaPathCandidates(catalogModels), wide.recommendedModelId);
+  const widePick = paramsOf(runsGreat, wide.recommendedModelId);
   const basePick = base.canRunGoodOne ? paramsOf(builtIns, base.recommendedModelId) : 0;
   return widePick > basePick ? wide : base;
 }
