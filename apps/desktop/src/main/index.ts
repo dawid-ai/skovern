@@ -39,6 +39,7 @@ import { disposeOllama, ensureOllamaRunning, fakeLaunchCount, ollamaInstalled, p
 import { getSettings, setOllamaLaunch, type OllamaLaunch } from "./settings-store.js";
 import { DownloadError, sweepOrphanParts } from "./download.js";
 import { initialNewness, observeThread } from "./dm-newness.js";
+import { testPasswordStore } from "./password-store.js";
 import { helloManifest } from "../plugins/hello/manifest.js";
 import { aiVisibilityManifest } from "../plugins/ai-visibility/manifest.js";
 import type { CurrentAccount, RequestResult, VerifyResult } from "../shared/account.js";
@@ -53,6 +54,10 @@ import type { OllamaStatusView, SettingsView } from "../shared/settings.js";
 // Product identity. Set the app name BEFORE any userData path is resolved, so both packaged
 // and dev data live under a "Skovern" folder.
 app.setName("Skovern");
+
+// Unpackaged test seam (see password-store.ts): appended after Playwright's `basic`, so it wins.
+const TEST_PASSWORD_STORE = testPasswordStore(app.isPackaged, process.env);
+if (TEST_PASSWORD_STORE) app.commandLine.appendSwitch("password-store", TEST_PASSWORD_STORE);
 
 const { autoUpdater } = electronUpdater;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

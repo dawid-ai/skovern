@@ -159,7 +159,7 @@ async function toGuided(page: Page, email: string): Promise<void> {
   await expect(page.getByText(/Set up your brain to get started/i)).toBeVisible({ timeout: 30_000 });
   await page.getByRole("button", { name: "Set it up →" }).click();
   await page.getByRole("button", { name: "Set up my private brain →" }).click();
-  await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("heading", { name: "On this computer", exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(page.locator(".local-callouts .callout h3")).toBeVisible({ timeout: 30_000 });
 }
 
@@ -340,7 +340,7 @@ test("M4(f) + M6: leaving and coming back mid-set-up shows the running set-up �
     // Leave the screen and come back while the brain is still downloading.
     await page.getByRole("button", { name: "← Back" }).click();
     await page.getByRole("button", { name: "Set up my private brain →" }).click();
-    await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "On this computer", exact: true })).toBeVisible();
     await expect(hero(page).locator(".pull-progress")).toContainText("Getting the brain", { timeout: 15_000 });
     await expect(hero(page).getByRole("button", { name: "Get this one" })).toHaveCount(0);
     // Even a direct second call is refused while one runs.

@@ -164,7 +164,7 @@ async function setupLocalEmbeddedBrain(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Pick a brain").selectOption("local");
   await page.getByRole("button", { name: "Set up the local brain →" }).click();
-  await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "On this computer", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Get this one" }).first().click();
   await expect(page.getByText("Local: qwen2.5:3b")).toBeVisible({ timeout: 60_000 });
 }
@@ -241,7 +241,7 @@ test("chat streams a local reply, persists it, stops mid-stream, and writes one 
     await page.getByRole("button", { name: "Settings" }).click();
     await page.getByLabel("Pick a brain").selectOption("local");
     await page.getByRole("button", { name: "Set up the local brain →" }).click();
-    await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "On this computer", exact: true })).toBeVisible();
     // "Get this one" appears both in the recommendation callout and the table row — either
     // downloads the same 3B pick; take the first.
     await page.getByRole("button", { name: "Get this one" }).first().click();
@@ -394,7 +394,7 @@ test("Issue 2/4/3b: an Ollama brain STREAMS token-by-token with a prepare status
     await page.getByRole("button", { name: "Settings" }).click();
     await page.getByLabel("Pick a brain").selectOption("local");
     await page.getByRole("button", { name: "Set up the local brain →" }).click();
-    await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "On this computer", exact: true })).toBeVisible();
     await page.locator("tr.receipt-row", { hasText: "mistral:7b" }).getByRole("button", { name: "Use this one" }).click();
     await expect(page.getByText("Local: mistral:7b")).toBeVisible({ timeout: 30_000 });
 
@@ -859,7 +859,7 @@ test("Chat opens in a ready empty chat and the box stays focused after sending (
     await page.getByRole("button", { name: "Settings" }).click();
     await page.getByLabel("Pick a brain").selectOption("local");
     await page.getByRole("button", { name: "Set up the local brain →" }).click();
-    await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "On this computer", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Get this one" }).first().click();
     await expect(page.getByText("Local: qwen2.5:3b")).toBeVisible({ timeout: 60_000 });
 
