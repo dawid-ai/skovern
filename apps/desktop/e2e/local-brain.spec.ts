@@ -317,7 +317,7 @@ test("Ollama installed-but-down: honest loading, consented Start reveals your pu
 
     // E1: while the (slow) scan runs, a REAL structured loading state shows — a spinner, not bare text.
     await expect(page.locator(".local-loading .spinner")).toBeVisible({ timeout: 5_000 });
-    await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("heading", { name: "On this computer", exact: true })).toBeVisible({ timeout: 30_000 });
 
     // E3: Ollama installed but DOWN → an actionable "Start Ollama" prompt, and the user's
     // models are NOT shown yet (they can't be enumerated while it's down).
@@ -401,7 +401,7 @@ test("user sets up a private on-computer brain, always sees which brain is activ
     await page.getByRole("button", { name: "Set up the local brain →" }).click();
 
     // the honest verdict + a hardware line render
-    await expect(page.getByRole("heading", { name: "On this computer" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "On this computer", exact: true })).toBeVisible();
     await expect(page.getByText(/private brain|cloud brain|subscription/i).first()).toBeVisible({ timeout: 30_000 });
 
     // CONSISTENCY (regression for the 019 contradiction) + FLIP-KILL (037): the verdict

@@ -181,8 +181,10 @@ describe("rotation → durable archive (full retention)", () => {
   // T2 — full retention: many rotations accumulate MANY archives, NONE deleted, so no
   // history is ever lost (the whole point of the 027 retention change vs. the old
   // delete-oldest `.1`). Each archive holds its own generation's content.
-  it("T2: repeated rotations keep every archive, losing no history", async () => {
-    const pad = 20 * 1024;
+  // 256 KB lines keep this to ~32 fsync'd appends; at 20 KB it took ~400 and ran past the 5 s
+  // default on a loaded Windows box, and the timed-out loop kept writing into later tests.
+  it("T2: repeated rotations keep every archive, losing no history", { timeout: 30_000 }, async () => {
+    const pad = 256 * 1024;
     const sink = fileReceiptSink();
     // Drive several rotations by writing well past 3×MAX_BYTES.
     let written = 0;
