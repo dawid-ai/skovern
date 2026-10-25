@@ -30,8 +30,16 @@ export function notesToText(notes: ReleaseNotes): string {
 
 const LOG_CAP = 256 * 1024;
 
+/** Absolute file paths (Windows drive paths, user home folders) become <path>. */
+export function redactPaths(line: string): string {
+  // A path ends before a space, quote, bracket, or comma, and never on a trailing full stop.
+  // A drive letter stands alone (so `https://` isn't one).
+  return line.replace(/(?<![\w])[A-Za-z]:(?:\\|\/(?!\/))(?:[^\s"'<>(),]*[^\s"'<>(),.])?/g, "<path>").replace(/\/(?:Users|home)\/(?:[^\s"'<>(),]*[^\s"'<>(),.])?/g, "<path>");
+}
+
 /** Appends to userData/logs/updates.log; past 256 KB the old file moves to updates.log.1.
- *  Messages only (errors carry no secrets: the feed is public and needs no token). */
+ *  Messages only (the feed is public and needs no token), with file paths replaced by
+ *  <path> so the log never records where things live on this computer. */
 export function updatesLog(userData: string): (line: string) => void {
   const dir = path.join(userData, "logs");
   const file = path.join(dir, "updates.log");
@@ -43,7 +51,7 @@ export function updatesLog(userData: string): (line: string) => void {
       } catch {
         // no log yet
       }
-      appendFileSync(file, `${new Date().toISOString()} ${line.replace(/\s+/g, " ")}\n`);
+      appendFileSync(file, `${new Date().toISOString()} ${redactPaths(line).replace(/\s+/g, " ")}\n`);
     } catch {
       // a log must never break the app
     }
@@ -57,7 +65,8 @@ export function electronPort(updater: AppUpdater, log: (line: string) => void): 
   updater.allowPrerelease = false;
   updater.allowDowngrade = false;
   updater.disableWebInstaller = true;
-  updater.logger = { info: (m) => log(`info ${String(m)}`), warn: (m) => log(`warn ${String(m)}`), error: (m) => log(`error ${String(m)}`), debug: () => {} };
+  // Warnings and errors only: electron-updater's info lines narrate every step, with paths.
+  updater.logger = { info: () => {}, warn: (m) => log(`warn ${String(m)}`), error: (m) => log(`error ${String(m)}`), debug: () => {} };
   return {
     async check(): Promise<FoundUpdate | null> {
       const r = await updater.checkForUpdates();
@@ -78,7 +87,8 @@ export function electronPort(updater: AppUpdater, log: (line: string) => void): 
       }
       return total;
     },
-    install(): void {
+    install(onFailed): void {
+      updater.once("error", onFailed); // a failed start is reported only as an error event
       updater.quitAndInstall(true, true); // silent install, then relaunch
     },
   };
@@ -109,7 +119,7 @@ export function fakePort(scenario: FakeScenario, installs: { count: number }): U
     },
     async download(onProgress) {
       for (const p of [10, 45, 80]) {
-        await wait(150);
+        await wait(400); // slow enough for an e2e to click Later mid-download
         onProgress(p);
       }
       if (scenario === "download-error") throw new Error("fake feed: download cut off");

@@ -98,11 +98,17 @@ test("M1/M2/M4: offer → every page → Update now → Restart now; one version
     // Update now → progress → ready. Nothing downloaded until this click.
     expect(readFileSync(path.join(userDataDir, "receipts.jsonl"), "utf8")).not.toContain("update download");
     await page.getByRole("button", { name: "Update now" }).click();
-    await expect(page.getByText(/Getting the update… \d+%/).first()).toBeVisible();
-    await expect(notice.getByText("The update is ready. Restart Skovern to finish.")).toBeVisible();
+    // Later while downloading hides the progress notice; Settings keeps showing progress.
+    await expect(notice.getByText(/Getting the update… \d+%/)).toBeVisible();
+    await notice.getByRole("button", { name: "Later" }).click();
+    await expect(notice).toHaveCount(0);
+    // "Ready" is a new message, so it shows again; Later hides it too.
+    await expect(notice.getByText("The update is ready. Restart Skovern to finish.")).toBeVisible({ timeout: 10_000 });
+    await notice.getByRole("button", { name: "Later" }).click();
+    await expect(notice).toHaveCount(0);
     await expect(page.getByText("Version 0.99.0 is downloaded. Restart Skovern to finish.")).toBeVisible();
     expect(await installs(app)).toBe(0);
-    await notice.getByRole("button", { name: "Restart now" }).click();
+    await page.getByRole("button", { name: "Restart now" }).click();
     await expect.poll(() => installs(app)).toBe(1);
 
     // M4: the check groups as a routine line; the download is its own row; both on disk.
@@ -152,6 +158,11 @@ test("M3: a failed background check stays quiet; a failed check you started says
     await page.getByRole("button", { name: "Check for updates" }).click();
     await expect(page.getByText("Couldn't check just now. Check your internet connection and try again.")).toBeVisible();
     await expect(page.locator(NOTICE)).toHaveCount(0);
+    // Try again checks again (the feed is still down, so it still says so).
+    await page.getByRole("button", { name: "Try again" }).click();
+    await expect(page.getByText("Couldn't check just now. Check your internet connection and try again.")).toBeVisible();
+    const sent = () => readFileSync(path.join(userDataDir, "receipts.jsonl"), "utf8").split("\n").filter((l) => l.includes('"task":"Skovern: update check"') && l.includes('"phase":"sent"')).length;
+    await expect.poll(sent).toBe(3); // startup + Check for updates + Try again
   } finally {
     await close(app, userDataDir);
   }

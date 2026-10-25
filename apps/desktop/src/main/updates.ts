@@ -17,8 +17,9 @@ export interface UpdaterPort {
   check(): Promise<FoundUpdate | null>;
   /** Downloads the found update; resolves with the bytes received. */
   download(onProgress: (percent: number) => void): Promise<number>;
-  /** Quits, installs silently, and relaunches. */
-  install(): void;
+  /** Quits, installs silently, and relaunches. Calls onFailed if the install can't start
+   *  (for example the downloaded installer is gone). */
+  install(onFailed: (e: unknown) => void): void;
 }
 
 /** Skovern sits in the tray for days, so it also checks while running, not just at launch. */
@@ -139,7 +140,14 @@ export function createUpdates(o: UpdatesOptions): Updates {
   }
 
   function install(): UpdatesView {
-    if (o.port && state.kind === "ready") o.port.install();
+    if (o.port && state.kind === "ready") {
+      const { version } = state;
+      // A failed install goes back to "didn't finish" with Try again, never a dead Restart now.
+      o.port.install((e) => {
+        o.log(`install failed: ${errText(e)}`);
+        set({ kind: "error", during: "download", version });
+      });
+    }
     return view();
   }
 

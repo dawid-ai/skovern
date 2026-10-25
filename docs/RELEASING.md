@@ -14,7 +14,12 @@ GitHub Releases. Installed copies of Skovern find it from there and offer the up
 
 ## Cut a release
 
-Run these after a loop merges to `main`, from an up-to-date `main`.
+Run these after a loop merges to `main`, from an up-to-date `main`. The very first release is
+`v0.1.0`, exactly as merged: skip step 1 and tag it.
+
+The release commit changes only the version and `UPDATES.md` and goes straight to `main`
+(admin bypass of "main: CI must pass"). It isn't an unchecked change: the release workflow's
+`check` job runs every CI gate on that exact commit before anything is published.
 
 1. Set the new version in `apps/desktop/package.json`.
 2. Add an entry at the top of `UPDATES.md`, in plain words for the people using Skovern:

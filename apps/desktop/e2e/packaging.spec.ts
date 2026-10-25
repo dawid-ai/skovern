@@ -63,8 +63,12 @@ async function startDatabase(): Promise<{ uri: string; stop: () => Promise<void>
   return { uri: container.getConnectionUri(), stop: async () => void (await container.stop()) };
 }
 
+// The release workflow sets SKOVERN_REQUIRE_PACKAGED, so a missing build fails there instead
+// of quietly skipping P1–P5.
+if (process.env["SKOVERN_REQUIRE_PACKAGED"] === "1" && !existsSync(EXE)) throw new Error(`no packaged build at ${EXE}`);
+
 test.describe("packaged Windows build (loop 029)", () => {
-  test.skip(!existsSync(EXE), `no packaged build at ${EXE} — run \`pnpm run package:win\` first`);
+  test.skip(!existsSync(EXE), `no packaged build at ${EXE} — run \`pnpm run dist:win\` first`);
 
   // P1 — no server / no UI needed: just prove the native runtime loads from the package.
   test("P1: the native runtime loads from the packaged app (getLlama → ready)", async () => {
@@ -157,6 +161,9 @@ test.describe("packaged Windows build (loop 029)", () => {
     test("P2/P3/P4: real hardware scan, seams inert, strict CSP", async () => {
       test.setTimeout(180_000);
       const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-pkg-"));
+      // No automatic update check, so this test never contacts GitHub (and an older local
+      // build is never offered a real update mid-test).
+      writeFileSync(path.join(userDataDir, "settings.json"), JSON.stringify({ autoUpdates: false }));
       const app = await electron.launch({
         executablePath: EXE,
         args: [`--user-data-dir=${userDataDir}`],

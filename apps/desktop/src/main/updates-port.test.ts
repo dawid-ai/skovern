@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync, 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { FAKE_VERSION, fakePort, fakeScenario, notesToText, updatesLog } from "./updates-port.js";
+import { FAKE_VERSION, fakePort, fakeScenario, notesToText, redactPaths, updatesLog } from "./updates-port.js";
 
 describe("release notes as plain text", () => {
   it("drops tags, keeps lines and bullets, decodes entities", () => {
@@ -32,13 +32,21 @@ describe("SKOVERN_UPDATER_FAKE seam", () => {
     const seen: number[] = [];
     expect(await port.download((p) => seen.push(p))).toBe(1024);
     expect(seen.at(-1)).toBe(100);
-    port.install();
+    port.install(() => {});
     expect(installs.count).toBe(1);
     await expect(fakePort("error", installs).check()).rejects.toThrow("fake feed: unreachable");
   });
 });
 
 describe("update log", () => {
+  it("never records file paths", () => {
+    const bs = String.fromCharCode(92);
+    const win = "C:" + bs + "Users" + bs + "jozwi" + bs + "AppData" + bs + "Local" + bs + "@skoverndesktop-updater" + bs + "pending" + bs + "Skovern-Setup.exe";
+    expect(redactPaths("Update has already been downloaded to " + win + ").")).toBe("Update has already been downloaded to <path>).");
+    expect(redactPaths("open /Users/dawid/Library/x failed")).toBe("open <path> failed");
+    expect(redactPaths("https://github.com/dawid-ai/skovern/releases.atom 404")).toBe("https://github.com/dawid-ai/skovern/releases.atom 404");
+  });
+
   it("writes one line per entry under userData/logs and rolls over past 256 KB", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "skovern-updlog-"));
     try {

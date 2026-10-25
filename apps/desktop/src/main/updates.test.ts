@@ -14,7 +14,7 @@ interface Rig {
   installs: number;
 }
 
-function rig(opts: { found?: FoundUpdate | null; checkFails?: boolean; downloadFails?: boolean; sinkFails?: boolean; port?: boolean } = {}) {
+function rig(opts: { found?: FoundUpdate | null; checkFails?: boolean; downloadFails?: boolean; sinkFails?: boolean; port?: boolean; installFails?: boolean } = {}) {
   const r: Rig = { events: [], receipts: [], views: [], auto: { on: true }, installs: 0 };
   let release: () => void = () => {};
   const port: UpdaterPort = {
@@ -31,8 +31,9 @@ function rig(opts: { found?: FoundUpdate | null; checkFails?: boolean; downloadF
       onProgress(100);
       return 2048;
     },
-    install() {
+    install(onFailed) {
       r.installs += 1;
+      if (opts.installFails) onFailed(new Error("installer gone"));
     },
   };
   const u = createUpdates({
@@ -147,6 +148,24 @@ describe("downloads", () => {
     await pending;
     u.install();
     expect(r.installs).toBe(1);
+  });
+});
+
+describe("install", () => {
+  it("a failed install goes back to didn't finish with Try again, never a dead Restart now", async () => {
+    const { r, u, finishDownload } = rig({ installFails: true });
+    await u.check(true);
+    let pending = u.download();
+    await Promise.resolve();
+    finishDownload();
+    await pending;
+    expect(u.install().state).toEqual({ kind: "error", during: "download", version: "0.2.0" });
+    expect(r.installs).toBe(1);
+    pending = u.download(); // Try again downloads afresh
+    await Promise.resolve();
+    expect(u.view().state.kind).toBe("downloading");
+    finishDownload();
+    expect((await pending).state.kind).toBe("ready");
   });
 });
 

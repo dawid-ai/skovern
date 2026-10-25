@@ -44,6 +44,7 @@ describe("Settings → Updates", () => {
   it("says what happened for each state", () => {
     expect(settingsCopy(view({ kind: "none" })).status).toBe("You're up to date.");
     expect(settingsCopy(view({ kind: "error", during: "check" })).status).toBe("Couldn't check just now. Check your internet connection and try again.");
+    expect(settingsCopy(view({ kind: "error", during: "check" })).action).toEqual({ label: "Try again", op: "check" });
     expect(settingsCopy(view({ kind: "available", version: "0.2.0", notes: "" })).action).toEqual({ label: "Update now", op: "download" });
     expect(settingsCopy(view({ kind: "ready", version: "0.2.0", notes: "" })).action).toEqual({ label: "Restart now", op: "install" });
     expect(settingsCopy(view({ kind: "idle" }, { auto: false })).status).toBe("Automatic checks are off.");

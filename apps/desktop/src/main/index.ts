@@ -11,7 +11,6 @@ import {
   createNewsClient,
   createPublishClient,
   createRouter,
-  getAppInfo,
   localProvider,
   openRouterProvider,
   type Provider,
@@ -35,6 +34,7 @@ import { resolveChatReply } from "./chat-reply.js";
 import { validateOllamaName } from "./ollama-name.js";
 import { disposeOllama, ensureOllamaRunning, fakeLaunchCount, ollamaInstalled, pickOllamaAction, sweepOrphanedOllama } from "./ollama-launch.js";
 import { getSettings, setAutoUpdates, setOllamaLaunch, type OllamaLaunch } from "./settings-store.js";
+import { appInfo } from "./app-info.js";
 import { createUpdates } from "./updates.js";
 import { electronPort, fakePort, fakeScenario, updatesLog } from "./updates-port.js";
 import { sweepOrphanParts } from "./download.js";
@@ -529,7 +529,7 @@ if (!app.requestSingleInstanceLock()) {
 app
   .whenReady()
   .then(() => {
-    registerTrusted(TRUST, "app:info", () => getAppInfo(app.getVersion()));
+    registerTrusted(TRUST, "app:info", () => appInfo(app));
 
     // First-party cloud calls are egress too. Each client gets a receipted `fetch`
     // wrapper (loop 015): a durable "sent" line lands before any byte leaves, so

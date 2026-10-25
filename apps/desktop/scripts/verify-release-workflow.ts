@@ -68,12 +68,15 @@ export function checkWorkflow(text: string): string[] {
     const run = typeof step["run"] === "string" ? step["run"] : "";
     if (uses && !PUBLISH_ACTIONS.some((a) => uses.startsWith(a))) errors.push(`R5: publish may not use ${uses.split("@")[0]}`);
     if (NPM_CODE.test(run)) errors.push(`R5: publish may not run npm or repository code (${run.match(NPM_CODE)?.[0]})`);
+    if (step["shell"] !== undefined && step["shell"] !== "bash") errors.push(`R5: publish steps run in bash only (found shell: ${String(step["shell"])})`);
   }
+  // A `defaults.run.shell` (workflow or job) could turn every `run:` into, say, node.
+  if (doc["defaults"] !== undefined || publish["defaults"] !== undefined) errors.push("R5: no defaults block may change how publish runs its steps");
 
   // R6: publish runs only for a pushed v* tag (pull requests and manual runs are dry runs).
-  const cond = typeof publish["if"] === "string" ? publish["if"].replace(/\s+/g, " ") : "";
-  if (!cond.includes("github.event_name == 'push'") || !cond.includes("startsWith(github.ref, 'refs/tags/v')"))
-    errors.push("R6: publish must run only on a pushed v* tag");
+  // Exact, so `… || always()` can't widen it.
+  const cond = typeof publish["if"] === "string" ? publish["if"].replace(/\s+/g, " ").trim() : "";
+  if (cond !== "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')") errors.push("R6: publish must run only on a pushed v* tag");
 
   // R7: every action pinned to a full commit SHA.
   for (const [name, job] of Object.entries(jobs)) {
@@ -84,12 +87,19 @@ export function checkWorkflow(text: string): string[] {
     }
   }
 
-  // R8: publish checks the installer against latest.yml before uploading it.
+  // R8: publish checks the installer against latest.yml before uploading it. The step must hash
+  // the installer and fail on its own line for an empty value or either mismatch (top-level
+  // sha512 and files[0].sha512, the one electron-updater verifies).
   const publishSteps = stepsOf(publish);
-  const verifyAt = publishSteps.findIndex((s) => /sha512/i.test(String(s["name"] ?? "")) && /sha512/.test(String(s["run"] ?? "")));
+  const verifyAt = publishSteps.findIndex((s) => /sha512/i.test(String(s["name"] ?? "")));
   const uploadAt = publishSteps.findIndex((s) => /gh release upload/.test(String(s["run"] ?? "")));
   if (verifyAt < 0) errors.push("R8: publish must check the installer's sha512 against latest.yml");
-  else if (uploadAt >= 0 && uploadAt < verifyAt) errors.push("R8: the sha512 check must come before the upload");
+  else {
+    const run = String(publishSteps[verifyAt]!["run"] ?? "");
+    const guards = ["openssl dgst -sha512 -binary Skovern-Setup.exe", '[ -n "$want" ] || {', '[ "$want" = "$got" ] || {', '[ "$file_want" = "$got" ] || {'];
+    for (const g of guards) if (!run.includes(g)) errors.push(`R8: the sha512 check must include: ${g}`);
+    if (uploadAt >= 0 && uploadAt < verifyAt) errors.push("R8: the sha512 check must come before the upload");
+  }
 
   // R9: publish holds exactly what it needs.
   if (JSON.stringify(publish["permissions"]) !== JSON.stringify(PUBLISH_PERMISSIONS))
@@ -97,7 +107,10 @@ export function checkWorkflow(text: string): string[] {
 
   // R10: the installer is built on Windows and the packaged-app checks run before upload.
   if (build["runs-on"] !== "windows-latest") errors.push("R10: build-win must run on windows-latest");
-  if (!stepsOf(build).some((s) => /test:packaging/.test(String(s["run"] ?? "")))) errors.push("R10: build-win must run test:packaging");
+  const pkg = stepsOf(build).find((s) => /test:packaging/.test(String(s["run"] ?? "")));
+  if (!pkg) errors.push("R10: build-win must run test:packaging");
+  else if (!isObj(pkg["env"]) || pkg["env"]["SKOVERN_REQUIRE_PACKAGED"] !== "1")
+    errors.push("R10: test:packaging must set SKOVERN_REQUIRE_PACKAGED: \"1\" (a missing build fails instead of skipping)");
   if (stepsOf(build).some((s) => /--publish (always|onTag|onTagOrDraft)/.test(String(s["run"] ?? ""))))
     errors.push("R10: build-win may not publish");
 

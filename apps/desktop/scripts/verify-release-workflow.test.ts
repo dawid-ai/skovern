@@ -64,6 +64,34 @@ describe("release workflow shape", () => {
     expect(checkWorkflow(mutate((wf) => (wf.jobs["publish"]!.if = "github.event_name == 'push'")))).toContain("R6: publish must run only on a pushed v* tag");
   });
 
+  // Checker iteration 1: each of these passed the old substring rules.
+  it("R6: a condition widened with || always() fails", () => {
+    const text = mutate((wf) => (wf.jobs["publish"]!.if = "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') || always()"));
+    expect(checkWorkflow(text)).toContain("R6: publish must run only on a pushed v* tag");
+  });
+
+  it("R5: a defaults block or a non-bash shell in publish fails", () => {
+    const jobDefaults = mutate((wf) => ((wf.jobs["publish"] as Record<string, unknown>)["defaults"] = { run: { shell: "node {0}" } }));
+    expect(checkWorkflow(jobDefaults)).toContain("R5: no defaults block may change how publish runs its steps");
+    const topDefaults = mutate((wf) => ((wf as unknown as Record<string, unknown>)["defaults"] = { run: { shell: "node {0}" } }));
+    expect(checkWorkflow(topDefaults)).toContain("R5: no defaults block may change how publish runs its steps");
+    const stepShell = mutate((wf) => (wf.jobs["publish"]!.steps.find((s) => /sha512/i.test(String(s["name"] ?? "")))!["shell"] = "python"));
+    expect(checkWorkflow(stepShell)).toContain("R5: publish steps run in bash only (found shell: python)");
+  });
+
+  it("R8: a sha512 step that doesn't really compare fails", () => {
+    const echoOnly = mutate((wf) => (wf.jobs["publish"]!.steps.find((s) => /sha512/i.test(String(s["name"] ?? "")))!["run"] = 'want=$(sed -n "s/^sha512: //p" latest.yml)\necho "$want"'));
+    const errors = checkWorkflow(echoOnly);
+    expect(errors).toContain('R8: the sha512 check must include: [ -n "$want" ] || {');
+    expect(errors).toContain('R8: the sha512 check must include: [ "$want" = "$got" ] || {');
+    expect(errors).toContain('R8: the sha512 check must include: [ "$file_want" = "$got" ] || {');
+  });
+
+  it("R10: packaged checks that may skip fail", () => {
+    const text = mutate((wf) => delete (wf.jobs["build-win"]!.steps.find((s) => /test:packaging/.test(String(s["run"] ?? "")))!["env"] as Record<string, string>)["SKOVERN_REQUIRE_PACKAGED"]);
+    expect(checkWorkflow(text)).toContain('R10: test:packaging must set SKOVERN_REQUIRE_PACKAGED: "1" (a missing build fails instead of skipping)');
+  });
+
   it("R8: publish without the sha512 check, or with it after the upload, fails", () => {
     const noCheck = mutate((wf) => (wf.jobs["publish"]!.steps = wf.jobs["publish"]!.steps.filter((s) => !/sha512/i.test(String(s["name"] ?? "")))));
     expect(checkWorkflow(noCheck)).toContain("R8: publish must check the installer's sha512 against latest.yml");

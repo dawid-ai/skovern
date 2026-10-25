@@ -64,7 +64,7 @@ export function settingsCopy(v: UpdatesView): SettingsCopy {
     case "error":
       return s.during === "download"
         ? { status: "The update didn't finish.", action: { label: "Try again", op: "download" }, checkDisabled: false }
-        : { status: "Couldn't check just now. Check your internet connection and try again.", action: null, checkDisabled: false };
+        : { status: "Couldn't check just now. Check your internet connection and try again.", action: { label: "Try again", op: "check" }, checkDisabled: false };
     default:
       return { status: v.auto ? "Skovern looks for new versions by itself." : "Automatic checks are off.", action: null, checkDisabled: false };
   }
