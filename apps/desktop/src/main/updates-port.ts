@@ -1,4 +1,5 @@
 import { appendFileSync, mkdirSync, renameSync, statSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type { AppUpdater, ProgressInfo } from "electron-updater";
 import type { FoundUpdate, UpdaterPort } from "./updates.js";
@@ -30,11 +31,32 @@ export function notesToText(notes: ReleaseNotes): string {
 
 const LOG_CAP = 256 * 1024;
 
-/** Absolute file paths (Windows drive paths, user home folders) become <path>. */
-export function redactPaths(line: string): string {
-  // A path ends before a space, quote, bracket, or comma, and never on a trailing full stop.
-  // A drive letter stands alone (so `https://` isn't one).
-  return line.replace(/(?<![\w])[A-Za-z]:(?:\\|\/(?!\/))(?:[^\s"'<>(),]*[^\s"'<>(),.])?/g, "<path>").replace(/\/(?:Users|home)\/(?:[^\s"'<>(),]*[^\s"'<>(),.])?/g, "<path>");
+// The rest of a path after a known folder or a drive letter: up to a space, quote, bracket, or
+// comma, never ending on a full stop.
+const TAIL = String.raw`(?:[^\s"'<>(),]*[^\s"'<>(),.])?`;
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Absolute file paths become <path>. Known folders (home, AppData, Program Files, the app's
+ *  own) go first, because their names can hold spaces ("C:\Users\Dawid Jozwiak"); then any
+ *  drive, UNC, or home path. A drive letter stands alone, so `https://` isn't one. */
+export function redactPaths(line: string, roots: string[] = []): string {
+  let out = line;
+  for (const root of [...roots].filter((r) => r.length > 3).sort((a, b) => b.length - a.length)) {
+    const either = escapeRe(root).replace(/\\\\|\//g, String.raw`[\\/]`);
+    out = out.replace(new RegExp(either + TAIL, "gi"), "<path>");
+  }
+  return out
+    .replace(new RegExp(String.raw`(?<![\w])[A-Za-z]:(?:\\|\/(?!\/))` + TAIL, "g"), "<path>")
+    .replace(new RegExp(String.raw`\\\\[^\\\s]+\\` + TAIL, "g"), "<path>")
+    .replace(new RegExp(String.raw`\/(?:Users|home)\/` + TAIL, "g"), "<path>");
+}
+
+/** The folders whose names a log line may carry, with spaces and all. */
+function knownRoots(userData: string): string[] {
+  const env = process.env;
+  return [userData, os.homedir(), path.dirname(process.execPath), env["LOCALAPPDATA"], env["APPDATA"], env["ProgramFiles"], env["ProgramFiles(x86)"]].filter(
+    (r): r is string => typeof r === "string",
+  );
 }
 
 /** Appends to userData/logs/updates.log; past 256 KB the old file moves to updates.log.1.
@@ -43,6 +65,7 @@ export function redactPaths(line: string): string {
 export function updatesLog(userData: string): (line: string) => void {
   const dir = path.join(userData, "logs");
   const file = path.join(dir, "updates.log");
+  const roots = knownRoots(userData);
   return (line) => {
     try {
       mkdirSync(dir, { recursive: true });
@@ -51,7 +74,7 @@ export function updatesLog(userData: string): (line: string) => void {
       } catch {
         // no log yet
       }
-      appendFileSync(file, `${new Date().toISOString()} ${redactPaths(line).replace(/\s+/g, " ")}\n`);
+      appendFileSync(file, `${new Date().toISOString()} ${redactPaths(line, roots).replace(/\s+/g, " ")}\n`);
     } catch {
       // a log must never break the app
     }
@@ -88,8 +111,14 @@ export function electronPort(updater: AppUpdater, log: (line: string) => void): 
       return total;
     },
     install(onFailed): void {
-      updater.once("error", onFailed); // a failed start is reported only as an error event
-      updater.quitAndInstall(true, true); // silent install, then relaunch
+      // A failed start is reported only as an error event, emitted before quitAndInstall
+      // returns; the listener goes right after, so a later unrelated error isn't taken for it.
+      updater.once("error", onFailed);
+      try {
+        updater.quitAndInstall(true, true); // silent install, then relaunch
+      } finally {
+        updater.off("error", onFailed);
+      }
     },
   };
 }

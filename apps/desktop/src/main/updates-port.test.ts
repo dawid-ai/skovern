@@ -47,6 +47,19 @@ describe("update log", () => {
     expect(redactPaths("https://github.com/dawid-ai/skovern/releases.atom 404")).toBe("https://github.com/dawid-ai/skovern/releases.atom 404");
   });
 
+  // Checker iteration 2: folder names with spaces leaked past the first space.
+  it("hides known folders whose names have spaces, and UNC paths", () => {
+    const bs = String.fromCharCode(92);
+    const j = (...p: string[]): string => p.join(bs);
+    const home = j("C:", "Users", "Dawid Jozwiak");
+    const pf = j("C:", "Program Files");
+    const roots = [home, pf, j(home, "AppData", "Local")];
+    expect(redactPaths("downloaded to " + j(home, "AppData", "Local", "x-updater", "pending", "Skovern-Setup.exe") + ".", roots)).toBe("downloaded to <path>.");
+    expect(redactPaths("open " + j(pf, "Skovern", "resources", "app.asar") + " failed", roots)).toBe("open <path> failed");
+    expect(redactPaths("forward slashes C:/Users/Dawid Jozwiak/x.txt too", roots)).toBe("forward slashes <path> too");
+    expect(redactPaths("share " + bs + bs + j("server", "share", "Skovern-Setup.exe") + " gone")).toBe("share <path> gone");
+  });
+
   it("writes one line per entry under userData/logs and rolls over past 256 KB", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "skovern-updlog-"));
     try {
