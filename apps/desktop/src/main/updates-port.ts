@@ -2,7 +2,7 @@ import { appendFileSync, mkdirSync, renameSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { AppUpdater, ProgressInfo } from "electron-updater";
-import type { FoundUpdate, UpdaterPort } from "./updates.js";
+import { RefusedUpdate, type FoundUpdate, type UpdaterPort } from "./updates.js";
 
 // The real feed (electron-updater → GitHub Releases), a fake feed for tests, the update log,
 // and release notes as plain text.
@@ -112,15 +112,21 @@ export function electronPort(updater: AppUpdater, log: (line: string) => void): 
   updater.requestHeaders = { ...NO_INSTALL_ID };
   // Warnings and errors only: electron-updater's info lines narrate every step, with paths.
   updater.logger = { info: () => {}, warn: (m) => log(`warn ${String(m)}`), error: (m) => log(`error ${String(m)}`), debug: () => {} };
+  // electron-updater remembers the release from its LAST check and downloads that one, whatever
+  // we decided about it. So a download needs the last check to have been accepted here.
+  let accepted: string | null = null;
   return {
     async check(): Promise<FoundUpdate | null> {
+      accepted = null;
       const r = await updater.checkForUpdates();
       if (!r || !r.isUpdateAvailable) return null;
       const refused = refuseReason(r.updateInfo as ReleaseInfo);
-      if (refused) throw new Error(`update refused: ${refused}`);
+      if (refused) throw new RefusedUpdate(`update refused: ${refused}`);
+      accepted = r.updateInfo.version;
       return { version: r.updateInfo.version, notes: notesToText(r.updateInfo.releaseNotes) };
     },
     async download(onProgress): Promise<number> {
+      if (accepted === null) throw new RefusedUpdate("no accepted update to download");
       // Bytes that actually arrived (a differential download fetches less than the file).
       let received = 0;
       const tick = (p: ProgressInfo): void => {

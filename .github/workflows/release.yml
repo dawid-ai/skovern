@@ -169,7 +169,7 @@ jobs:
         # published release, a draft someone else made) stops the release: its notes or extra
         # files would otherwise go out under this version.
         run: |
-          set -eu
+          set -euo pipefail
           tag="$GITHUB_REF_NAME"
           repo="$GITHUB_REPOSITORY"
           if owner=$(gh release view "$tag" --repo "$repo" --json isDraft,author --jq 'select(.isDraft) | .author.login' 2>/dev/null); then
@@ -181,8 +181,11 @@ jobs:
           gh release view "$tag" --repo "$repo" --json assets --jq '.assets[].name' | while IFS= read -r asset; do
             case "$asset" in
               Skovern-Setup.exe|Skovern-Setup.exe.blockmap|latest.yml) ;;
-              *) gh release delete-asset "$tag" "$asset" --repo "$repo" --yes ;;
+              *) gh release delete-asset --repo "$repo" --yes -- "$tag" "$asset" ;;
             esac
           done
           gh release upload "$tag" --repo "$repo" --clobber dist/Skovern-Setup.exe dist/Skovern-Setup.exe.blockmap dist/latest.yml
+          # Exactly our three files, checked again right before it goes public.
+          assets=$(gh release view "$tag" --repo "$repo" --json assets --jq '[.assets[].name] | sort | join(",")')
+          [ "$assets" = "Skovern-Setup.exe,Skovern-Setup.exe.blockmap,latest.yml" ] || { echo "release $tag has unexpected files: $assets"; exit 1; }
           gh release edit "$tag" --repo "$repo" --draft=false --latest

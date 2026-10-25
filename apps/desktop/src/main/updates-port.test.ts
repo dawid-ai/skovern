@@ -57,8 +57,28 @@ describe("real feed (electron-updater) settings", () => {
     expect(refuseReason({ version: "0.1.1" })).toBe("release tag undefined isn't v0.1.1");
   });
 
+  // SECURE iteration 2: electron-updater downloads whatever its LAST check found.
+  it("after a refused check, an earlier accepted offer can't be downloaded", async () => {
+    const u = fakeUpdater(good);
+    let downloads = 0;
+    const realDownload = u.downloadUpdate;
+    u.downloadUpdate = async () => {
+      downloads += 1;
+      return realDownload();
+    };
+    const port = electronPort(u as unknown as AppUpdater, () => {});
+    await port.check(); // v0.1.1 accepted
+    const evil = { ...good, version: "0.1.2", tag: "build-7" };
+    u.checkForUpdates = async () => ({ isUpdateAvailable: true, updateInfo: evil });
+    await expect(port.check()).rejects.toThrow("update refused: release tag build-7 isn't v0.1.2");
+    await expect(port.download(() => {})).rejects.toThrow("no accepted update to download");
+    expect(downloads).toBe(0);
+  });
+
   it("counts the bytes that arrived, not the file size", async () => {
-    expect(await electronPort(fakeUpdater(good) as unknown as AppUpdater, () => {}).download(() => {})).toBe(420);
+    const port = electronPort(fakeUpdater(good) as unknown as AppUpdater, () => {});
+    await port.check();
+    expect(await port.download(() => {})).toBe(420);
   });
 });
 

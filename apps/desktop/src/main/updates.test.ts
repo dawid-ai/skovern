@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { FetchReceipt } from "@skovern/core";
 import type { UpdatesView } from "../shared/updates.js";
-import { CHECK_EVERY_MS, CHECK_TASK, DOWNLOAD_TASK, createUpdates, type FoundUpdate, type UpdaterPort } from "./updates.js";
+import { CHECK_EVERY_MS, CHECK_TASK, DOWNLOAD_TASK, RefusedUpdate, createUpdates, type FoundUpdate, type UpdaterPort } from "./updates.js";
 
 // release-updates M3/M4: the update flow's states, and the egress rule — every check and
 // download has its receipt on disk BEFORE the request leaves, or the request never happens.
@@ -14,13 +14,16 @@ interface Rig {
   installs: number;
 }
 
-function rig(opts: { found?: FoundUpdate | null; checkFails?: boolean; downloadFails?: boolean; sinkFails?: boolean; port?: boolean; installFails?: boolean } = {}) {
+function rig(opts: { found?: FoundUpdate | null; checkFails?: boolean; downloadFails?: boolean; sinkFails?: boolean; port?: boolean; installFails?: boolean; refuseAfter?: number } = {}) {
+  let checks = 0;
   const r: Rig = { events: [], receipts: [], views: [], auto: { on: true }, installs: 0 };
   let release: () => void = () => {};
   const port: UpdaterPort = {
     async check() {
       r.events.push("port:check");
+      checks += 1;
       if (opts.checkFails) throw new Error("offline");
+      if (opts.refuseAfter !== undefined && checks > opts.refuseAfter) throw new RefusedUpdate("update refused: release tag build-7 isn't v0.2.0");
       return opts.found === undefined ? { version: "0.2.0", notes: "Faster." } : opts.found;
     },
     async download(onProgress) {
@@ -148,6 +151,24 @@ describe("downloads", () => {
     await pending;
     u.install();
     expect(r.installs).toBe(1);
+  });
+});
+
+describe("refused releases", () => {
+  // SECURE iteration 2: a refused background check must not leave an older offer clickable.
+  it("a refused background check drops the earlier offer; Update now does nothing", async () => {
+    const { r, u } = rig({ refuseAfter: 1 });
+    expect((await u.check(false)).state.kind).toBe("available");
+    expect((await u.check(false)).state).toEqual({ kind: "idle" });
+    await u.download();
+    expect(r.events).not.toContain("port:download");
+  });
+
+  it("a refused check you started says it couldn't check, with nothing to download", async () => {
+    const { r, u } = rig({ refuseAfter: 0 });
+    expect((await u.check(true)).state).toEqual({ kind: "error", during: "check" });
+    await u.download();
+    expect(r.events).not.toContain("port:download");
   });
 });
 

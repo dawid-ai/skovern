@@ -6,6 +6,12 @@ import type { UpdateState, UpdatesView } from "../shared/updates.js";
 // receipt is written BEFORE the request leaves; if the receipt can't be written, the request
 // never happens (fail closed, same rule as every other outbound call).
 
+/** A check reached the feed, but the offered release isn't one the release workflow would have
+ *  published (see refuseReason). Whatever was on offer before is dropped, not kept. */
+export class RefusedUpdate extends Error {
+  override name = "RefusedUpdate";
+}
+
 export interface FoundUpdate {
   version: string;
   /** Release notes as plain text (never HTML). */
@@ -106,7 +112,13 @@ export function createUpdates(o: UpdatesOptions): Updates {
     } catch (e) {
       o.log(`check failed: ${errText(e)}`);
       done(CHECK_TASK, false, 0);
-      set(failed());
+      if (e instanceof RefusedUpdate) {
+        // The feed now points at a release we refused: an older offer must not stay clickable.
+        found = null;
+        set(userStarted ? { kind: "error", during: "check" } : { kind: "idle" });
+      } else {
+        set(failed());
+      }
     }
     return view();
   }
