@@ -72,6 +72,20 @@ export function checkWorkflow(text: string): string[] {
   }
   // A `defaults.run.shell` (workflow or job) could turn every `run:` into, say, node.
   if (doc["defaults"] !== undefined || publish["defaults"] !== undefined) errors.push("R5: no defaults block may change how publish runs its steps");
+  // Environment can run code too (BASH_ENV pointing into the artifact), so publish gets none
+  // beyond the token.
+  if (publish["env"] !== undefined) errors.push("R5: publish may not set job env");
+  for (const step of stepsOf(publish)) {
+    const env = step["env"];
+    if (env !== undefined && (!isObj(env) || JSON.stringify(env) !== JSON.stringify({ GH_TOKEN: "${{ github.token }}" })))
+      errors.push("R5: publish steps may set only GH_TOKEN: ${{ github.token }}");
+    // Only this run's artifacts: `run-id`/`github-token` would fetch another run's (a fork PR's).
+    const uses = typeof step["uses"] === "string" ? step["uses"] : "";
+    if (uses.startsWith("actions/download-artifact@") && isObj(step["with"])) {
+      const extra = Object.keys(step["with"]).filter((k) => k !== "name" && k !== "path");
+      if (extra.length) errors.push(`R5: download-artifact may take only name and path (found ${extra.join(", ")})`);
+    }
+  }
 
   // R6: publish runs only for a pushed v* tag (pull requests and manual runs are dry runs).
   // Exact, so `… || always()` can't widen it.
@@ -98,6 +112,8 @@ export function checkWorkflow(text: string): string[] {
     const run = String(publishSteps[verifyAt]!["run"] ?? "");
     const guards = ["openssl dgst -sha512 -binary Skovern-Setup.exe", '[ -n "$want" ] || {', '[ "$want" = "$got" ] || {', '[ "$file_want" = "$got" ] || {'];
     for (const g of guards) if (!run.includes(g)) errors.push(`R8: the sha512 check must include: ${g}`);
+    if (run.trim().split("\n")[0]?.trim() !== "set -eu") errors.push("R8: the sha512 check must start with set -eu");
+    if (/\bexit 0\b|\|\|\s*true\b|\bset \+e\b/.test(run)) errors.push("R8: the sha512 check may not exit 0, || true, or set +e");
     if (uploadAt >= 0 && uploadAt < verifyAt) errors.push("R8: the sha512 check must come before the upload");
   }
 

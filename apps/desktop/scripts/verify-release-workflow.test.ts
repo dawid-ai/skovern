@@ -87,6 +87,25 @@ describe("release workflow shape", () => {
     expect(errors).toContain('R8: the sha512 check must include: [ "$file_want" = "$got" ] || {');
   });
 
+  // SECURE iteration 1: more ways to run code or fetch another run's files next to the token.
+  it("R5: publish env (BASH_ENV), extra step env, or another run's artifacts fail", () => {
+    const jobEnv = mutate((wf) => ((wf.jobs["publish"] as Record<string, unknown>)["env"] = { BASH_ENV: "dist/x.sh" }));
+    expect(checkWorkflow(jobEnv)).toContain("R5: publish may not set job env");
+    const stepEnv = mutate((wf) => (wf.jobs["publish"]!.steps.find((s) => /sha512/i.test(String(s["name"] ?? "")))!["env"] = { BASH_ENV: "dist/x.sh" }));
+    expect(checkWorkflow(stepEnv)).toContain("R5: publish steps may set only GH_TOKEN: ${{ github.token }}");
+    const otherRun = mutate((wf) => ((wf.jobs["publish"]!.steps[0]!["with"] as Record<string, string>)["run-id"] = "123"));
+    expect(checkWorkflow(otherRun)).toContain("R5: download-artifact may take only name and path (found run-id)");
+  });
+
+  it("R8: a sha512 check that can't fail fails", () => {
+    const sha = (wf: Wf) => wf.jobs["publish"]!.steps.find((s) => /sha512/i.test(String(s["name"] ?? "")))!;
+    const early = mutate((wf) => (sha(wf)["run"] = "exit 0\n" + String(sha(wf)["run"])));
+    expect(checkWorkflow(early)).toContain("R8: the sha512 check must start with set -eu");
+    expect(checkWorkflow(early)).toContain("R8: the sha512 check may not exit 0, || true, or set +e");
+    const orTrue = mutate((wf) => (sha(wf)["run"] = String(sha(wf)["run"]).replace("grep -qx \"path: Skovern-Setup.exe\" latest.yml", "grep -qx \"path: Skovern-Setup.exe\" latest.yml || true")));
+    expect(checkWorkflow(orTrue)).toContain("R8: the sha512 check may not exit 0, || true, or set +e");
+  });
+
   it("R10: packaged checks that may skip fail", () => {
     const text = mutate((wf) => delete (wf.jobs["build-win"]!.steps.find((s) => /test:packaging/.test(String(s["run"] ?? "")))!["env"] as Record<string, string>)["SKOVERN_REQUIRE_PACKAGED"]);
     expect(checkWorkflow(text)).toContain('R10: test:packaging must set SKOVERN_REQUIRE_PACKAGED: "1" (a missing build fails instead of skipping)');

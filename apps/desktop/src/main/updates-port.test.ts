@@ -2,7 +2,8 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync, 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { FAKE_VERSION, fakePort, fakeScenario, notesToText, redactPaths, updatesLog } from "./updates-port.js";
+import type { AppUpdater } from "electron-updater";
+import { FAKE_VERSION, electronPort, fakePort, fakeScenario, notesToText, redactPaths, refuseReason, updatesLog } from "./updates-port.js";
 
 describe("release notes as plain text", () => {
   it("drops tags, keeps lines and bullets, decodes entities", () => {
@@ -14,6 +15,50 @@ describe("release notes as plain text", () => {
     expect(notesToText([{ note: "One" }, { note: null }, { note: "Two" }])).toBe("One\n\nTwo");
     expect(notesToText("x".repeat(5000))).toHaveLength(2000);
     expect(notesToText(null)).toBe("");
+  });
+});
+
+// SECURE iteration 1: the install ID, and releases the release workflow didn't publish.
+describe("real feed (electron-updater) settings", () => {
+  type Listener = (...a: unknown[]) => void;
+  function fakeUpdater(updateInfo: Record<string, unknown>) {
+    const listeners = new Map<string, Listener>();
+    const u = {
+      requestHeaders: null as Record<string, string> | null,
+      checkForUpdates: async () => ({ isUpdateAvailable: true, updateInfo }),
+      downloadUpdate: async () => {
+        listeners.get("download-progress")?.({ total: 1000, transferred: 300, percent: 30 });
+        listeners.get("download-progress")?.({ total: 1000, transferred: 420, percent: 100 });
+        return [];
+      },
+      on: (e: string, f: Listener) => listeners.set(e, f),
+      off: (e: string) => listeners.delete(e),
+      once: (e: string, f: Listener) => listeners.set(e, f),
+      quitAndInstall: () => {},
+    };
+    return u;
+  }
+  const good = { version: "0.1.1", tag: "v0.1.1", releaseNotes: "<p>Faster.</p>", files: [{ url: "Skovern-Setup.exe" }] };
+
+  it("sends zeros instead of the per-install ID", () => {
+    const u = fakeUpdater(good);
+    electronPort(u as unknown as AppUpdater, () => {});
+    expect(u.requestHeaders).toEqual({ "x-user-staging-id": "00000000-0000-0000-0000-000000000000" });
+  });
+
+  it("offers a release tagged v<version>", async () => {
+    await expect(electronPort(fakeUpdater(good) as unknown as AppUpdater, () => {}).check()).resolves.toEqual({ version: "0.1.1", notes: "Faster." });
+  });
+
+  it("refuses a release on another tag, or one asking for admin rights", async () => {
+    await expect(electronPort(fakeUpdater({ ...good, tag: "build-7" }) as unknown as AppUpdater, () => {}).check()).rejects.toThrow("update refused: release tag build-7 isn't v0.1.1");
+    const admin = { ...good, files: [{ url: "Skovern-Setup.exe", isAdminRightsRequired: true }] };
+    await expect(electronPort(fakeUpdater(admin) as unknown as AppUpdater, () => {}).check()).rejects.toThrow("update refused: release asks for admin rights");
+    expect(refuseReason({ version: "0.1.1" })).toBe("release tag undefined isn't v0.1.1");
+  });
+
+  it("counts the bytes that arrived, not the file size", async () => {
+    expect(await electronPort(fakeUpdater(good) as unknown as AppUpdater, () => {}).download(() => {})).toBe(420);
   });
 });
 

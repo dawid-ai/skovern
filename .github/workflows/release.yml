@@ -165,12 +165,24 @@ jobs:
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
+        # A rerun may find this workflow's own draft. Anything else already on the tag (a
+        # published release, a draft someone else made) stops the release: its notes or extra
+        # files would otherwise go out under this version.
         run: |
           set -eu
           tag="$GITHUB_REF_NAME"
-          gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 || \
-            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
-              --title "Skovern ${tag#v}" --notes-file notes/release-notes.md
-          gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber \
-            dist/Skovern-Setup.exe dist/Skovern-Setup.exe.blockmap dist/latest.yml
-          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          repo="$GITHUB_REPOSITORY"
+          if owner=$(gh release view "$tag" --repo "$repo" --json isDraft,author --jq 'select(.isDraft) | .author.login' 2>/dev/null); then
+            [ "$owner" = "github-actions[bot]" ] || { echo "release $tag already exists and isn't this workflow's draft"; exit 1; }
+          else
+            gh release create "$tag" --repo "$repo" --draft --verify-tag --title "Skovern ${tag#v}" --notes-file notes/release-notes.md
+          fi
+          gh release edit "$tag" --repo "$repo" --title "Skovern ${tag#v}" --notes-file notes/release-notes.md
+          gh release view "$tag" --repo "$repo" --json assets --jq '.assets[].name' | while IFS= read -r asset; do
+            case "$asset" in
+              Skovern-Setup.exe|Skovern-Setup.exe.blockmap|latest.yml) ;;
+              *) gh release delete-asset "$tag" "$asset" --repo "$repo" --yes ;;
+            esac
+          done
+          gh release upload "$tag" --repo "$repo" --clobber dist/Skovern-Setup.exe dist/Skovern-Setup.exe.blockmap dist/latest.yml
+          gh release edit "$tag" --repo "$repo" --draft=false --latest

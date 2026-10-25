@@ -81,6 +81,27 @@ export function updatesLog(userData: string): (line: string) => void {
   };
 }
 
+/** electron-updater sends a random install ID (kept in userData/.updaterId) on every check, for
+ *  staged rollouts we don't use. Sending zeros instead keeps checks from different places from
+ *  being tied to one computer; electron-updater applies our headers last. */
+export const NO_INSTALL_ID = { "x-user-staging-id": "00000000-0000-0000-0000-000000000000" };
+
+interface ReleaseInfo {
+  version: string;
+  tag?: unknown;
+  files?: { isAdminRightsRequired?: boolean }[];
+}
+
+/** Why an offered update is refused, or null. electron-updater takes whatever GitHub marks
+ *  "latest", whatever its tag. Our release workflow only publishes tag v<version>, and Skovern
+ *  installs per user, so anything else (another tag, a request for admin rights) didn't come
+ *  from it. */
+export function refuseReason(info: ReleaseInfo): string | null {
+  if (info.tag !== `v${info.version}`) return `release tag ${String(info.tag)} isn't v${info.version}`;
+  if ((info.files ?? []).some((f) => f.isAdminRightsRequired === true)) return "release asks for admin rights";
+  return null;
+}
+
 /** electron-updater, configured for "ask first": nothing downloads until the user says so. */
 export function electronPort(updater: AppUpdater, log: (line: string) => void): UpdaterPort {
   updater.autoDownload = false;
@@ -88,18 +109,22 @@ export function electronPort(updater: AppUpdater, log: (line: string) => void): 
   updater.allowPrerelease = false;
   updater.allowDowngrade = false;
   updater.disableWebInstaller = true;
+  updater.requestHeaders = { ...NO_INSTALL_ID };
   // Warnings and errors only: electron-updater's info lines narrate every step, with paths.
   updater.logger = { info: () => {}, warn: (m) => log(`warn ${String(m)}`), error: (m) => log(`error ${String(m)}`), debug: () => {} };
   return {
     async check(): Promise<FoundUpdate | null> {
       const r = await updater.checkForUpdates();
       if (!r || !r.isUpdateAvailable) return null;
+      const refused = refuseReason(r.updateInfo as ReleaseInfo);
+      if (refused) throw new Error(`update refused: ${refused}`);
       return { version: r.updateInfo.version, notes: notesToText(r.updateInfo.releaseNotes) };
     },
     async download(onProgress): Promise<number> {
-      let total = 0;
+      // Bytes that actually arrived (a differential download fetches less than the file).
+      let received = 0;
       const tick = (p: ProgressInfo): void => {
-        total = p.total;
+        received = Math.max(received, p.transferred);
         onProgress(p.percent);
       };
       updater.on("download-progress", tick);
@@ -108,7 +133,7 @@ export function electronPort(updater: AppUpdater, log: (line: string) => void): 
       } finally {
         updater.off("download-progress", tick);
       }
-      return total;
+      return received;
     },
     install(onFailed): void {
       // A failed start is reported only as an error event, emitted before quitAndInstall

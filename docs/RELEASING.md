@@ -75,15 +75,29 @@ the shape (it runs in the unit tests and in `check`).
 ## Trust, until the beta
 
 Builds are unsigned until the first beta (ledger `code-signing-notarization`). Windows shows
-"unknown publisher" once, at first install (**More info** → **Run anyway**). Updates are
-trusted through:
+"unknown publisher" once, at first install (**More info** → **Run anyway**).
 
-- only admins can push `v*` tags (ruleset "Release tags");
-- published releases can't change (immutable releases);
-- electron-updater checks the download's sha512 against `latest.yml` from the same release;
-- the installer has a build provenance attestation from this workflow.
+**Who can ship code to every installed Skovern today:** any credential that can create a
+release on `dawid-ai/skovern` (today that's Dawid's account, including any `gh` or git session
+or agent running with it), and any npm dependency that runs in `build-win`. Nothing on the
+installed side checks a signature, so that's the trust root until signing lands (ledger
+`update-feed-trust-0x`).
 
-The open risk is the GitHub account itself (ledger `update-feed-trust-0x`); signing closes it.
+What narrows it:
+
+- only admins can create, move, or delete any tag (ruleset "Tags: admins only");
+- a published release can't change (immutable releases);
+- the app refuses an offered update unless its tag is exactly `v<version>`, and refuses any
+  that asks for admin rights (Skovern installs per user);
+- `publish` refuses a release that already exists unless it's its own draft, and sets the notes
+  and files itself.
+
+What doesn't: electron-updater's sha512 check and the build attestation only show the
+download matches the release and came from this workflow run. They catch corruption, not a
+forged release, and the app doesn't verify the attestation.
+
+Local sessions (people or agents) only tag and push. They never run `gh release create`,
+`upload`, or `edit`; only the workflow publishes.
 
 ## Where the installed app keeps things
 
