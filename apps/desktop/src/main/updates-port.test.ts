@@ -75,6 +75,17 @@ describe("real feed (electron-updater) settings", () => {
     expect(downloads).toBe(0);
   });
 
+  it("an offline check keeps the accepted offer downloadable", async () => {
+    const u = fakeUpdater(good);
+    const port = electronPort(u as unknown as AppUpdater, () => {});
+    await port.check();
+    u.checkForUpdates = async () => {
+      throw new Error("net::ERR_INTERNET_DISCONNECTED");
+    };
+    await expect(port.check()).rejects.toThrow("net::ERR_INTERNET_DISCONNECTED");
+    expect(await port.download(() => {})).toBe(420);
+  });
+
   it("counts the bytes that arrived, not the file size", async () => {
     const port = electronPort(fakeUpdater(good) as unknown as AppUpdater, () => {});
     await port.check();

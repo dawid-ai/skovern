@@ -117,8 +117,10 @@ export function electronPort(updater: AppUpdater, log: (line: string) => void): 
   let accepted: string | null = null;
   return {
     async check(): Promise<FoundUpdate | null> {
-      accepted = null;
       const r = await updater.checkForUpdates();
+      // Cleared only once the feed answered: an offline check changes nothing electron-updater
+      // holds, so the earlier accepted offer stays downloadable.
+      accepted = null;
       if (!r || !r.isUpdateAvailable) return null;
       const refused = refuseReason(r.updateInfo as ReleaseInfo);
       if (refused) throw new RefusedUpdate(`update refused: ${refused}`);
