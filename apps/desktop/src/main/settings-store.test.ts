@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const state = { dir: "" };
 vi.mock("electron", () => ({ app: { getPath: () => state.dir } }));
 
-import { getSettings, setOllamaLaunch } from "./settings-store.js";
+import { getSettings, setAutoUpdates, setOllamaLaunch } from "./settings-store.js";
 
 beforeEach(() => {
   state.dir = mkdtempSync(path.join(tmpdir(), "skovern-settings-"));
@@ -33,5 +33,14 @@ describe("settings-store", () => {
     expect(getSettings().ollamaLaunch).toBe("ask");
     writeFileSync(path.join(state.dir, "settings.json"), "{ not json");
     expect(getSettings().ollamaLaunch).toBe("ask");
+  });
+
+  it("checks for updates automatically unless turned off, and keeps the other setting", () => {
+    expect(getSettings().autoUpdates).toBe(true);
+    setOllamaLaunch("always");
+    setAutoUpdates(false);
+    expect(getSettings()).toEqual({ ollamaLaunch: "always", autoUpdates: false });
+    writeFileSync(path.join(state.dir, "settings.json"), JSON.stringify({ autoUpdates: "no" }));
+    expect(getSettings().autoUpdates).toBe(true);
   });
 });

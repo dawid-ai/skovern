@@ -1,5 +1,3 @@
-export const CORE_VERSION = "0.0.1";
-
 export interface AppInfo {
   name: string;
   version: string;
@@ -7,8 +5,10 @@ export interface AppInfo {
 
 // ponytail: first sliver of the core API — grows into the typed local API
 // that is the UI's ONLY door into models, connectors, and data.
-export function getAppInfo(): AppInfo {
-  return { name: "Skovern", version: CORE_VERSION };
+// The version is the shipped app's (the desktop passes `app.getVersion()`), so every screen
+// shows the version the updater compares against.
+export function getAppInfo(version: string): AppInfo {
+  return { name: "Skovern", version };
 }
 
 export { createAccountClient } from "./account/client.js";

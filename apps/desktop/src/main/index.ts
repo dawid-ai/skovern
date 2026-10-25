@@ -34,7 +34,9 @@ import { appendMessage, createTokenCoalescer, deleteChat, getChat, listChats, ne
 import { resolveChatReply } from "./chat-reply.js";
 import { validateOllamaName } from "./ollama-name.js";
 import { disposeOllama, ensureOllamaRunning, fakeLaunchCount, ollamaInstalled, pickOllamaAction, sweepOrphanedOllama } from "./ollama-launch.js";
-import { getSettings, setOllamaLaunch, type OllamaLaunch } from "./settings-store.js";
+import { getSettings, setAutoUpdates, setOllamaLaunch, type OllamaLaunch } from "./settings-store.js";
+import { createUpdates } from "./updates.js";
+import { electronPort, fakePort, fakeScenario, updatesLog } from "./updates-port.js";
 import { sweepOrphanParts } from "./download.js";
 import { initialNewness, observeThread } from "./dm-newness.js";
 import { testPasswordStore } from "./password-store.js";
@@ -486,17 +488,6 @@ function createTray(): void {
   tray.on("click", () => mainWindow?.show());
 }
 
-function checkForUpdatesSafely(): void {
-  // contract 001: updater is wired, dry-run — real checks only make sense packaged
-  if (!app.isPackaged) {
-    console.log("[updater] dev build — skipping update check");
-    return;
-  }
-  autoUpdater.checkForUpdatesAndNotify().catch((error: unknown) => {
-    console.warn("[updater] check failed (offline is fine):", error);
-  });
-}
-
 app.on("before-quit", () => {
   quitting = true;
   disposeLocal(); // kill the embedded runtime child, if one is warm
@@ -538,13 +529,37 @@ if (!app.requestSingleInstanceLock()) {
 app
   .whenReady()
   .then(() => {
-    registerTrusted(TRUST, "app:info", () => getAppInfo());
+    registerTrusted(TRUST, "app:info", () => getAppInfo(app.getVersion()));
 
     // First-party cloud calls are egress too. Each client gets a receipted `fetch`
     // wrapper (loop 015): a durable "sent" line lands before any byte leaves, so
     // the Receipts panel shows EVERY outbound byte — not just model + plugin calls.
     // Metadata only (host + label + bytes), never a key, token, or body.
     const fetchSink = fileFetchSink();
+
+    // App updates (release-updates loop): the real GitHub feed only in the installed app; a
+    // dev build has nothing to update from unless an e2e sets the unpackaged-only fake feed.
+    // Nothing downloads until the user says so, and every check/download is receipted first.
+    const updatesFake = fakeScenario(app.isPackaged, process.env);
+    const fakeInstalls = { count: 0 };
+    if (updatesFake) (globalThis as { __skovernFakeInstalls?: { count: number } }).__skovernFakeInstalls = fakeInstalls;
+    const updatesLogLine = updatesLog(app.getPath("userData"));
+    const updates = createUpdates({
+      port: updatesFake ? fakePort(updatesFake, fakeInstalls) : app.isPackaged ? electronPort(autoUpdater, updatesLogLine) : null,
+      sink: fetchSink,
+      current: app.getVersion(),
+      getAuto: () => getSettings().autoUpdates,
+      saveAuto: setAutoUpdates,
+      emit: (view) => {
+        for (const w of BrowserWindow.getAllWindows()) w.webContents.send("updates:event", view);
+      },
+      log: updatesLogLine,
+    });
+    registerTrusted(TRUST, "updates:current", () => updates.view());
+    registerTrusted(TRUST, "updates:check", () => updates.check(true));
+    registerTrusted(TRUST, "updates:download", () => updates.download());
+    registerTrusted(TRUST, "updates:install", () => updates.install());
+    registerTrusted(TRUST, "updates:setAuto", (on: unknown) => updates.setAuto(on === true));
 
     const account = createAccountClient(API_BASE, receiptedFetch(fetchSink, "Skovern: sign-in", { direction: "out" }));
 
@@ -1005,7 +1020,7 @@ app
       tray = null;
       console.warn("[tray] unavailable — window close will quit:", error);
     }
-    checkForUpdatesSafely();
+    updates.startSchedule();
   })
   .catch((error: unknown) => {
     console.error("[main] startup failed:", error);

@@ -1,0 +1,68 @@
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+import { FAKE_VERSION, fakePort, fakeScenario, notesToText, updatesLog } from "./updates-port.js";
+
+describe("release notes as plain text", () => {
+  it("drops tags, keeps lines and bullets, decodes entities", () => {
+    const html = "<h2>What&#39;s new</h2><ul><li>Faster &amp; quieter</li><li>A <a href=\"https://x.test\">link</a></li></ul><script>alert(1)</script>";
+    expect(notesToText(html)).toBe("What's new\n• Faster & quieter\n• A link\nalert(1)");
+  });
+
+  it("takes the notes array form and caps the length", () => {
+    expect(notesToText([{ note: "One" }, { note: null }, { note: "Two" }])).toBe("One\n\nTwo");
+    expect(notesToText("x".repeat(5000))).toHaveLength(2000);
+    expect(notesToText(null)).toBe("");
+  });
+});
+
+describe("SKOVERN_UPDATER_FAKE seam", () => {
+  it("is honoured only in an unpackaged build, and only for known scenarios", () => {
+    expect(fakeScenario(false, { SKOVERN_UPDATER_FAKE: "available" })).toBe("available");
+    expect(fakeScenario(true, { SKOVERN_UPDATER_FAKE: "available" })).toBeNull();
+    expect(fakeScenario(false, { SKOVERN_UPDATER_FAKE: "anything" })).toBeNull();
+    expect(fakeScenario(false, {})).toBeNull();
+  });
+
+  it("the fake feed finds an update, downloads with progress, and counts installs", async () => {
+    const installs = { count: 0 };
+    const port = fakePort("available", installs);
+    expect((await port.check())?.version).toBe(FAKE_VERSION);
+    const seen: number[] = [];
+    expect(await port.download((p) => seen.push(p))).toBe(1024);
+    expect(seen.at(-1)).toBe(100);
+    port.install();
+    expect(installs.count).toBe(1);
+    await expect(fakePort("error", installs).check()).rejects.toThrow("fake feed: unreachable");
+  });
+});
+
+describe("update log", () => {
+  it("writes one line per entry under userData/logs and rolls over past 256 KB", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "skovern-updlog-"));
+    try {
+      const log = updatesLog(dir);
+      log("check failed:\n offline");
+      const file = path.join(dir, "logs", "updates.log");
+      expect(readFileSync(file, "utf8")).toMatch(/^\S+ check failed: offline\n$/);
+      writeFileSync(file, "x".repeat(300 * 1024));
+      log("next");
+      expect(existsSync(`${file}.1`)).toBe(true);
+      expect(statSync(file).size).toBeLessThan(200);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("never throws when the folder can't be written", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "skovern-updlog-"));
+    try {
+      writeFileSync(path.join(dir, "logs"), "a file where the folder should be");
+      expect(() => updatesLog(dir)("x")).not.toThrow();
+      mkdirSync(path.join(dir, "ok"));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
