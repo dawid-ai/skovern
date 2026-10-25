@@ -1,10 +1,10 @@
 import { fork } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron as electron, expect, test } from "@playwright/test";
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
+import { PostgreSqlContainer } from "@testcontainers/postgresql";
 import pg from "pg";
 import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningServer } from "@skovern/site";
 
@@ -19,6 +19,8 @@ import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningSer
 //   P3 — the dev seams are INERT when packaged: hostile SKOVERN_* env vars can't redirect
 //        the catalog or fake the hardware verdict. (Security must-pass negative.)
 //   P4 — the packaged renderer carries the STRICT CSP, not the dev CSP.
+//   P5 — updates (release-updates loop): the package carries the GitHub update feed and the
+//        versionless installer name, and the SKOVERN_UPDATER_FAKE test feed is inert.
 //
 // Requires a packaged build first (`pnpm run package:win`). The exe path below is the
 // electron-builder --dir output.
@@ -46,8 +48,27 @@ const EVIL_HARDWARE = JSON.stringify({
 // this host on disk. It must NOT appear — the packaged app fetches its real catalog.
 const EVIL_CATALOG = "https://evilcatalog.test/models.json";
 
+const DIST = path.resolve(__dirname, "../dist");
+const APP_VERSION = (JSON.parse(readFileSync(path.resolve(__dirname, "../package.json"), "utf8")) as { version: string }).version;
+// The fake feed's version (updates-port.ts FAKE_VERSION): if the seam were honoured, this
+// update would be offered.
+const FAKE_UPDATE_TEXT = "A new Skovern is here (0.99.0).";
+
+// A Windows CI runner can't run the Linux Postgres container, so the release workflow points
+// this at the runner's own PostgreSQL. Locally (no variable) it's a throwaway container.
+async function startDatabase(): Promise<{ uri: string; stop: () => Promise<void> }> {
+  const external = process.env["SKOVERN_TEST_DATABASE_URL"];
+  if (external) return { uri: external, stop: async () => {} };
+  const container = await new PostgreSqlContainer("postgres:17-alpine").start();
+  return { uri: container.getConnectionUri(), stop: async () => void (await container.stop()) };
+}
+
+// The release workflow sets SKOVERN_REQUIRE_PACKAGED, so a missing build fails there instead
+// of quietly skipping P1–P5.
+if (process.env["SKOVERN_REQUIRE_PACKAGED"] === "1" && !existsSync(EXE)) throw new Error(`no packaged build at ${EXE}`);
+
 test.describe("packaged Windows build (loop 029)", () => {
-  test.skip(!existsSync(EXE), `no packaged build at ${EXE} — run \`pnpm run package:win\` first`);
+  test.skip(!existsSync(EXE), `no packaged build at ${EXE} — run \`pnpm run dist:win\` first`);
 
   // P1 — no server / no UI needed: just prove the native runtime loads from the package.
   test("P1: the native runtime loads from the packaged app (getLlama → ready)", async () => {
@@ -80,17 +101,51 @@ test.describe("packaged Windows build (loop 029)", () => {
     expect(type).toBe("ready");
   });
 
+  // P5 — no sign-in needed. Automatic checks are switched off in the profile so this test never
+  // contacts GitHub; the fake feed must be ignored all the same.
+  test("P5: the package carries the update feed, and the test feed is inert", async () => {
+    test.setTimeout(60_000);
+    const feed = readFileSync(path.join(WIN_UNPACKED, "resources", "app-update.yml"), "utf8");
+    expect(feed).toMatch(/^provider: github$/m);
+    expect(feed).toMatch(/^owner: dawid-ai$/m);
+    expect(feed).toMatch(/^repo: skovern$/m);
+    expect(feed).not.toMatch(/publisherName/); // unsigned until the beta
+    const latest = readFileSync(path.join(DIST, "latest.yml"), "utf8");
+    const lines = latest.split(/\r?\n/);
+    expect(lines).toContain("path: Skovern-Setup.exe");
+    expect(lines).toContain(`version: ${APP_VERSION}`);
+    expect(existsSync(path.join(DIST, "Skovern-Setup.exe"))).toBe(true);
+
+    const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-pkg-"));
+    writeFileSync(path.join(userDataDir, "settings.json"), JSON.stringify({ autoUpdates: false }));
+    const app = await electron.launch({
+      executablePath: EXE,
+      args: [`--user-data-dir=${userDataDir}`],
+      env: { ...process.env, SKOVERN_UPDATER_FAKE: "available" },
+    });
+    try {
+      const page = await app.firstWindow();
+      await expect(page.getByText(`Skovern v${APP_VERSION} — running locally`)).toBeVisible();
+      expect(await app.evaluate(() => (globalThis as { __skovernFakeInstalls?: unknown }).__skovernFakeInstalls)).toBeUndefined();
+      await page.waitForTimeout(2_000);
+      await expect(page.getByText(FAKE_UPDATE_TEXT)).toHaveCount(0);
+    } finally {
+      await app.close();
+      rmSync(userDataDir, { recursive: true, force: true });
+    }
+  });
+
   // P2/P3/P4 need the app running + signed in, so it reaches the local-brain screen.
   test.describe("packaged app UI", () => {
-    let container: StartedPostgreSqlContainer;
+    let db: { uri: string; stop: () => Promise<void> };
     let pool: pg.Pool;
     let server: RunningServer;
     let mailer: ConsoleMailer;
 
     test.beforeAll(async () => {
       test.setTimeout(180_000);
-      container = await new PostgreSqlContainer("postgres:17-alpine").start();
-      pool = new pg.Pool({ connectionString: container.getConnectionUri() });
+      db = await startDatabase();
+      pool = new pg.Pool({ connectionString: db.uri });
       await new AuthStore(pool).migrate();
       mailer = new ConsoleMailer();
       const auth = new AuthService(new AuthStore(pool), mailer, { appUrl: "https://app.test" });
@@ -100,12 +155,15 @@ test.describe("packaged Windows build (loop 029)", () => {
     test.afterAll(async () => {
       await server?.close();
       await pool?.end();
-      await container?.stop();
+      await db?.stop();
     });
 
     test("P2/P3/P4: real hardware scan, seams inert, strict CSP", async () => {
       test.setTimeout(180_000);
       const userDataDir = mkdtempSync(path.join(tmpdir(), "skovern-pkg-"));
+      // No automatic update check, so this test never contacts GitHub (and an older local
+      // build is never offered a real update mid-test).
+      writeFileSync(path.join(userDataDir, "settings.json"), JSON.stringify({ autoUpdates: false }));
       const app = await electron.launch({
         executablePath: EXE,
         args: [`--user-data-dir=${userDataDir}`],
@@ -119,6 +177,7 @@ test.describe("packaged Windows build (loop 029)", () => {
           SKOVERN_OLLAMA_URL: "https://evilollama.test",
           SKOVERN_LLAMA_FAKE: "1",
           SKOVERN_PASSWORD_STORE: "gnome-libsecret",
+          SKOVERN_UPDATER_FAKE: "available",
         },
       });
 
@@ -166,6 +225,13 @@ test.describe("packaged Windows build (loop 029)", () => {
         const logPath = path.join(userDataDir, "receipts.jsonl");
         const log = existsSync(logPath) ? readFileSync(logPath, "utf8") : "";
         expect(log).not.toContain("evilcatalog.test");
+
+        // P5 — Settings → Updates runs on the real feed (the fake one is ignored): it shows this
+        // build's version and can check. The fake update is never offered.
+        await page.getByRole("button", { name: "← Back to Settings" }).click();
+        await expect(page.getByText(`You have Skovern ${APP_VERSION}.`)).toBeVisible();
+        await expect(page.getByText("Updates work in the installed app.")).toHaveCount(0);
+        await expect(page.getByText(FAKE_UPDATE_TEXT)).toHaveCount(0);
       } finally {
         await app.close();
         rmSync(userDataDir, { recursive: true, force: true });

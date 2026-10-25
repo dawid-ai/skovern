@@ -7,11 +7,22 @@ import type { RunSkillResult, SandboxCheckResult, SkillView } from "./plugin.js"
 import type { ActivitySummary, DateRange, ReceiptView } from "./receipts.js";
 import type { ChatMeta, ChatSendResult, ChatStatusEvent, ChatTokenEvent, ChatView } from "./chat.js";
 import type { OllamaLaunch, OllamaStatusView, SettingsView } from "./settings.js";
+import type { UpdatesView } from "./updates.js";
 
 declare global {
   interface Window {
     skovern: {
       getAppInfo(): Promise<AppInfo>;
+      updates: {
+        current(): Promise<UpdatesView>;
+        /** A check the user started (failures are shown). */
+        check(): Promise<UpdatesView>;
+        download(): Promise<UpdatesView>;
+        install(): Promise<UpdatesView>;
+        setAuto(on: boolean): Promise<UpdatesView>;
+        /** Listen for update state changes. Returns an unsubscribe. */
+        onEvent(cb: (view: UpdatesView) => void): () => void;
+      };
       account: {
         request(email: string): Promise<RequestResult>;
         verify(token: string): Promise<VerifyResult>;

@@ -43,6 +43,7 @@ describe("routineGroup — florist labels, task as key", () => {
     expect(routineGroup(fetchReceipt({ task: "Skovern: news" }))).toEqual({ key: "news", label: "Checked the news" });
     expect(routineGroup(fetchReceipt({ task: "Skovern: messages" })).label).toBe("Checked your messages");
     expect(routineGroup(fetchReceipt({ task: "Skovern: model list" })).label).toBe("Checked the model list");
+    expect(routineGroup(fetchReceipt({ task: "Skovern: update check" })).label).toBe("Checked for a Skovern update");
   });
 
   it("falls back to a plain label for an unknown routine kind", () => {

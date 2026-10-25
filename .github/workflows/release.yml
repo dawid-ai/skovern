@@ -1,0 +1,191 @@
+name: Release
+
+# Pushing a v0.x.y tag builds, checks, and publishes the Windows installer to GitHub Releases,
+# where installed copies of Skovern find it (electron-updater). A pull request that touches the
+# release files, or a manual run, does everything except publish (a dry run).
+# Steps: docs/RELEASING.md. Shape rules: apps/desktop/scripts/verify-release-workflow.ts.
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - apps/desktop/electron-builder.yml
+      - apps/desktop/e2e/packaging.spec.ts
+      - apps/desktop/scripts/release-check.ts
+      - apps/desktop/scripts/verify-release-workflow.ts
+      - UPDATES.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # The tag, version, and notes agree, the tag is on main, and every CI gate passes.
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Release check (tag, version, notes)
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            node apps/desktop/scripts/release-check.ts "$GITHUB_REF_NAME" --notes-out release-notes.md
+          else
+            node apps/desktop/scripts/release-check.ts --from-version --notes-out release-notes.md
+          fi
+      - name: The tag is on main
+        if: github.event_name == 'push'
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-notes
+          path: release-notes.md
+          if-no-files-found: error
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      # The model-fit gate reads only the lockfile, so it runs before install (SEC-046-1).
+      - name: Verify @dawid-ai/model-fit provenance and purity
+        run: node scripts/verify-model-fit.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - run: pnpm install --frozen-lockfile
+      - name: Release workflow shape
+        run: node apps/desktop/scripts/verify-release-workflow.ts
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Lint
+        run: pnpm lint
+      - name: Install a keychain for safeStorage
+        run: sudo apt-get update -q && sudo apt-get install -y -q gnome-keyring dbus
+      - name: Test (unit + E2E under xvfb)
+        env:
+          SKOVERN_PASSWORD_STORE: gnome-libsecret
+        run: |
+          dbus-run-session -- bash -ec '
+            echo -n ci | gnome-keyring-daemon --unlock --components=secrets > /dev/null
+            xvfb-run -a pnpm test
+          '
+      - name: Dependency audit
+        if: ${{ !cancelled() }}
+        run: pnpm audit --prod --audit-level=high
+
+  # Builds the installer and runs the packaged-app checks (P1-P5) on Windows. Read-only token:
+  # this job runs dependency code (electron-builder, Playwright) and can't publish anything.
+  build-win:
+    needs: check
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile
+      - name: Build the installer (no publishing from this job)
+        working-directory: apps/desktop
+        run: pnpm exec electron-vite build && pnpm exec electron-builder --win --publish never
+      # Windows runners can't run the Linux Postgres container the tests use, so the packaged
+      # sign-in test uses the runner's preinstalled PostgreSQL instead.
+      - name: Start PostgreSQL
+        shell: pwsh
+        run: |
+          $svc = Get-Service -Name "postgresql*" | Select-Object -First 1
+          Set-Service -Name $svc.Name -StartupType Manual
+          Start-Service -Name $svc.Name
+      - name: Packaged-app checks (P1-P5)
+        working-directory: apps/desktop
+        env:
+          SKOVERN_TEST_DATABASE_URL: postgres://postgres:root@localhost:5432/postgres
+          # A missing packaged build fails here instead of skipping P1-P5.
+          SKOVERN_REQUIRE_PACKAGED: "1"
+        run: pnpm run test:packaging
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: installer
+          path: |
+            apps/desktop/dist/Skovern-Setup.exe
+            apps/desktop/dist/Skovern-Setup.exe.blockmap
+            apps/desktop/dist/latest.yml
+          if-no-files-found: error
+
+  # Publishes only for a pushed tag. Holds the write token, so it runs no repository or npm
+  # code: no checkout, no install. It checks the installer against latest.yml, attests it,
+  # and creates the release as a draft, uploads, then publishes (published releases can't change).
+  publish:
+    needs: build-win
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: installer
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-notes
+          path: notes
+      - name: Check the installer's sha512 against latest.yml
+        working-directory: dist
+        # Each check exits on its own line: under `set -e`, a failure inside an `a && b` list
+        # doesn't stop the script, which once let an empty sha512 pass.
+        run: |
+          set -eu
+          got=$(openssl dgst -sha512 -binary Skovern-Setup.exe | base64 -w0)
+          want=$(sed -n 's/^sha512: //p' latest.yml)
+          file_want=$(sed -n 's/^    sha512: //p' latest.yml | head -n 1)
+          [ -n "$want" ] || { echo "latest.yml has no sha512"; exit 1; }
+          [ "$want" = "$got" ] || { echo "latest.yml sha512 doesn't match the installer"; exit 1; }
+          [ "$file_want" = "$got" ] || { echo "latest.yml files[0].sha512 doesn't match the installer"; exit 1; }
+          grep -qx "path: Skovern-Setup.exe" latest.yml || { echo "latest.yml path isn't Skovern-Setup.exe"; exit 1; }
+          grep -qx "  - url: Skovern-Setup.exe" latest.yml || { echo "latest.yml files[0].url isn't Skovern-Setup.exe"; exit 1; }
+          grep -qx "version: ${GITHUB_REF_NAME#v}" latest.yml || { echo "latest.yml version isn't ${GITHUB_REF_NAME#v}"; exit 1; }
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/Skovern-Setup.exe
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # A rerun may find this workflow's own draft. Anything else already on the tag (a
+        # published release, a draft someone else made) stops the release: its notes or extra
+        # files would otherwise go out under this version.
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          repo="$GITHUB_REPOSITORY"
+          if owner=$(gh release view "$tag" --repo "$repo" --json isDraft,author --jq 'select(.isDraft) | .author.login' 2>/dev/null); then
+            [ "$owner" = "github-actions[bot]" ] || { echo "release $tag already exists and isn't this workflow's draft"; exit 1; }
+          else
+            gh release create "$tag" --repo "$repo" --draft --verify-tag --title "Skovern ${tag#v}" --notes-file notes/release-notes.md
+          fi
+          gh release edit "$tag" --repo "$repo" --title "Skovern ${tag#v}" --notes-file notes/release-notes.md
+          gh release view "$tag" --repo "$repo" --json assets --jq '.assets[].name' | while IFS= read -r asset; do
+            case "$asset" in
+              Skovern-Setup.exe|Skovern-Setup.exe.blockmap|latest.yml) ;;
+              *) gh release delete-asset --repo "$repo" --yes -- "$tag" "$asset" ;;
+            esac
+          done
+          gh release upload "$tag" --repo "$repo" --clobber dist/Skovern-Setup.exe dist/Skovern-Setup.exe.blockmap dist/latest.yml
+          # Exactly our three files, checked again right before it goes public.
+          assets=$(gh release view "$tag" --repo "$repo" --json assets --jq '[.assets[].name] | sort | join(",")')
+          [ "$assets" = "Skovern-Setup.exe,Skovern-Setup.exe.blockmap,latest.yml" ] || { echo "release $tag has unexpected files: $assets"; exit 1; }
+          gh release edit "$tag" --repo "$repo" --draft=false --latest

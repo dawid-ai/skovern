@@ -54,3 +54,16 @@ linux:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+  # No version in the name, so one link always gets the newest installer:
+  # https://github.com/dawid-ai/skovern/releases/latest/download/Skovern-Setup.exe
+  artifactName: Skovern-Setup.${ext}
+
+# Where the installed app looks for updates (writes resources/app-update.yml). The release
+# workflow builds with --publish never and uploads from a separate job that runs no npm code
+# (.github/workflows/release.yml). Builds are unsigned until the first beta, so there is no
+# publisherName and electron-updater trusts the sha512 in latest.yml from the release.
+publish:
+  provider: github
+  owner: dawid-ai
+  repo: skovern
+  releaseType: release

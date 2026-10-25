@@ -3,6 +3,7 @@ import type { BrainStatusView, ProviderId, Receipt } from "../../../shared/brain
 import { providerName } from "../../../shared/brain.js";
 import type { OllamaLaunch, OllamaStatusView, SettingsView } from "../../../shared/settings.js";
 import { LocalBrainSetup } from "./LocalBrainSetup.js";
+import { UpdatesSection } from "../components/UpdatesSection.js";
 
 // "Settings" — for now, the brain picker: choose where your assistant thinks,
 // paste your key (kept safe on this computer), and test it with one real call.
@@ -295,6 +296,8 @@ export function SettingsPage({ onBrainChanged, onOpenYourBrain }: { onBrainChang
           )}
         </div>
       )}
+
+      <UpdatesSection />
     </section>
   );
 }
