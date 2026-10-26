@@ -10,8 +10,7 @@ RUN corepack enable
 WORKDIR /repo
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/www/package.json apps/www/package.json
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
-    pnpm install --frozen-lockfile --filter @skovern/www
+RUN pnpm install --frozen-lockfile --filter @skovern/www
 COPY apps/www apps/www
 # The api the waitlist form posts to. Baked into the static pages at build time.
 ARG PUBLIC_API_URL=https://api.skovern.com

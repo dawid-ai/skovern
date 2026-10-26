@@ -11,14 +11,12 @@ RUN corepack enable
 WORKDIR /repo
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/site/package.json apps/site/package.json
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
-    pnpm install --frozen-lockfile --prod --filter @skovern/site
+RUN pnpm install --frozen-lockfile --prod --filter @skovern/site
 COPY apps/site apps/site
 # A self-contained copy with real (not symlinked) prod dependencies. Native
 # modules (@resvg/resvg-js, esbuild for tsx) resolve to their linux-x64-gnu
 # builds here, matching the runtime image below.
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
-    pnpm --filter @skovern/site deploy --prod /app \
+RUN pnpm --filter @skovern/site deploy --prod /app \
  && find /app/src -name "*.test.ts" -delete \
  && rm -rf /app/scripts /app/docker-compose.yml /app/Dockerfile* /app/vitest.config.ts
 
