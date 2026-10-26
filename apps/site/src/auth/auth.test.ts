@@ -14,6 +14,9 @@ let pool: pg.Pool;
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   pool = new pg.Pool({ connectionString: container.getConnectionUri() });
+  // When the container stops, Postgres ends idle clients with 57P01; without a
+  // listener that error is unhandled and fails the run after the tests pass.
+  pool.on("error", () => {});
   await new AuthStore(pool).migrate();
 });
 
