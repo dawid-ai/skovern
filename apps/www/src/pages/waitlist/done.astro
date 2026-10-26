@@ -1,0 +1,21 @@
+---
+import Base from "../../layouts/Base.astro";
+import "../../styles/page.css";
+
+// Where the waitlist form lands when it runs without JavaScript, after the api
+// saved the signup (it redirects here with ?n=<number> only on success).
+// Refusals go to /waitlist/oops/ instead.
+---
+<Base title="You're on the list · Skovern" description="You're on the Skovern waitlist." noindex>
+  <div class="page">
+    <p class="eyebrow">Waitlist</p>
+    <h1>You're on the list.</h1>
+    <p class="done-num" id="done-num" aria-live="polite"></p>
+    <p class="lede">Check your inbox for your number. That email has a link to leave the list, if you ever want to. We'll write again when your invite is ready.</p>
+    <div class="actions"><a class="pill fill md" href="/">Back to Skovern</a><a class="pill line md" href="/blog/">Read the blog</a></div>
+  </div>
+</Base>
+<script>
+  import { showNumber } from "../../scripts/done";
+  showNumber();
+</script>

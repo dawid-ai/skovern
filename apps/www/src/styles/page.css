@@ -1,0 +1,16 @@
+/* Simple text pages: privacy, waitlist done/remove, 404. */
+.page { max-width: 720px; margin: 0 auto; padding: clamp(56px, 8vw, 96px) 22px clamp(80px, 10vw, 120px) }
+.page .eyebrow { font-size: 17px; color: var(--accent-t) }
+.page h1 { font-size: clamp(40px, 6vw, 64px); line-height: 1.04; font-weight: 700; letter-spacing: -.035em; text-wrap: balance }
+.page .lede { margin-top: 18px }
+.page h2 { font-size: clamp(24px, 2.4vw, 28px); line-height: 1.2; font-weight: 700; letter-spacing: -.02em; margin: 1.8em 0 .5em }
+.page p, .page li { font-size: 18px; line-height: 1.6; color: var(--ink) }
+.page p { margin: 0 0 1em }
+.page ul { padding-left: 1.2em; margin: 0 0 1em }
+.page li { margin-bottom: .4em }
+.page .note { padding: 18px 20px; border-radius: 18px; background: var(--bg-2); color: var(--ink-2); font-size: 16px }
+.page .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 28px }
+.done-num { font-size: clamp(88px, 14vw, 140px); line-height: .9; font-weight: 800; letter-spacing: -.06em; margin: 18px 0 8px;
+  background: linear-gradient(170deg, #f3a15f, #e87a2e 45%, #b8501a); -webkit-background-clip: text; background-clip: text; color: transparent }
+.done-num:empty { display: none }
+@media (max-width: 640px) { .page { padding-left: 16px; padding-right: 16px } }

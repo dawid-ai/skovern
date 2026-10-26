@@ -1,0 +1,18 @@
+---
+// Share links for a post. Plain links (mail, X, LinkedIn) work without
+// JavaScript; Copy link needs the clipboard, so it's a button the post script wires.
+interface Props {
+  url: string;
+  title: string;
+  class?: string;
+}
+const { url, title, class: cls = "" } = Astro.props;
+const u = encodeURIComponent(url);
+const t = encodeURIComponent(title);
+---
+<div class={`share ${cls}`} aria-label="Share this post" role="group">
+  <button type="button" data-copy={url}><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-link"/></svg><span>Copy link</span></button>
+  <a href={`mailto:?subject=${t}&body=${u}`}><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-envelope"/></svg>Email</a>
+  <a href={`https://x.com/intent/post?text=${t}&url=${u}`} target="_blank" rel="noopener noreferrer"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-x"/></svg>Post on X</a>
+  <a href={`https://www.linkedin.com/sharing/share-offsite/?url=${u}`} target="_blank" rel="noopener noreferrer"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-linkedin"/></svg>LinkedIn</a>
+</div>

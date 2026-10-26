@@ -11,18 +11,20 @@
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "start": "node --import tsx src/server/main.ts",
+    "smoke:image": "node scripts/smoke-image.ts"
   },
   "dependencies": {
     "@resvg/resvg-js": "^2.6.2",
     "pg": "^8.13.1",
-    "satori": "^0.26.0"
+    "satori": "^0.26.0",
+    "tsx": "^4.19.2"
   },
   "devDependencies": {
     "@testcontainers/postgresql": "^10.13.2",
     "@types/node": "^26.1.1",
     "@types/pg": "^8.11.10",
-    "tsx": "^4.19.2",
     "vitest": "^4.1.10"
   }
 }

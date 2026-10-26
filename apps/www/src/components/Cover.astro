@@ -1,0 +1,21 @@
+---
+import Shot from "./Shot.astro";
+import type { PostData } from "../lib/post-schema";
+
+// Card and header art for a post, picked by its `cover` front matter.
+interface Props {
+  cover: PostData["cover"];
+  class?: string;
+  /** Empty for decorative art (cards); the post header passes its coverAlt. */
+  alt?: string;
+}
+const { cover, class: cls = "", alt = "" } = Astro.props;
+const shots = { chat: "app-chat", brain: "app-brain", receipts: "app-receipts", update: "app-chat-update" } as const;
+const bg = cover === "icon" ? "cv-icon" : cover === "icon-dark" ? "cv-ink" : "cv-grey";
+---
+<div class={`cover ${bg} ${cls}`}>
+  {cover === "icon" && <img class="obj" src="/img/icon-front.webp" alt={alt} width="512" height="512" loading="lazy" decoding="async">}
+  {cover === "icon-dark" && <img class="obj" src="/img/icon-front-dark.webp" alt={alt} width="512" height="512" loading="lazy" decoding="async">}
+  {cover !== "icon" && cover !== "icon-dark" && <Shot class="shot" name={shots[cover]} alt={alt} />}
+  <slot />
+</div>

@@ -1,0 +1,70 @@
+/* Blog index (round-3 blog.html). */
+.bhead { padding: clamp(56px, 8vw, 96px) 0 clamp(28px, 4vw, 40px) }
+.bhead .eyebrow { font-size: 17px; color: var(--accent-t) }
+.bhead h1 { font-size: clamp(44px, 7vw, 88px); line-height: 1.02; font-weight: 700; letter-spacing: -.04em }
+.bhead p.lede { margin-top: 16px }
+
+/* featured */
+.feat { display: grid; grid-template-columns: 1.35fr 1fr; border-radius: 28px; overflow: hidden; background: var(--bg-2); color: var(--ink); transition: transform .5s var(--ease) }
+.feat:hover { text-decoration: none; transform: scale(1.006) }
+.feat .cover { aspect-ratio: auto; min-height: 440px }
+.feat .cover .obj { width: 48% }
+.feat .fbody { padding: clamp(28px, 4vw, 56px); display: flex; flex-direction: column; justify-content: center; gap: 14px }
+.feat h2 { font-size: clamp(28px, 3vw, 40px); line-height: 1.1; font-weight: 700; letter-spacing: -.028em; text-wrap: balance }
+.feat p { color: var(--ink-2); font-size: 18px; line-height: 1.45 }
+.feat .meta { margin-top: 0; padding-top: 0 }
+.feat .go { color: var(--accent-t); font-weight: 600; margin-top: 6px }
+.feat .go::after { content: " ›" }
+.rc-chip { position: absolute; display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 12px; background: color-mix(in srgb, var(--card) 92%, transparent);
+  box-shadow: 0 12px 30px -14px rgba(0, 0, 0, .3); font-size: 12.5px; font-weight: 600; color: var(--ink); white-space: nowrap }
+.rc-chip i { width: 8px; height: 8px; border-radius: 50%; background: var(--c) }
+
+/* tools */
+.tools { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; margin: clamp(48px, 6vw, 72px) 0 24px }
+.tools h2 { font-size: clamp(26px, 2.6vw, 32px); font-weight: 700; letter-spacing: -.025em }
+.filters { display: flex; gap: 8px; flex-wrap: wrap }
+.chip { height: 36px; padding: 0 16px; border-radius: 999px; background: var(--bg-2); color: var(--ink); font-size: 14px; font-weight: 600; transition: background .2s, color .2s }
+.chip:hover { background: color-mix(in srgb, var(--bg-2) 70%, var(--line)) }
+.chip[aria-pressed="true"] { background: var(--ink); color: var(--bg) }
+.search { position: relative; flex: 0 1 300px; min-width: 220px }
+.search svg { position: absolute; left: 14px; top: 50%; width: 17px; height: 17px; transform: translateY(-50%); fill: none; stroke: var(--ink-3); stroke-width: 2; stroke-linecap: round }
+.search input { width: 100%; height: 40px; border-radius: 999px; border: 1px solid var(--field-line); background: var(--field); color: var(--ink); padding: 0 16px 0 40px;
+  font: inherit; font-size: 15px; -webkit-appearance: none; appearance: none }
+.search input:focus-visible { outline: none; border-color: var(--accent-t); box-shadow: 0 0 0 4px var(--accent-soft) }
+.toolrow { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; flex: 1; min-width: 0; justify-content: flex-end }
+
+/* cards */
+.cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px }
+.empty { grid-column: 1/-1; padding: 48px 24px; text-align: center; color: var(--ink-2); border-radius: 24px; background: var(--bg-2) }
+.empty b { display: block; color: var(--ink); font-size: 21px; margin-bottom: 6px }
+
+/* signup tile: always dark, so the form inside uses dark tokens */
+.join { margin-top: clamp(48px, 6vw, 72px); display: grid; grid-template-columns: 1fr minmax(0, 520px); gap: clamp(24px, 4vw, 56px); align-items: center; border-radius: 28px;
+  background: #000; color: #f5f5f7; padding: clamp(28px, 5vw, 64px);
+  --ink: #f5f5f7; --ink-2: #a1a1a6; --ink-3: #86868b; --line: #424245; --bg-2: #2a2a2d; --card: #1c1c1e; --card-line: rgba(255, 255, 255, .1); --field: #2a2a2d;
+  --field-line: #48484c; --accent-t: #ff9a52; --on-accent: #1d1206; --red-t: #ff6961; --green-t: #30d158; --bg: #2a2a2d; color-scheme: dark }
+.join .eyebrow { color: #ff9a52; font-size: 17px }
+.join h2 { font-size: clamp(32px, 4vw, 52px); line-height: 1.05; font-weight: 700; letter-spacing: -.032em }
+.join > div > p:not(.eyebrow) { color: #a1a1a6; margin-top: 14px; font-size: 18px; max-width: 30em }
+.join .icon { width: 88px; margin-bottom: 20px; filter: drop-shadow(0 16px 30px rgba(232, 122, 46, .35)) }
+main.blog { padding-bottom: clamp(80px, 10vw, 120px) }
+
+@media (max-width: 980px) {
+  .cards { grid-template-columns: repeat(2, minmax(0, 1fr)) }
+  .feat { grid-template-columns: 1fr }
+  .feat .cover { min-height: 0; aspect-ratio: 16/10 }
+  .join { grid-template-columns: 1fr }
+}
+@media (max-width: 640px) {
+  .cards { grid-template-columns: 1fr }
+  .search { flex: 1 1 100%; min-width: 0 }
+  .feat { border-radius: 24px }
+  .join { border-radius: 24px; padding: 28px 16px }
+  .filters { flex-wrap: nowrap; overflow-x: auto; margin: 0 -16px; padding: 2px 16px; scrollbar-width: none; width: calc(100% + 32px) }
+  .chip { flex: none }
+  .feat .rc-chip { display: none }
+  .feat .cover .obj { width: 50% }
+  .tools { flex-direction: column; align-items: stretch }
+  .toolrow { flex: none; width: 100% }
+}
+@media (prefers-reduced-motion: reduce) { .feat { transition: none } }

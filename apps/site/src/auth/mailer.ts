@@ -29,33 +29,62 @@ export class DevLinkMailer implements Mailer {
   }
 }
 
-/** Prod mailer — Resend HTTP API (no SDK dependency; uses global fetch). */
+/** POST one email to Resend's HTTP API (no SDK dependency; uses global fetch).
+ *  `baseUrl` is configurable so the production image can be smoke-tested against
+ *  a fake Resend. */
+/** A failed send. `status` is the mail API's HTTP status, or null when it
+ *  couldn't be reached (network error, timeout). A 4xx means this message will
+ *  never be accepted (bad address, refused); a 5xx or null may work later. */
+export class MailError extends Error {
+  constructor(readonly status: number | null) {
+    super(status === null ? "email send failed (unreachable)" : `email send failed (${status})`);
+  }
+}
+
+/** Under the 8 s shutdown deadline, so a hung mail API can't hold a drain open. */
+const SEND_TIMEOUT_MS = 5_000;
+
+export async function resendPost(
+  baseUrl: string,
+  apiKey: string,
+  email: { from: string; to: string; subject: string; text: string; headers?: Record<string, string> },
+): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(`${baseUrl}/emails`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+      body: JSON.stringify(email),
+      signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
+    });
+  } catch {
+    throw new MailError(null);
+  }
+  // why: never include the response body — it can echo the address or key
+  if (!res.ok) throw new MailError(res.status);
+}
+
+/** Prod mailer — Resend HTTP API. */
 export class ResendMailer implements Mailer {
   constructor(
     private readonly apiKey: string,
     private readonly from: string,
+    private readonly baseUrl: string = "https://api.resend.com",
   ) {}
 
   async send(to: string, url: string): Promise<void> {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${this.apiKey}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        from: this.from,
-        to,
-        subject: "Your Skovern sign-in link",
-        text:
-          `Here's your sign-in link. It works once and expires in 15 minutes:\n\n` +
-          `${url}\n\n` +
-          `Didn't ask to sign in? You can safely ignore this.`,
-      }),
+    await resendPost(this.baseUrl, this.apiKey, {
+      from: this.from,
+      to,
+      subject: "Your Skovern sign-in link",
+      text:
+        `Here's your sign-in link. It works once and expires in 15 minutes:
+
+` +
+        `${url}
+
+` +
+        `Didn't ask to sign in? You can safely ignore this.`,
     });
-    if (!res.ok) {
-      // why: never include the response body — it can echo the address or key
-      throw new Error(`email send failed (${res.status})`);
-    }
   }
 }

@@ -5,6 +5,7 @@ import type { AuthService } from "../auth/service.js";
 import type { VisibilityStore } from "./visibility-store.js";
 import { renderOgImage, renderPostPage, renderVisibilityPage } from "./render.js";
 import { renderVisibilityCardPng } from "./og-card.js";
+import { ogCards } from "./og-cache.js";
 
 // Public, no-auth pages for published artifacts. First (only) content type is
 // `news`; the shape /u/:type/:id generalizes to other artifacts later. `origin`
@@ -123,12 +124,20 @@ export async function handleVisibilityPage(
   if (!v) return NOT_FOUND;
 
   if (sub === "og.png") {
-    const png = await renderVisibilityCardPng(v);
+    const cached = ogCards.get(v.id);
+    const png = cached ?? (await renderVisibilityCardPng(v));
+    if (!cached) ogCards.set(v.id, png);
     return {
       status: 200,
       body: png,
       contentType: "image/png",
-      headers: { "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'" },
+      headers: {
+        "x-content-type-options": "nosniff",
+        "content-security-policy": "default-src 'none'",
+        // Immutable per id, so browsers and the edge can keep it a day.
+        "cache-control": "public, max-age=86400",
+        "x-skovern-cache": cached ? "hit" : "miss",
+      },
     };
   }
   if (sub === undefined) {

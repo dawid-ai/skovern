@@ -1,4 +1,4 @@
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
 import { handleRequestLink, handleVerify, type HttpResult } from "./handlers.js";
 import type { AuthService } from "./service.js";
@@ -14,59 +14,14 @@ import {
 } from "../dm/handlers.js";
 import { handlePublish, handlePublishVisibility, handleVisibilityPage } from "../publish/handlers.js";
 import type { VisibilityStore } from "../publish/visibility-store.js";
-
-// Magic-link payloads are a few hundred bytes; cap hard so a flood can't buffer.
-const MAX_BODY = 4096;
-
-async function readRawBody(req: IncomingMessage): Promise<string> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of req) {
-    const buf = chunk as Buffer;
-    size += buf.length;
-    if (size > MAX_BODY) throw new Error("body too large");
-    chunks.push(buf);
-  }
-  return chunks.length ? Buffer.concat(chunks).toString("utf8") : "";
-}
-
-async function readJson(req: IncomingMessage): Promise<unknown> {
-  const raw = await readRawBody(req);
-  return raw ? JSON.parse(raw) : {};
-}
-
-async function readForm(req: IncomingMessage): Promise<URLSearchParams> {
-  return new URLSearchParams(await readRawBody(req));
-}
-
-function send(res: ServerResponse, result: HttpResult): void {
-  const contentType = result.contentType ?? "application/json";
-  res.writeHead(result.status, { "content-type": contentType, ...result.headers });
-  // Binary bodies (e.g. the PNG share card) go out untouched — String() would
-  // corrupt them. Everything else is JSON unless a text content-type was set.
-  if (Buffer.isBuffer(result.body)) {
-    res.end(result.body);
-    return;
-  }
-  const payload =
-    contentType === "application/json" ? JSON.stringify(result.body) : String(result.body);
-  res.end(payload);
-}
+import { bearer, clientIp, readForm, readJson, send } from "../http.js";
+import { LIMITS, limitFailures, RateLimiter } from "../server/rate-limit.js";
+import { routeWaitlist, type WaitlistRouteContext } from "../waitlist/routes.js";
 
 export interface RunningServer {
   url: string;
   port: number;
   close: () => Promise<void>;
-}
-
-/**
- * The tiny cloud API over Node's stdlib http — no framework. Exposes the
- * loop-002 handlers at POST /auth/request and /auth/verify. Returned as a
- * factory so tests (and a future dev runner) can start it in-process.
- */
-function bearer(req: IncomingMessage): string | null {
-  const header = req.headers.authorization;
-  return header?.startsWith("Bearer ") ? header.slice(7) : null;
 }
 
 // CSRF guard for the Basic-auth admin POSTs. Basic auth is ambient (the browser
@@ -96,6 +51,11 @@ function resolveOrigin(req: IncomingMessage, publicOrigin: string | undefined): 
   return `${proto}://${req.headers.host ?? "127.0.0.1"}`;
 }
 
+/**
+ * The tiny cloud API over Node's stdlib http — no framework. Exposes the
+ * loop-002 handlers at POST /auth/request and /auth/verify. Returned as a
+ * factory so tests (and a future dev runner) can start it in-process.
+ */
 export function startAuthServer(opts: {
   service: AuthService;
   news?: NewsStore;
@@ -109,13 +69,39 @@ export function startAuthServer(opts: {
    *  reflected into published pages. */
   publicOrigin?: string;
   port?: number;
+  /** Bind address. 127.0.0.1 for dev; the container sets 0.0.0.0. */
+  host?: string;
+  /** Waitlist API, remove page, and admin view (loop 051). */
+  waitlist?: WaitlistRouteContext;
+  /** Per-IP limiter for /auth/request; shares the waitlist's proxy rule. */
+  limiter?: RateLimiter;
+  trustProxy?: boolean;
+  /** Mount the account surface (auth, DM, publish, news, /u, admin DM/news).
+   *  Defaults to on so in-process tests and the desktop e2e keep working. */
+  accountRoutes?: boolean;
 }): Promise<RunningServer> {
   const adminToken = opts.adminToken ?? null;
+  const { dm, news } = opts;
+  // Wrong admin passwords count per address; past the limit even a right one waits.
+  const adminLimiter = opts.limiter ?? new RateLimiter();
+  const adminAttempt = (req: IncomingMessage, attempt: () => Promise<HttpResult>): Promise<HttpResult> =>
+    limitFailures(adminLimiter, `admin-fail:${clientIp(req, opts.trustProxy ?? false)}`, LIMITS.adminFail, attempt, (r) => r.status === 401);
   const server = createServer((req, res) => {
     void (async () => {
       try {
         const method = req.method ?? "GET";
         const path = (req.url ?? "").split("?")[0] ?? "";
+        // Liveness for the platform health check. No database round-trip, so a
+        // brief Postgres blip doesn't get the container killed mid-drain.
+        if (path === "/healthz") {
+          return send(res, { status: 200, body: { ok: true } }, { "cache-control": "no-store" });
+        }
+        if (opts.waitlist && (await routeWaitlist(opts.waitlist, req, res, path))) return;
+        // Before the beta, production mounts only the waitlist: no sign-in, DM,
+        // publish, news, or their admin pages (ACCOUNT_ROUTES, loop 051 SECURE B1).
+        if (opts.accountRoutes === false) {
+          return send(res, { status: 404, body: { ok: false, message: "Not found." } });
+        }
         // Public news feed — GET only, no auth (readable without account).
         if (path === "/news" && opts.news) {
           if (method !== "GET") {
@@ -138,14 +124,14 @@ export function startAuthServer(opts: {
           return send(res, { status: 404, body: { ok: false, message: "Not found." } });
         }
         // Founder DM inbox: per-user threads + reply boxes (GET, Basic-auth).
-        if (path === "/admin/dm" && opts.dm) {
+        if (path === "/admin/dm" && dm) {
           if (method !== "GET") {
             return send(res, { status: 405, body: { ok: false, message: "Use GET." } });
           }
-          return send(res, await handleAdminDm(opts.dm, adminToken, req.headers.authorization ?? null));
+          return send(res, await adminAttempt(req, () => handleAdminDm(dm, adminToken, req.headers.authorization ?? null)));
         }
         // Founder reply to a user (form POST from the admin page, Basic-auth).
-        if (path === "/admin/dm/reply" && opts.dm) {
+        if (path === "/admin/dm/reply" && dm) {
           if (method !== "POST") {
             return send(res, { status: 405, body: { ok: false, message: "Use POST." } });
           }
@@ -158,11 +144,11 @@ export function startAuthServer(opts: {
           }
           return send(
             res,
-            await handleAdminDmReply(opts.dm, adminToken, req.headers.authorization ?? null, form),
+            await adminAttempt(req, () => handleAdminDmReply(dm, adminToken, req.headers.authorization ?? null, form)),
           );
         }
         // Founder news publish (POST, same Basic-auth guard).
-        if (path === "/admin/news" && opts.news) {
+        if (path === "/admin/news" && news) {
           if (method !== "POST") {
             return send(res, { status: 405, body: { ok: false, message: "Use POST." } });
           }
@@ -175,7 +161,7 @@ export function startAuthServer(opts: {
           }
           return send(
             res,
-            await handleAdminNews(opts.news, adminToken, req.headers.authorization ?? null, newsBody),
+            await adminAttempt(req, () => handleAdminNews(news, adminToken, req.headers.authorization ?? null, newsBody)),
           );
         }
         // …and the authenticated send (POST, session bearer token).
@@ -233,6 +219,16 @@ export function startAuthServer(opts: {
         if (method !== "POST") {
           return send(res, { status: 405, body: { ok: false, message: "Use POST." } });
         }
+        if (path === "/auth/request" && opts.limiter) {
+          const key = `auth:${clientIp(req, opts.trustProxy ?? false)}`;
+          if (!opts.limiter.take(key, LIMITS.authRequest)) {
+            return send(res, {
+              status: 429,
+              body: { ok: false, message: "Lots of tries from here. Wait a few minutes and try again." },
+              headers: { "retry-after": String(opts.limiter.retryAfter(key)) },
+            });
+          }
+        }
         let body: unknown;
         try {
           body = await readJson(req);
@@ -257,7 +253,7 @@ export function startAuthServer(opts: {
   return new Promise((resolve, reject) => {
     // A failure to bind (e.g. EADDRINUSE) must reject loudly, not hang.
     server.once("error", reject);
-    server.listen(opts.port ?? 0, "127.0.0.1", () => {
+    server.listen(opts.port ?? 0, opts.host ?? "127.0.0.1", () => {
       server.off("error", reject);
       // Once we're listening, a later socket error must not crash the process.
       server.on("error", (err) => console.error("[auth-server] socket error:", err.message));
@@ -265,7 +261,12 @@ export function startAuthServer(opts: {
       resolve({
         url: `http://127.0.0.1:${port}`,
         port,
-        close: () => new Promise<void>((r) => server.close(() => void r())),
+        close: () =>
+          new Promise<void>((r) => {
+            server.close(() => void r());
+            // Keep-alive sockets would hold close() open; in-flight requests still finish.
+            server.closeIdleConnections();
+          }),
       });
     });
   });

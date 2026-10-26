@@ -1,0 +1,37 @@
+---
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
+
+// The hero: a Blender render of the glass app icon (apps/www/art/icon.py),
+// scrubbed frame by frame as you scroll. The still is the first frame, shown
+// until the frames load, and for good when motion is reduced.
+let frames = 0;
+try {
+  frames = readdirSync(join(process.cwd(), "public", "hero")).filter((f) => /^f-\d{3}\.webp$/.test(f)).length;
+} catch {
+  frames = 0;
+}
+---
+<section class="hero" aria-labelledby="h-hero">
+  <div class="stage">
+    <div class="anchor" id="a-hero" data-frames={frames} data-dark-scrub="1">
+      <img class="still" src="/img/icon-still.webp" alt="The Skovern app icon: an orange glass tile with a glowing white S inside" width="1200" height="1200" fetchpriority="high" decoding="async">
+      <canvas aria-hidden="true"></canvas>
+    </div>
+  </div>
+  <div class="copy">
+    <p class="eyebrow">Skovern</p>
+    <h1 class="h-xl" id="h-hero">Free AI for your shop. <span class="dim">You control what leaves.</span></h1>
+    <div class="row">
+      <p class="lede">Skovern answers customers, writes your posts, and handles the busywork. Its brain runs on your own computer, and anything that goes online gets a receipt.</p>
+      <div class="buy">
+        <div class="acts"><a class="pill fill md" href="#waitlist" data-join>Join the waitlist</a><a class="pill line md" href="#private">See how it works</a></div>
+        <span class="tiny">Free forever. Early preview for testers, Windows first.</span>
+      </div>
+    </div>
+  </div>
+</section>
+<script>
+  import { startHeroScrub } from "../scripts/hero-scrub";
+  startHeroScrub();
+</script>
