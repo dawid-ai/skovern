@@ -74,7 +74,9 @@ export function ChatList({
                 <>
                   <button className="chat-title" onClick={() => onOpen(c.id)}>
                     <span className="chat-title-text">{titleOf(c)}</span>
-                    <span className="chat-when">{whenOf(c.updatedAt)}</span>
+                    <span className="chat-when" aria-hidden="true">
+                      {whenOf(c.updatedAt)}
+                    </span>
                   </button>
                   {c.id === activeId && (
                     <div className="chat-row-actions">

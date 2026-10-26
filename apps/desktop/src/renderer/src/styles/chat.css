@@ -92,7 +92,7 @@
 }
 
 .chat-row.active .chat-when {
-  color: color-mix(in srgb, var(--on-tint) 80%, transparent);
+  color: var(--on-tint);
 }
 
 .chat-row-actions {
