@@ -92,8 +92,9 @@ const DEAD_LINK = (): HttpResult =>
   page(
     "Link expired",
     `<h1>This link doesn't work anymore.</h1>` +
-      `<p>You may already be off the list. If you still get emails from us, write to ` +
-      `<a href="mailto:hi@skovern.com">hi@skovern.com</a> and we'll sort it out.</p>`,
+      // No contact address until the mailbox receives mail (see apps/www CONTACT_EMAIL).
+      `<p>You may already be off the list. If you still get emails from us, use the ` +
+      `newest one's leave link: each email has its own.</p>`,
     404,
   );
 

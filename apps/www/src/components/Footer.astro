@@ -1,11 +1,12 @@
 ---
+import { CONTACT_EMAIL } from "../lib/site";
 const year = new Date().getUTCFullYear();
 ---
 <footer class="site">
   <div class="wide">
     <span><b>Skovern</b> · free AI for your shop. You control what leaves. © {year}</span>
     <nav aria-label="Footer">
-      <a href="/blog/">Blog</a><a href="/#waitlist">Waitlist</a><a href="/privacy/">Privacy</a><a href="/rss.xml">RSS</a><a href="mailto:hi@skovern.com">hi@skovern.com</a>
+      <a href="/blog/">Blog</a><a href="/#waitlist">Waitlist</a><a href="/privacy/">Privacy</a><a href="/rss.xml">RSS</a>{CONTACT_EMAIL && <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>}
     </nav>
   </div>
 </footer>

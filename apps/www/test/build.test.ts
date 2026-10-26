@@ -57,6 +57,22 @@ describe("W1: the home page waitlist form", () => {
   });
 });
 
+describe("privacy and contact", () => {
+  it("says who, why, how long, and what you can do", () => {
+    const text = read("privacy/index.html").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").replace(/&#39;/g, "'");
+    expect(text).toContain("Dawid Jóźwiak, Skovern");
+    expect(text).toContain("joining the list is your consent");
+    expect(text).toContain("until the waitlist closes after Skovern's public launch");
+    expect(text).toContain("You can see the details we keep about you, fix them, or delete them.");
+    expect(text).toContain("every email from us has a link at the bottom to leave the list");
+  });
+
+  it("shows no contact address until the mailbox works (CONTACT_EMAIL is null)", () => {
+    const pages = ["index.html", "privacy/index.html", "waitlist/remove/index.html", "blog/index.html", "404.html"];
+    for (const page of pages) expect(read(page), page).not.toMatch(/mailto:|hi@skovern\.com/);
+  });
+});
+
 describe("W3: blog posts", () => {
   const files = readdirSync(join(root, "src/content/blog")).filter((f) => f.endsWith(".md"));
   const slugs = files.map((f) => f.replace(/\.md$/, ""));

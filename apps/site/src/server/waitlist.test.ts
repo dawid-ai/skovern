@@ -312,6 +312,10 @@ describe("failure-only limits", () => {
     for (let i = 0; i < 21; i += 1) dead.push(await remove("x".repeat(43)));
     expect(dead.slice(0, 20).every((st) => st === 404)).toBe(true);
     expect(dead[20]).toBe(429);
+    // The dead-link page names no mailbox that can't receive mail yet.
+    const page = await (await fetch(`${server.url}/waitlist/remove?t=${"y".repeat(43)}`)).text();
+    expect(page).toContain("This link doesn't work anymore.");
+    expect(page).not.toMatch(/mailto:|@skovern\.com/);
   });
 });
 
