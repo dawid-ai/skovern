@@ -21,17 +21,18 @@ const URLISH = /^(https?:\/\/)?([a-z0-9-]+\.)+[a-z]{2,}(:\d+)?(\/\S*)?$/i;
 
 /** Letters (any language), combining marks, the zero-width non-joiner (Persian
  *  names), spaces, apostrophes, periods, hyphens. At least one letter. */
-const NAME = /^[\p{L}\p{M}‌'’ .-]{1,80}$/u;
+const NAME = /^[\p{L}\p{M}\u200C'\u2019 .-]{1,80}$/u;
 const HAS_LETTER = /\p{L}/u;
-/** A period before a common web ending, like "evil.com" or "evil .com". */
-const KNOWN_TLD =
-  /\.\s*(?:com|net|org|info|biz|io|co|ai|app|dev|me|shop|store|site|online|xyz|top|link|click|live|ly|us|uk|ru|cn|de|fr|pl)(?![\p{L}\p{N}])/iu;
-/** One unbroken word ending in a lowercase ".<letters>", like "bloom.florist". */
-const BARE_DOMAIN = /^\S+\.\p{Ll}{2,24}$/u;
+/** Two or more letters, a period, two or more letters: "refund.icu", "evil .com",
+ *  "Refund.ICU". Initials don't match ("J.Smith", "A.J. Okafor", "St. Clair"). */
+const WORD_DOT_WORD = /\p{L}{2,}\s*\.\p{L}{2,}/iu;
+/** A lowercase letter, a period, two or more lowercase letters: a one-letter host
+ *  like "x.bond" or "x.co". A capital after the period reads as an initial. */
+const LOWER_DOT_LOWER = /\p{Ll}\.\p{Ll}{2,}/u;
 
-/** True when a name reads like a web address. "J.Smith" and "Mary J. Blige" don't. */
+/** True when a name reads like a web address. */
 export function looksLikeDomain(name: string): boolean {
-  return KNOWN_TLD.test(name) || BARE_DOMAIN.test(name);
+  return WORD_DOT_WORD.test(name) || LOWER_DOT_LOWER.test(name);
 }
 
 export function nameError(name: string): string {

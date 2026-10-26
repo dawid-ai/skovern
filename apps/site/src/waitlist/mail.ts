@@ -13,11 +13,19 @@ export interface WelcomeMailer {
   sendWelcome(to: string, w: Welcome): Promise<void>;
 }
 
+/** The greeting word: the first word of the name, skipping any word with a
+ *  period in it, so nothing link-like reaches the email even if it slipped past
+ *  the name rule. Null (so "Hi there") when nothing is left. */
+export function greetingName(name: string): string | null {
+  return name.split(/\s+/).find((word) => word !== "" && !word.includes(".")) ?? null;
+}
+
 export function welcomeText(w: Welcome): { subject: string; text: string } {
+  const who = greetingName(w.name);
   return {
     subject: `You're #${w.number} on the Skovern waitlist`,
     text:
-      `Hi ${w.name},\n\n` +
+      `Hi ${who ?? "there"},\n\n` +
       `You're on the list. Your spot is #${w.number}.\n\n` +
       `Skovern is free AI for your shop, and you control what leaves your computer. ` +
       `We're letting people in a few at a time, Windows first. ` +
