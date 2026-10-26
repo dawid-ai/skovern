@@ -29,7 +29,9 @@ export async function handleJoin(deps: WaitlistDeps, body: unknown): Promise<Htt
     return { status: 201, body: { number, detailsToken: randomBytes(32).toString("base64url") } };
   }
   const joined = await deps.store.join(email, name);
-  const detailsToken = await deps.store.issueToken(joined.id, "details");
+  // Step 2 belongs to the first join. A repeat join (anyone can type a known
+  // address) gets a token of the same shape that saves nothing.
+  const detailsToken = await deps.store.issueToken(joined.id, joined.created ? "details" : "decoy");
   // Over the global email budget, the claim is null and the welcome waits in
   // the backlog; the person still gets the normal answer and their number.
   if (joined.welcomeClaim) {

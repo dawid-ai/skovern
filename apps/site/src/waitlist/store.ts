@@ -35,14 +35,20 @@ CREATE TABLE IF NOT EXISTS waitlist (
 CREATE TABLE IF NOT EXISTS waitlist_tokens (
   token_hash   text PRIMARY KEY,
   waitlist_id  uuid NOT NULL REFERENCES waitlist(id) ON DELETE CASCADE,
-  kind         text NOT NULL CHECK (kind IN ('details', 'remove')),
+  kind         text NOT NULL,
   expires_at   timestamptz,
   created_at   timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS waitlist_tokens_expiry ON waitlist_tokens (expires_at) WHERE expires_at IS NOT NULL;
+-- Token kinds: details (step 2 on the first join), decoy (what a repeat join
+-- gets: accepted, writes nothing), remove (the email's leave link).
+ALTER TABLE waitlist_tokens DROP CONSTRAINT IF EXISTS waitlist_tokens_kind_check;
+ALTER TABLE waitlist_tokens ADD CONSTRAINT waitlist_tokens_kind_check CHECK (kind IN ('details', 'decoy', 'remove'));
 `;
 
 export const DETAILS_TTL_HOURS = 24;
+
+type TokenKind = "details" | "decoy" | "remove";
 
 export interface WaitlistEntry {
   number: number;
@@ -60,6 +66,8 @@ export interface JoinResult {
   /** Set when this join claimed the welcome email (due and within budget):
    *  the budget log row, handed back to releaseWelcome if the send fails. */
   welcomeClaim: string | null;
+  /** True when this join added the person (false for a repeat). */
+  created: boolean;
 }
 
 /** A saved signup whose welcome is claimed and ready to send. */
@@ -104,6 +112,7 @@ export class WaitlistStore {
         [email, String(WELCOME_COOLDOWN_HOURS)],
       );
       let row = found.rows[0];
+      let created = false;
       if (!row) {
         const inserted = await client.query<{ id: string; number: string }>(
           `INSERT INTO waitlist (email, name) VALUES ($1, $2) RETURNING id, number`,
@@ -112,11 +121,12 @@ export class WaitlistStore {
         const ins = inserted.rows[0];
         if (!ins) throw new Error("waitlist insert failed");
         row = { ...ins, due: true };
+        created = true;
       }
       // Only a due welcome takes the (global) budget lock; repeats skip it.
       const claim = row.due ? await claimWelcome(client, row.id, this.budget) : null;
       await client.query("COMMIT");
-      return { id: row.id, number: Number(row.number), welcomeClaim: claim };
+      return { id: row.id, number: Number(row.number), welcomeClaim: claim, created };
     } catch (err) {
       await client.query("ROLLBACK");
       throw err;
@@ -155,36 +165,40 @@ export class WaitlistStore {
     }
   }
 
-  /** Mint a token for this person. Details tokens expire; remove tokens last
-   *  until the person leaves (the cascade deletes them then). */
-  async issueToken(id: string, kind: "details" | "remove"): Promise<string> {
+  /** Mint a token for this person. Details and decoy tokens expire; remove
+   *  tokens last until the person leaves (the cascade deletes them then). */
+  async issueToken(id: string, kind: TokenKind): Promise<string> {
     const t = newToken();
     await this.pool.query(
       `INSERT INTO waitlist_tokens (token_hash, waitlist_id, kind, expires_at)
-       VALUES ($1, $2, $3, CASE WHEN $3 = 'details' THEN now() + ($4 || ' hours')::interval END)`,
+       VALUES ($1, $2, $3, CASE WHEN $3 = 'remove' THEN NULL ELSE now() + ($4 || ' hours')::interval END)`,
       [t.hash, id, kind, String(DETAILS_TTL_HOURS)],
     );
     return t.raw;
   }
 
-  private async resolve(raw: string, kind: "details" | "remove"): Promise<string | null> {
-    const r = await this.pool.query<{ waitlist_id: string }>(
-      `SELECT waitlist_id FROM waitlist_tokens
-        WHERE token_hash = $1 AND kind = $2 AND (expires_at IS NULL OR expires_at > now())`,
-      [sha256(raw), kind],
+  private async resolve(raw: string, kinds: TokenKind[]): Promise<{ id: string; kind: TokenKind } | null> {
+    const r = await this.pool.query<{ waitlist_id: string; kind: TokenKind }>(
+      `SELECT waitlist_id, kind FROM waitlist_tokens
+        WHERE token_hash = $1 AND kind = ANY($2) AND (expires_at IS NULL OR expires_at > now())`,
+      [sha256(raw), kinds],
     );
-    return r.rows[0]?.waitlist_id ?? null;
+    const row = r.rows[0];
+    return row ? { id: row.waitlist_id, kind: row.kind } : null;
   }
 
   /** Save the optional step-2 answers. False when the token is unknown or expired.
-   *  Only empty fields are filled: anyone who knows an address can get a fresh
-   *  token by joining again, so a later token must not rewrite earlier answers. */
+   *  A decoy token (from a repeat join) is accepted and writes nothing: anyone
+   *  who knows an address can join again with it. Only empty fields are filled,
+   *  as a second guard. */
   async saveDetails(
     raw: string,
     d: { jobTitle: string | null; businessType: BusinessType | null; url: string | null },
   ): Promise<boolean> {
-    const id = await this.resolve(raw, "details");
-    if (!id) return false;
+    const token = await this.resolve(raw, ["details", "decoy"]);
+    if (!token) return false;
+    if (token.kind === "decoy") return true;
+    const id = token.id;
     await this.pool.query(
       `UPDATE waitlist
           SET job_title = COALESCE(job_title, $2),
@@ -198,14 +212,14 @@ export class WaitlistStore {
 
   /** Is this a live remove link? (Used by the GET confirm page; deletes nothing.) */
   async canRemove(raw: string): Promise<boolean> {
-    return (await this.resolve(raw, "remove")) !== null;
+    return (await this.resolve(raw, ["remove"])) !== null;
   }
 
   /** Delete the person and every token they hold. False when the link is dead. */
   async remove(raw: string): Promise<boolean> {
-    const id = await this.resolve(raw, "remove");
-    if (!id) return false;
-    await this.pool.query(`DELETE FROM waitlist WHERE id = $1`, [id]);
+    const token = await this.resolve(raw, ["remove"]);
+    if (!token) return false;
+    await this.pool.query(`DELETE FROM waitlist WHERE id = $1`, [token.id]);
     return true;
   }
 

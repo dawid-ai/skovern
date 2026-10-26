@@ -95,7 +95,7 @@ describe("waitlist API", () => {
     expect(mailer.sent).toHaveLength(1);
 
     const d = await post("/api/waitlist/details", {
-      detailsToken: b.detailsToken,
+      detailsToken: a.detailsToken,
       jobTitle: "Owner",
       businessType: "florist",
       url: "bloom.shop",
@@ -133,8 +133,20 @@ describe("waitlist API", () => {
       (await post("/api/waitlist/details", { detailsToken: again.detailsToken, jobTitle: "PWNED", businessType: "cafe" })).status,
     ).toBe(204);
     const row = (await store.list()).find((x) => x.email === "keep@bloom.shop");
-    // The empty field fills in; the answered one stays.
-    expect(row).toMatchObject({ jobTitle: "Owner", businessType: "cafe" });
+    // A repeat join's token is a decoy: accepted, and it writes nothing at all.
+    expect(row).toMatchObject({ jobTitle: "Owner", businessType: null });
+  });
+
+  it("gives step 2 only to the first join; a repeat join's token saves nothing", async () => {
+    const first = (await (await post("/api/waitlist", { name: "Ida", email: "first-only@bloom.shop" })).json()) as { detailsToken: string };
+    const repeat = (await (await post("/api/waitlist", { name: "Ida", email: "first-only@bloom.shop" })).json()) as { detailsToken: string };
+    expect(repeat.detailsToken).toMatch(/^[\w-]{43}$/);
+    expect((await post("/api/waitlist/details", { detailsToken: repeat.detailsToken, jobTitle: "Spoofed" })).status).toBe(204);
+    let row = (await store.list()).find((x) => x.email === "first-only@bloom.shop");
+    expect(row?.jobTitle).toBeNull();
+    expect((await post("/api/waitlist/details", { detailsToken: first.detailsToken, jobTitle: "Owner" })).status).toBe(204);
+    row = (await store.list()).find((x) => x.email === "first-only@bloom.shop");
+    expect(row?.jobTitle).toBe("Owner");
   });
 
   it("sends a no-JS form to the done page only on success", async () => {
