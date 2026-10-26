@@ -49,6 +49,7 @@ async function loadImage(src: string): Promise<HTMLImageElement | null> {
 export function startIconFlight(): void {
   const canvas = document.querySelector<HTMLCanvasElement>("#icon-fly");
   const hero = document.querySelector<HTMLElement>("#a-hero");
+  const heroCopy = document.querySelector<HTMLElement>(".hero .copy");
   const socket = document.querySelector<HTMLElement>("#f-chip .socket");
   const chip = document.querySelector<HTMLElement>("#f-chip");
   const win = document.querySelector<HTMLElement>("#f-win");
@@ -57,7 +58,7 @@ export function startIconFlight(): void {
   const wl = document.querySelector<HTMLElement>("#a-wl");
   const wlSec = document.querySelector<HTMLElement>("#waitlist");
   const count = Number(hero?.dataset["frames"] ?? 0);
-  if (!canvas || !hero || !socket || !chip || !win || !rc || !pin || !wl || !wlSec || count < 2) return;
+  if (!canvas || !hero || !heroCopy || !socket || !chip || !win || !rc || !pin || !wl || !wlSec || count < 2) return;
   if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
   const ctx = canvas.getContext("2d");
   const off = document.createElement("canvas").getContext("2d");
@@ -138,7 +139,16 @@ export function startIconFlight(): void {
     const wlB = box(wl, STILL_FILL);
     // Hero: the icon drifts down at about half the scroll speed (as in the
     // demo), and the turn completes as it reaches the top of the screen.
-    heroB.y += scrollY * 0.45;
+    // ... but never into the headline: the frame's lowest ink (the floor
+    // shadow, ~0.32 of a frame below the tile's centre, plus the idle float)
+    // stays 16 px above the hero copy. Near the copy the icon shrinks (down to
+    // half size, as if moving away) instead of overlapping; past that it
+    // scrolls with the page.
+    const inkBelow = 0.32 / FRAME_FILL + 0.02; // lowest ink, per px of tile, below the centre
+    const limit = heroCopy.getBoundingClientRect().top - 16;
+    const drifted = heroB.y + scrollY * 0.45;
+    heroB.tile = clamp((limit - drifted) / inkBelow, heroB.tile * 0.5, heroB.tile);
+    heroB.y = Math.min(drifted, limit - inkBelow * heroB.tile);
     const spin = clamp(scrollY / Math.max(1, (heroRect.top + scrollY + heroRect.height * 0.45) / 0.55));
     const heroIdx = Math.round(spin * (count - 1));
     const bob = Math.sin((now / 1000) * ((Math.PI * 2) / 5.5));
