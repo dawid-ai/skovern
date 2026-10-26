@@ -1,0 +1,65 @@
+/* Two-step waitlist form (port of the round-3 waitlist.js styles). */
+.wl { --wl-r: 24px; position: relative; width: 100%; max-width: 520px; margin: 0 auto; text-align: left; background: var(--card); border-radius: var(--wl-r);
+  padding: clamp(22px, 4vw, 36px); box-shadow: 0 30px 70px -36px rgba(20, 20, 40, .35), 0 0 0 1px var(--card-line) }
+.wl h3 { margin: 0; font-size: clamp(24px, 3vw, 30px); line-height: 1.12; font-weight: 700; letter-spacing: -.025em; color: var(--ink) }
+.wl h3:focus { outline: none }
+.wl .wl-h2 { font-size: 22px }
+.wl-eb { margin: 0 0 8px; font-size: 13px; font-weight: 600; letter-spacing: .01em; color: var(--accent-t) }
+.wl-sub { margin: 8px 0 0; font-size: 16px; line-height: 1.45; color: var(--ink-2) }
+.wl form { display: flex; flex-direction: column; gap: 16px }
+.wl-head { margin-bottom: 6px }
+.fld { display: flex; flex-direction: column; gap: 6px; min-width: 0 }
+.fld label { font-size: 14px; font-weight: 600; color: var(--ink) }
+.fld label span { font-weight: 400; color: var(--ink-2) }
+.fld input, .fld select { width: 100%; height: 48px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--field-line); background: var(--field);
+  color: var(--ink); font-family: inherit; font-weight: 400; font-size: 17px; line-height: 1.2; transition: border-color .2s, box-shadow .2s; -webkit-appearance: none; appearance: none }
+.fld select { padding-right: 40px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%2386868b' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 16px center }
+.fld input::placeholder { color: var(--ink-3) }
+.fld input:focus-visible, .fld select:focus-visible { outline: none; border-color: var(--accent-t); box-shadow: 0 0 0 4px var(--accent-soft) }
+.fld [aria-invalid="true"], .fld [aria-invalid="true"]:focus-visible { border-color: var(--red-t); box-shadow: 0 0 0 3px color-mix(in srgb, var(--red-t) 14%, transparent) }
+.err { margin: 0; font-size: 13.5px; line-height: 1.35; color: var(--red-t); display: flex; gap: 6px; align-items: flex-start }
+.err:empty { display: none }
+.err::before, .wl-alert::before { content: "!"; flex: none; width: 16px; height: 16px; margin-top: 1px; border-radius: 50%; background: var(--red-t); color: #fff;
+  font-weight: 700; font-size: 11px; line-height: 16px; text-align: center }
+.wl-alert { display: flex; gap: 8px; align-items: flex-start; margin: 0; padding: 12px 14px; border-radius: 12px; font-size: 15px; line-height: 1.4; font-weight: 500;
+  color: var(--red-t); background: color-mix(in srgb, var(--red-t) 9%, transparent) }
+/* The honeypot: off-screen and out of the accessibility tree. People never see it; naive bots fill it. */
+.wl-hp { position: absolute; left: -10000px; top: auto; width: 1px; height: 1px; overflow: hidden }
+.wl-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px }
+.wl-btns { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 4px }
+.wl-go { height: 50px; padding: 0 26px; border: 0; border-radius: 999px; background: var(--accent-t); color: var(--on-accent); font-family: inherit; font-weight: 600; font-size: 17px;
+  line-height: 1; cursor: pointer; transition: filter .2s, transform .2s }
+.wl-go:hover { filter: brightness(1.07) }
+.wl-go:active { transform: scale(.97) }
+.wl-go:disabled { cursor: progress; filter: saturate(.6) }
+.wl-go.full { width: 100% }
+.wl-skip { height: 50px; padding: 0 22px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--ink); font-family: inherit; font-weight: 500;
+  font-size: 17px; line-height: 1; cursor: pointer }
+.wl-skip:hover { background: var(--bg-2) }
+.wl button:focus-visible, .wl-link:focus-visible { outline: 3px solid var(--accent-t); outline-offset: 3px }
+.wl-fine { margin: 2px 0 0; font-size: 13px; line-height: 1.45; color: var(--ink-2) }
+.wl-ok { display: flex; gap: 16px; align-items: center; padding: 0 0 22px; margin-bottom: 22px; border-bottom: 1px solid var(--line) }
+.wl-ok-flat { border: 0; margin: 0; padding: 0 }
+.wl-num { flex: none; font-size: clamp(56px, 9vw, 76px); line-height: .9; font-weight: 800; letter-spacing: -.05em;
+  background: linear-gradient(170deg, #f3a15f, #e87a2e 45%, #b8501a); -webkit-background-clip: text; background-clip: text; color: transparent; font-variant-numeric: tabular-nums }
+.wl-ok h3 { font-size: clamp(20px, 2.4vw, 24px); line-height: 1.2 }
+.wl-ok p { margin: 6px 0 0; font-size: 15px; line-height: 1.4; color: var(--ink-2) }
+.wl-check { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--green-t); color: #fff; font-size: 13px; font-weight: 700;
+  margin-right: 8px; vertical-align: 2px }
+.wl-done p { margin: 10px 0 0; color: var(--ink-2); font-size: 16px; line-height: 1.45 }
+.wl-sum { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px }
+.wl-sum:empty { display: none }
+.wl-sum span { font-size: 13px; font-weight: 600; padding: 6px 12px; border-radius: 999px; background: var(--bg-2); color: var(--ink) }
+.wl-link { display: inline-block; margin-top: 20px; background: none; border: 0; padding: 0; color: var(--accent-t); font-family: inherit; font-weight: 500; font-size: 15px; line-height: 1.3; cursor: pointer }
+.wl-link:hover { text-decoration: underline }
+.wl [hidden] { display: none !important }
+.wl .in { animation: wl-in .5s cubic-bezier(.2, .8, .2, 1) }
+@keyframes wl-in { from { opacity: 0; transform: translateY(10px) } }
+@media (max-width: 520px) {
+  .wl-row { grid-template-columns: 1fr }
+  .wl-btns > * { flex: 1 1 auto }
+  .wl-ok { flex-direction: column; align-items: flex-start; gap: 10px }
+  .wl-num { font-size: 52px }
+}
+@media (prefers-reduced-motion: reduce) { .wl .in { animation: none } }

@@ -10,7 +10,7 @@
   "packageManager": "pnpm@9.15.4",
   "scripts": {
     "typecheck": "pnpm -r typecheck",
-    "lint": "eslint .",
+    "lint": "eslint . --ignore-pattern \"**/.astro/**\"",
     "test": "pnpm -r test"
   },
   "devDependencies": {

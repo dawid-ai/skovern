@@ -1,0 +1,20 @@
+---
+interface Props {
+  /** Which top-level page this is, for aria-current. */
+  current?: "home" | "blog";
+  /** Where the header's Join button points on this page. */
+  joinHref?: string;
+}
+const { current = "home", joinHref = "/#waitlist" } = Astro.props;
+const onHome = current === "home";
+const h = (id: string): string => (onHome ? `#${id}` : `/#${id}`);
+---
+<header class="gnav">
+  <div class="in">
+    <a class="logo" href={onHome ? "#main" : "/"} aria-label="Skovern home"><i aria-hidden="true">S</i>Skovern</a>
+    <nav aria-label="Main">
+      <a href={h("private")}>Private</a><a href={h("receipts")}>Receipts</a><a href={h("features")}>What it does</a><a href={h("founders")}>Founding users</a><a href="/blog/" aria-current={current === "blog" ? "page" : undefined}>Blog</a>
+    </nav>
+    <a class="pill fill sm" href={joinHref} data-join>Join the waitlist</a>
+  </div>
+</header>

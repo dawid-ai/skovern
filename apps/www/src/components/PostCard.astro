@@ -1,0 +1,21 @@
+---
+import Cover from "./Cover.astro";
+import { categoryLabel, formatDate, postUrl, readMinutes, type Post } from "../lib/posts";
+
+interface Props {
+  post: Post;
+  /** Show the description under the title (blog index). */
+  dek?: boolean;
+}
+const { post, dek = false } = Astro.props;
+const d = post.data;
+---
+<a class="pcard" href={postUrl(post)} data-cat={d.category}>
+  <Cover cover={d.cover} />
+  <div class="pbody">
+    <span class="cat">{categoryLabel(d.category)}</span>
+    <h3>{d.title}</h3>
+    {dek && <p class="dek">{d.description}</p>}
+    <span class="meta"><time datetime={d.date.toISOString().slice(0, 10)}>{formatDate(d.date)}</time> · {readMinutes(post)} min read</span>
+  </div>
+</a>

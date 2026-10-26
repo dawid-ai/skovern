@@ -1,0 +1,44 @@
+---
+import Base from "../layouts/Base.astro";
+import HomeHero from "../components/HomeHero.astro";
+import HomePrivate from "../components/HomePrivate.astro";
+import HomeReceipts from "../components/HomeReceipts.astro";
+import HomeTiles from "../components/HomeTiles.astro";
+import HomeBlog from "../components/HomeBlog.astro";
+import Waitlist from "../components/Waitlist.astro";
+import { getPosts } from "../lib/posts";
+import "../styles/home.css";
+
+const posts = await getPosts();
+const ld = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: "Skovern",
+  applicationCategory: "BusinessApplication",
+  operatingSystem: "Windows",
+  description: "Free AI for small shops. Its brain runs on your own computer, and you control what leaves.",
+  offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+  url: "https://skovern.com/",
+};
+---
+<Base title="Skovern · Free AI for your shop. You control what leaves." joinHref="#waitlist">
+  <script slot="head" type="application/ld+json" set:html={JSON.stringify(ld)} />
+  <HomeHero />
+  <HomePrivate />
+  <HomeReceipts />
+  <HomeTiles />
+  <section class="wls" id="waitlist" aria-labelledby="h-wl">
+    <div class="anchor" id="a-wl"><img class="still" src="/img/icon-front.webp" alt="" width="512" height="512" loading="lazy" decoding="async"></div>
+    <div class="wrap">
+      <h2 class="h-l" id="h-wl">Get on the list.</h2>
+      <p class="lede">Skovern isn't out yet. Join the waitlist and we'll send your invite when it's your turn. It's free, and it stays free.</p>
+      <div class="perks"><span><svg class="ic"><use href="#i-check"/></svg>Free forever</span><span><svg class="ic"><use href="#i-check"/></svg>Your brain runs on your computer</span><span><svg class="ic"><use href="#i-check"/></svg>Windows first</span></div>
+      <Waitlist id="wl-main" />
+    </div>
+  </section>
+  <HomeBlog posts={posts} />
+</Base>
+<script>
+  import { startHome } from "../scripts/home";
+  startHome();
+</script>

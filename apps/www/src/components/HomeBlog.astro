@@ -1,0 +1,21 @@
+---
+import PostCard from "./PostCard.astro";
+import type { Post } from "../lib/posts";
+
+interface Props { posts: Post[] }
+const { posts } = Astro.props;
+const shown = posts.slice(0, 3);
+---
+{shown.length > 0 && (
+  <section class="blogs" aria-labelledby="h-blog">
+    <div class="wide">
+      <div class="top">
+        <div><p class="eyebrow o">From the blog</p><h2 class="h-m" id="h-blog">Plain answers for small shops.</h2></div>
+        <a class="more" href="/blog/">Read the blog</a>
+      </div>
+      <div class={`posts ${shown.length === 1 ? "one" : ""}`}>
+        {shown.map((p) => <PostCard post={p} dek={shown.length === 1} />)}
+      </div>
+    </div>
+  </section>
+)}

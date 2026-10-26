@@ -1,0 +1,58 @@
+---
+import "../styles/waitlist.css";
+import { API_URL } from "../lib/site";
+import { BUSINESS_TYPES } from "../lib/waitlist-rules";
+
+// The two-step waitlist form. The markup is complete without JavaScript: step 1
+// posts straight to the api, which redirects to /waitlist/done/. With
+// JavaScript (src/scripts/waitlist.ts), it runs in place: step 1 shows the
+// number, step 2 is optional, and every error shows under its field.
+interface Props {
+  id: string;
+  title?: string;
+  sub?: string;
+}
+const {
+  id,
+  title = "Join the waitlist",
+  sub = "Skovern is free. We're letting testers in a few at a time, Windows first.",
+} = Astro.props;
+---
+<div class="wl" data-waitlist data-api={API_URL}>
+  <form class="wl-s1" method="post" action={`${API_URL}/api/waitlist`} aria-labelledby={`${id}-t`}>
+    <div class="wl-head"><p class="wl-eb">Step 1 of 2</p><h3 id={`${id}-t`} tabindex="-1">{title}</h3><p class="wl-sub">{sub}</p></div>
+    <div class="fld"><label for={`${id}-name`}>Your name</label>
+      <input id={`${id}-name`} name="name" autocomplete="given-name" placeholder="Rosa" maxlength="80" required aria-describedby={`${id}-name-e`}><p class="err" id={`${id}-name-e`} aria-live="polite"></p></div>
+    <div class="fld"><label for={`${id}-email`}>Email</label>
+      <input id={`${id}-email`} name="email" type="email" inputmode="email" autocomplete="email" placeholder="rosa@bloomandvine.shop" maxlength="254" required aria-describedby={`${id}-email-e`}><p class="err" id={`${id}-email-e`} aria-live="polite"></p></div>
+    <div class="wl-hp" aria-hidden="true"><label for={`${id}-hp`}>Company website</label><input id={`${id}-hp`} name="company_website" tabindex="-1" autocomplete="off"></div>
+    <p class="wl-alert" role="alert" hidden></p>
+    <button class="wl-go full" type="submit">Join the waitlist</button>
+    <p class="wl-fine">We'll only email you about Skovern. No spam, and you can leave any time. <a href="/privacy/">How we use your info</a></p>
+  </form>
+  <div class="wl-s2wrap" hidden>
+    <div class="wl-ok" role="status"><span class="wl-num" aria-hidden="true"></span><div><h3 class="wl-okh" tabindex="-1"></h3><p>That's your place in line. We'll email you when your invite is ready.</p></div></div>
+    <form class="wl-s2" novalidate aria-labelledby={`${id}-t2`}>
+      <div class="wl-head"><p class="wl-eb">Step 2 of 2 · optional</p><h3 id={`${id}-t2`} class="wl-h2">Help us build it for you</h3>
+        <p class="wl-sub">Three quick questions so Skovern fits your kind of shop. Skip it if you're busy. You're already on the list.</p></div>
+      <div class="wl-row">
+        <div class="fld"><label for={`${id}-job`}>Your job title <span>(optional)</span></label>
+          <input id={`${id}-job`} name="job" autocomplete="organization-title" placeholder="Owner" maxlength="80" aria-describedby={`${id}-job-e`}><p class="err" id={`${id}-job-e`} aria-live="polite"></p></div>
+        <div class="fld"><label for={`${id}-type`}>Business type <span>(optional)</span></label>
+          <select id={`${id}-type`} name="type" aria-describedby={`${id}-type-e`}><option value="">Pick one</option>{BUSINESS_TYPES.map(([value, label]) => <option value={value}>{label}</option>)}</select><p class="err" id={`${id}-type-e`} aria-live="polite"></p></div>
+      </div>
+      <div class="fld"><label for={`${id}-url`}>Your website <span>(optional)</span></label>
+        <input id={`${id}-url`} name="url" inputmode="url" autocomplete="url" placeholder="bloomandvine.shop" maxlength="200" aria-describedby={`${id}-url-e`}><p class="err" id={`${id}-url-e`} aria-live="polite"></p></div>
+      <p class="wl-alert" role="alert" hidden></p>
+      <div class="wl-btns"><button class="wl-go" type="submit">Send</button><button class="wl-skip" type="button" data-skip>Skip</button></div>
+    </form>
+  </div>
+  <div class="wl-done" hidden role="status">
+    <div class="wl-ok wl-ok-flat"><span class="wl-num" aria-hidden="true"></span><div><h3 class="wl-doneh" tabindex="-1"></h3><p class="wl-donep"></p></div></div>
+    <div class="wl-sum"></div><p class="wl-donemail"></p><button class="wl-link" type="button" data-reset>Sign up someone else ›</button>
+  </div>
+</div>
+<script>
+  import { mountAll } from "../scripts/waitlist";
+  mountAll();
+</script>

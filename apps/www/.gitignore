@@ -1,0 +1,6 @@
+dist/
+out/
+.astro/
+.w3-tmp/
+test-results/
+playwright-report/
