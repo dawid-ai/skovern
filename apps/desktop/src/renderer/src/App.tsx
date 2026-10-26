@@ -85,7 +85,7 @@ export function App() {
       <main className="home">
         <div className="card">
           <div className="mark" aria-hidden="true">
-            DH
+            S
           </div>
 
           {phase === "loading" && <p>starting…</p>}

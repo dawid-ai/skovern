@@ -8,29 +8,36 @@ export function UpdatesSection() {
   const copy = settingsCopy(view);
 
   return (
-    <div className="form updates-settings">
-      <h2>Updates</h2>
-      <p className="updates-version">
-        You have <strong>Skovern {view.current}</strong>.
-      </p>
-      <p className="hint" role="status">
-        {view.state.kind === "checking" && <span className="spinner" aria-hidden="true" />} {copy.status}
-      </p>
-      <div className="row">
-        <button className={copy.action ? "link" : "primary"} onClick={() => run("check")} disabled={copy.checkDisabled}>
-          Check for updates
-        </button>
-        {copy.action && (
-          <button className="primary" onClick={() => run(copy.action!.op)}>
-            {copy.action.label}
-          </button>
+    <section className="group updates-settings">
+      <h2 className="g-head">Updates</h2>
+      <div className="g-card">
+        <div className="g-row">
+          <p className="updates-version">
+            You have <strong>Skovern {view.current}</strong>.
+          </p>
+        </div>
+        <div className="g-row">
+          <p className="hint g-main" role="status">
+            {view.state.kind === "checking" && <span className="spinner" aria-hidden="true" />} {copy.status}
+          </p>
+          <span className="g-trail">
+            {copy.action && (
+              <button className="primary" onClick={() => run(copy.action!.op)}>
+                {copy.action.label}
+              </button>
+            )}
+            <button className="link" onClick={() => run("check")} disabled={copy.checkDisabled}>
+              Check for updates
+            </button>
+          </span>
+        </div>
+        {view.canUpdate && (
+          <label className="g-row updates-auto">
+            <span className="g-main">Check for updates automatically</span>
+            <input type="checkbox" className="switch" checked={view.auto} onChange={(e) => setAuto(e.target.checked)} />
+          </label>
         )}
       </div>
-      {view.canUpdate && (
-        <label className="updates-auto">
-          <input type="checkbox" checked={view.auto} onChange={(e) => setAuto(e.target.checked)} /> Check for updates automatically
-        </label>
-      )}
-    </div>
+    </section>
   );
 }

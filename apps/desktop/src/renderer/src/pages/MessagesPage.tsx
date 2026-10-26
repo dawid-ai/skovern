@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ThreadMessageView } from "../../../shared/cloud.js";
+import { Icon } from "../components/Icon.js";
 
 // "Messages" — a two-way conversation with the founder. Messages are polled by
 // the Shell (which owns the unread badge) and passed in; this page renders the
@@ -40,7 +41,7 @@ export function MessagesPage({
         <p>A question, an idea, a bug — this goes straight to Dawid, the person building this.</p>
       </header>
 
-      <div className="thread">
+      <div className="thread messages-thread">
         {messages.length === 0 ? (
           <p className="hint">No messages yet. Say hi below.</p>
         ) : (
@@ -53,21 +54,25 @@ export function MessagesPage({
         )}
       </div>
 
-      <div className="form">
-        <textarea
-          aria-label="Your message"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Type your message…"
-          rows={3}
-        />
-        <button
-          className="primary"
-          onClick={() => void send()}
-          disabled={busy || text.trim().length === 0}
-        >
-          Send
-        </button>
+      <div className="form messages-composer">
+        <div className="cbox">
+          <textarea
+            aria-label="Your message"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Type your message…"
+            rows={1}
+          />
+          <button
+            className="send"
+            onClick={() => void send()}
+            disabled={busy || text.trim().length === 0}
+            aria-label="Send"
+            title="Send"
+          >
+            <Icon name="arrowUp" />
+          </button>
+        </div>
         {notice.length > 0 && <p className="notice">{notice}</p>}
       </div>
     </section>

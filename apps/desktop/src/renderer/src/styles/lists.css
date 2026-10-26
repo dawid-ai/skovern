@@ -1,0 +1,167 @@
+/* Design A grouped inset lists (like iPhone Settings), and the data tables restyled to match:
+   a rounded white card, hairline rows, a small uppercase header. */
+
+.group {
+  display: flex;
+  flex-direction: column;
+}
+
+.g-head,
+.group > h2 {
+  padding: 0 16px 7px;
+  font: 400 12.5px/1.3 var(--font);
+  color: var(--label-2);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.g-card {
+  background: var(--surface);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.g-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  min-height: 46px;
+  padding: 10px 16px;
+  font-size: 14px;
+  color: var(--label);
+}
+
+.g-row + .g-row::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 16px;
+  border-top: 0.5px solid var(--sep);
+}
+
+.g-row > p {
+  color: var(--label);
+}
+
+.g-row > .hint,
+.g-row > p.hint {
+  color: var(--label-2);
+  font-size: 12.5px;
+}
+
+.g-row.g-sub {
+  min-height: 0;
+  padding-top: 0;
+  margin-top: -4px;
+}
+
+.g-row.g-sub::before {
+  display: none;
+}
+
+.g-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.g-trail {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--label-2);
+}
+
+/* A labelled field on one row: label on the left, the control on the right. */
+.g-field > label {
+  flex: none;
+  font-size: 14px;
+  color: var(--label);
+}
+
+.g-field > input,
+.g-field > select {
+  flex: 1;
+  min-width: 180px;
+}
+
+.g-foot {
+  padding: 7px 16px 0;
+  font-size: 12.5px;
+  color: var(--label-2);
+  line-height: 1.45;
+}
+
+.group > .notice,
+.group > .brain-reply,
+.group > .receipt {
+  margin-top: 10px;
+}
+
+/* A colored icon tile at the start of a row. */
+.tile {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: var(--tile, var(--tint));
+}
+
+.tile .ic {
+  width: 18px;
+  height: 18px;
+}
+
+.tile-gray {
+  --tile: #8e8e93;
+}
+
+.tile-green {
+  --tile: #2f9e4f;
+}
+
+.tile-blue {
+  --tile: #1a73e8;
+}
+
+.tile-orange {
+  --tile: var(--brand);
+}
+
+/* A short explanation between a group's head and its card. */
+.g-intro {
+  padding: 0 16px 8px;
+  font-size: 12.5px;
+  color: var(--label-2);
+}
+
+/* Settings specifics on the grouped list. */
+.ollama-consent {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.active-brain {
+  background: var(--surface-2);
+}
+
+.g-row.active-brain {
+  display: block;
+  line-height: 26px;
+}
+
+.active-brain .brain-dot {
+  display: inline-block;
+  margin-right: 6px;
+  vertical-align: 1px;
+}
