@@ -1,0 +1,12 @@
+# BuildKit reads this for apps/www/Dockerfile (context = repo root).
+**/node_modules
+**/.env
+**/.env.*
+**/dist
+**/out
+**/.astro
+**/test-results
+**/playwright-report
+.git
+apps/desktop
+apps/site

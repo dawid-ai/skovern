@@ -105,3 +105,62 @@ Local sessions (people or agents) only tag and push. They never run `gh release 
 - Update log: `%APPDATA%\Skovern\logs\updates.log`.
 - The installed app talks to the server at `SKOVERN_API_URL`, or `http://127.0.0.1:8787` when
   it isn't set (ledger `api-url-override-packaged`).
+
+## Deploy skovern.com (Railway)
+
+The website and the cloud api run on Railway, project `skovern`, environment `production`.
+Each service builds a Dockerfile from the repo root and listens on port 8080, which is the
+port the custom domains target.
+
+| Service | Domain | Dockerfile | Config file |
+|---|---|---|---|
+| `www` | `skovern.com`, `www.skovern.com` | `apps/www/Dockerfile` (static build served by Caddy) | `apps/www/railway.json` |
+| `api` | `api.skovern.com` | `apps/site/Dockerfile` | `apps/site/railway.json` |
+| `Postgres` | none (private network) | Railway plugin | none |
+
+### One-time setup
+
+1. In each service's **Settings**, set **Config-as-code path** to the file in the table, and
+   keep **Root directory** at `/` so the Dockerfile sees the pnpm workspace.
+2. Connect the service to the GitHub repo and the `main` branch. The `watchPatterns` in each
+   `railway.json` skip a rebuild when only the other app changed.
+3. Variables on `api`:
+   - `NODE_ENV=production`, `PORT=8080`, `TRUST_PROXY=1`
+   - `APP_URL=https://api.skovern.com`, `SITE_URL=https://skovern.com`
+   - `CORS_ORIGINS=https://skovern.com,https://www.skovern.com`
+   - `MAIL_FROM=Skovern <hi@skovern.com>`
+   - `DATABASE_URL=${{Postgres.DATABASE_URL}}` (a Railway reference)
+   - Secrets: `RESEND_API_KEY`, `SKOVERN_ADMIN_TOKEN`. Set them with
+     `railway variables --service api --set-from-stdin <NAME>`, never on the command line.
+4. Variables on `www`: `PORT=8080`. The api origin is baked in at build time
+   (`PUBLIC_API_URL`, default `https://api.skovern.com`).
+
+The api refuses to boot in production without `RESEND_API_KEY`, `APP_URL`, or
+`DATABASE_URL`, and says which one is missing in the deploy log.
+
+### Before a deploy
+
+Run the loop 051 metric locally (it builds and smokes both images):
+
+```bash
+docker build -f apps/site/Dockerfile -t skovern-api-smoke . && node apps/site/scripts/smoke-image.ts
+docker build -f apps/www/Dockerfile -t skovern-www-smoke .
+```
+
+### After a deploy
+
+1. `curl https://api.skovern.com/healthz` and `curl https://skovern.com/healthz` both say ok.
+2. `node apps/site/scripts/smoke-prod.ts https://api.skovern.com` signs up a
+   `smoke+<time>@skovern.com` address and checks the number and CORS. Open that welcome email
+   and run the script again with `--remove "<link>"` to check the remove page and delete it.
+3. Open `https://api.skovern.com/admin/waitlist` and sign in with any user name and the
+   `SKOVERN_ADMIN_TOKEN` value as the password. It's in the Railway dashboard under the `api`
+   service's **Variables**.
+
+### Blog posts
+
+A post is one Markdown file in `apps/www/src/content/blog/`. The file name is the URL slug
+(lowercase letters, numbers, and dashes). Front matter needs `title`, `description`, `date`,
+and `category` (`guides`, `privacy`, `stories`, or `news`); `author` defaults to `dawid`, and
+`cover` picks the card art (`icon`, `icon-dark`, `chat`, `brain`, `receipts`, `update`). The
+build fails on a post with missing or wrong front matter, so a broken post can't ship.
