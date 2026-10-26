@@ -8,6 +8,14 @@ import { BUSINESS_TYPES } from "./validate.js";
 // Founder view of the waitlist: counts by business type, the full list, and a
 // CSV export. Basic-auth guarded by the same admin token as /admin/dm.
 
+/** How the admin view names each welcome state. */
+const WELCOME_LABELS: Record<WaitlistEntry["welcome"], string> = {
+  sent: "Sent",
+  waiting: "Waiting (over budget)",
+  expired: "Skipped: waited over a day",
+  refused: "Skipped: address refused",
+};
+
 const LABELS: Record<string, string> = {
   florist: "Florist",
   cafe: "Bakery or café",
@@ -30,9 +38,9 @@ export function csvCell(value: string | number | null): string {
 }
 
 export function toCsv(rows: WaitlistEntry[]): string {
-  const head = ["number", "name", "email", "job_title", "business_type", "website", "joined_at"];
+  const head = ["number", "name", "email", "job_title", "business_type", "website", "joined_at", "welcome"];
   const lines = rows.map((r) =>
-    [r.number, r.name, r.email, r.jobTitle, r.businessType, r.url, r.createdAt].map(csvCell).join(","),
+    [r.number, r.name, r.email, r.jobTitle, r.businessType, r.url, r.createdAt, r.welcome].map(csvCell).join(","),
   );
   return [head.map(csvCell).join(","), ...lines].join("\r\n") + "\r\n";
 }
@@ -79,7 +87,7 @@ export async function handleAdminWaitlist(
       (r) =>
         `<tr><td>#${r.number}</td><td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.email)}</td>` +
         `<td>${escapeHtml(r.jobTitle ?? "")}</td><td>${escapeHtml(r.businessType ? (LABELS[r.businessType] ?? r.businessType) : "")}</td>` +
-        `<td>${escapeHtml(r.url ?? "")}</td><td>${escapeHtml(r.createdAt.slice(0, 16).replace("T", " "))}</td></tr>`,
+        `<td>${escapeHtml(r.url ?? "")}</td><td>${escapeHtml(r.createdAt.slice(0, 16).replace("T", " "))}</td><td>${WELCOME_LABELS[r.welcome]}</td></tr>`,
     )
     .join("");
   const nonce = randomBytes(16).toString("base64");
@@ -90,9 +98,10 @@ export async function handleAdminWaitlist(
     `table{border-collapse:collapse;margin:12px 0 28px}td,th{border-bottom:1px solid #ddd;padding:6px 12px;text-align:left}` +
     `th{font-weight:600}h1{margin:0 0 4px}a{color:#c85f17}</style>` +
     `<h1>Waitlist (${rows.length})</h1><p><a href="/admin/waitlist.csv">Download CSV</a></p>` +
+    `<p>Welcome emails: ${(["sent", "waiting", "expired", "refused"] as const).map((k) => `${WELCOME_LABELS[k]} ${rows.filter((r) => r.welcome === k).length}`).join(" · ")}</p>` +
     `<h2>By business type</h2><table><tr><th>Type</th><th>People</th></tr>${countRows || "<tr><td colspan=2>Nobody yet.</td></tr>"}</table>` +
-    `<h2>Everyone</h2><table><tr><th>#</th><th>Name</th><th>Email</th><th>Job</th><th>Type</th><th>Website</th><th>Joined (UTC)</th></tr>` +
-    `${listRows || "<tr><td colspan=7>Nobody yet.</td></tr>"}</table></html>`;
+    `<h2>Everyone</h2><table><tr><th>#</th><th>Name</th><th>Email</th><th>Job</th><th>Type</th><th>Website</th><th>Joined (UTC)</th><th>Welcome</th></tr>` +
+    `${listRows || "<tr><td colspan=8>Nobody yet.</td></tr>"}</table></html>`;
   return {
     status: 200,
     body: html,

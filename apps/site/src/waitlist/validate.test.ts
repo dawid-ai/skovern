@@ -110,10 +110,11 @@ describe("CSV export", () => {
         businessType: "florist",
         url: "https://bloom.shop",
         createdAt: "2026-10-26T10:00:00.000Z",
+        welcome: "refused",
       },
     ]);
     expect(csv.split("\r\n")[1]).toBe(
-      `"1","Rosa ""Ro""","rosa@bloom.shop","","florist","https://bloom.shop","2026-10-26T10:00:00.000Z"`,
+      `"1","Rosa ""Ro""","rosa@bloom.shop","","florist","https://bloom.shop","2026-10-26T10:00:00.000Z","refused"`,
     );
   });
 });

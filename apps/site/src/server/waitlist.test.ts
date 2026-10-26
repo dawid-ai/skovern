@@ -1,9 +1,11 @@
 import pg from "pg";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { AuthService, AuthStore, ConsoleMailer } from "../auth/service.js";
 import { startAuthServer, type RunningServer } from "../auth/server.js";
 import type { Welcome, WelcomeMailer } from "../waitlist/mail.js";
+import { MailError } from "../auth/mailer.js";
+import { resetBudgetLog } from "../waitlist/welcome-budget.js";
 import { WaitlistStore } from "../waitlist/store.js";
 import { RateLimiter } from "./rate-limit.js";
 import { sendWelcomeBacklog, sweepExpired } from "./sweep.js";
@@ -21,12 +23,15 @@ let store: WaitlistStore;
 class SlowMailer implements WelcomeMailer {
   readonly sent: { to: string; welcome: Welcome }[] = [];
   failNext = false;
+  /** Addresses the "mail service" refuses with a 422, like a bad mailbox. */
+  readonly refuse = new Set<string>();
   async sendWelcome(to: string, welcome: Welcome): Promise<void> {
     await new Promise((r) => setTimeout(r, 300));
     if (this.failNext) {
       this.failNext = false;
-      throw new Error("email send failed (503)");
+      throw new MailError(503);
     }
+    if (this.refuse.has(to)) throw new MailError(422);
     this.sent.push({ to, welcome });
   }
 }
@@ -356,40 +361,97 @@ describe("account routes off (production before the beta)", () => {
 });
 
 describe("welcome email budget", () => {
-  it("saves a signup over budget without sending, then the backlog sends it oldest first", async () => {
+  /** A clean slate: no recent sends, nothing waiting. */
+  const reset = async (): Promise<void> => {
     await pool.query("TRUNCATE waitlist_welcome_sends");
-    await pool.query(`UPDATE waitlist SET welcome_sent_at = now() WHERE welcome_sent_at IS NULL`);
-    const tight = new WaitlistStore(pool, { perHour: 1, perDay: 90 });
-    const deps = { store: tight, mailer, appUrl: () => "https://api.test" };
-    const before = mailer.sent.length;
-
-    const a = await handleJoin(deps, { name: "Una", email: "budget-a@bloom.shop" });
-    const b = await handleJoin(deps, { name: "Bo", email: "budget-b@bloom.shop" });
-    const c = await handleJoin(deps, { name: "Cy", email: "budget-c@bloom.shop" });
-    expect([a.status, b.status, c.status]).toEqual([201, 201, 201]);
-    expect(mailer.sent.slice(before).map((m) => m.to)).toEqual(["budget-a@bloom.shop"]);
-    const waiting = await pool.query(
-      `SELECT email FROM waitlist WHERE welcome_sent_at IS NULL AND email LIKE 'budget-%' ORDER BY created_at`,
+    await pool.query(`UPDATE waitlist SET welcome_sent_at = now() WHERE welcome_sent_at IS NULL AND welcome_skipped IS NULL`);
+  };
+  /** A saved signup that is waiting for its welcome, `ageHours` old. */
+  const waiting = async (email: string, ageHours = 0): Promise<void> => {
+    // Written straight to the table, so it uses no budget slot of its own.
+    await pool.query(
+      `INSERT INTO waitlist (email, name, created_at) VALUES ($1, 'Wai', now() - ($2 || ' hours')::interval)`,
+      [email, String(ageHours)],
     );
-    expect(waiting.rows.map((r: { email: string }) => r.email)).toEqual(["budget-b@bloom.shop", "budget-c@bloom.shop"]);
+  };
+  const welcomeOf = async (email: string): Promise<string | undefined> =>
+    (await store.list()).find((x) => x.email === email)?.welcome;
 
-    // Still over budget: the backlog waits.
-    expect(await sendWelcomeBacklog(deps)).toBe(0);
-
-    // An hour later the hourly slot frees up: the oldest waiting signup goes first.
-    await pool.query(`UPDATE waitlist_welcome_sends SET sent_at = sent_at - interval '61 minutes'`);
-    expect(await sendWelcomeBacklog(deps)).toBe(1);
-    expect(mailer.sent.at(-1)?.to).toBe("budget-b@bloom.shop");
+  it("saves a signup over budget without sending, and logs one line", async () => {
+    await reset();
+    resetBudgetLog();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const tight = new WaitlistStore(pool, { perHour: 1, perDay: 90 });
+      const deps = { store: tight, mailer, appUrl: () => "https://api.test" };
+      const before = mailer.sent.length;
+      const a = await handleJoin(deps, { name: "Una", email: "budget-a@bloom.shop" });
+      const b = await handleJoin(deps, { name: "Bo", email: "budget-b@bloom.shop" });
+      const c = await handleJoin(deps, { name: "Cy", email: "budget-c@bloom.shop" });
+      expect([a.status, b.status, c.status]).toEqual([201, 201, 201]);
+      expect(mailer.sent.slice(before).map((m) => m.to)).toEqual(["budget-a@bloom.shop"]);
+      expect(await welcomeOf("budget-b@bloom.shop")).toBe("waiting");
+      const lines = warn.mock.calls.map((args) => String(args[0]));
+      expect(lines).toEqual(["[waitlist] welcome budget spent; 1 waiting"]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
-  it("puts a failed send back in the backlog, and the backlog retries it", async () => {
-    await pool.query("TRUNCATE waitlist_welcome_sends");
-    await pool.query(`UPDATE waitlist SET welcome_sent_at = now() WHERE welcome_sent_at IS NULL`);
+  it("never sends backlog junk older than a day, and sends fresh signups newest first", async () => {
+    await reset();
+    const deps = { store, mailer, appUrl: () => "https://api.test" };
+    await waiting("junk-old@flood.test", 30);
+    await waiting("fresh-1@bloom.shop", 2);
+    await waiting("fresh-2@bloom.shop", 1);
+    const before = mailer.sent.length;
+    expect(await sendWelcomeBacklog(deps)).toBe(2);
+    expect(mailer.sent.slice(before).map((m) => m.to)).toEqual(["fresh-2@bloom.shop", "fresh-1@bloom.shop"]);
+    expect(await welcomeOf("junk-old@flood.test")).toBe("expired");
+  });
+
+  it("skips an address the mail service refuses (4xx) and keeps going", async () => {
+    await reset();
+    const deps = { store, mailer, appUrl: () => "https://api.test" };
+    await waiting("behind@bloom.shop", 2);
+    await waiting("poison@bloom.shop", 1);
+    mailer.refuse.add("poison@bloom.shop");
+    try {
+      expect(await sendWelcomeBacklog(deps)).toBe(1);
+      expect(mailer.sent.at(-1)?.to).toBe("behind@bloom.shop");
+      expect(await welcomeOf("poison@bloom.shop")).toBe("refused");
+      // The refusal gave its budget slot back.
+      expect((await pool.query(`SELECT count(*)::int AS n FROM waitlist_welcome_sends`)).rows[0].n).toBe(1);
+      // And a later run doesn't try it again.
+      expect(await sendWelcomeBacklog(deps)).toBe(0);
+    } finally {
+      mailer.refuse.clear();
+    }
+  });
+
+  it("keeps half the hour for live joins while the backlog is full", async () => {
+    await reset();
+    const tight = new WaitlistStore(pool, { perHour: 4, perDay: 90 });
+    const deps = { store: tight, mailer, appUrl: () => "https://api.test" };
+    for (let i = 0; i < 5; i += 1) await waiting(`flood-${i}@flood.test`, 1);
+    const before = mailer.sent.length;
+    // The backlog may take 2 of the 4 hourly slots, then stops.
+    expect(await sendWelcomeBacklog(deps)).toBe(2);
+    expect(await sendWelcomeBacklog(deps)).toBe(0);
+    // A person joining now still gets a welcome.
+    await handleJoin(deps, { name: "Rosa", email: "live@bloom.shop" });
+    expect(mailer.sent.slice(before).map((m) => m.to)).toContain("live@bloom.shop");
+    expect(await welcomeOf("live@bloom.shop")).toBe("sent");
+  });
+
+  it("puts a failed send (5xx) back in the backlog, and the backlog retries it", async () => {
+    await reset();
     const deps = { store, mailer, appUrl: () => "https://api.test" };
     mailer.failNext = true;
     await handleJoin(deps, { name: "Flo", email: "retry-later@bloom.shop" });
     expect(mailer.sent.some((m) => m.to === "retry-later@bloom.shop")).toBe(false);
     expect((await pool.query(`SELECT count(*)::int AS n FROM waitlist_welcome_sends`)).rows[0].n).toBe(0);
+    expect(await welcomeOf("retry-later@bloom.shop")).toBe("waiting");
     expect(await sendWelcomeBacklog(deps)).toBe(1);
     expect(mailer.sent.at(-1)?.to).toBe("retry-later@bloom.shop");
   });

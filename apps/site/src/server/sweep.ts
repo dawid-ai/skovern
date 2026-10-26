@@ -41,17 +41,20 @@ export function startSweep(pool: pg.Pool, everyMs = 60 * 60_000): () => void {
 }
 
 /**
- * Mail welcomes that waited in the backlog (over budget at signup, or a failed
- * send), oldest first, while the budget has room. Stops at the first failed
- * send so a mail outage doesn't spin. Returns how many went out.
+ * Mail welcomes waiting in the backlog (over budget at signup, or a failed
+ * send): newest first, only under a day old, within the backlog's half of the
+ * hourly budget. A refused address (4xx) is skipped and the next one tried; a
+ * 5xx or an unreachable mail service stops the run so an outage doesn't spin.
+ * Returns how many went out.
  */
 export async function sendWelcomeBacklog(deps: WelcomeDeps, max = 50): Promise<number> {
   let sent = 0;
-  while (sent < max) {
+  for (let tries = 0; tries < max; tries += 1) {
     const job = await deps.store.claimBacklog();
     if (!job) break;
-    if (!(await deliverWelcome(deps, job))) break;
-    sent += 1;
+    const outcome = await deliverWelcome(deps, job);
+    if (outcome === "sent") sent += 1;
+    else if (outcome === "failed") break;
   }
   return sent;
 }

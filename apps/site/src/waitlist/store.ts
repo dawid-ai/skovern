@@ -3,8 +3,13 @@ import type pg from "pg";
 import { sha256 } from "../auth/tokens.js";
 import type { BusinessType } from "./validate.js";
 import {
-  claimWelcome,
+  BACKLOG_MAX_AGE_HOURS,
+  budgetHasRoom,
+  claimRow,
   DEFAULT_WELCOME_BUDGET,
+  lockBudget,
+  logBudgetSpent,
+  waitingCount,
   WELCOME_BUDGET_MIGRATION,
   WELCOME_COOLDOWN_HOURS,
   type WelcomeBudget,
@@ -58,6 +63,8 @@ export interface WaitlistEntry {
   businessType: string | null;
   url: string | null;
   createdAt: string;
+  /** Where the welcome email stands. */
+  welcome: "sent" | "waiting" | "expired" | "refused";
 }
 
 export interface JoinResult {
@@ -124,7 +131,12 @@ export class WaitlistStore {
         created = true;
       }
       // Only a due welcome takes the (global) budget lock; repeats skip it.
-      const claim = row.due ? await claimWelcome(client, row.id, this.budget) : null;
+      let claim: string | null = null;
+      if (row.due) {
+        await lockBudget(client);
+        if (await budgetHasRoom(client, this.budget, "live")) claim = await claimRow(client, row.id);
+        else logBudgetSpent(await waitingCount(client));
+      }
       await client.query("COMMIT");
       return { id: row.id, number: Number(row.number), welcomeClaim: claim, created };
     } catch (err) {
@@ -142,18 +154,35 @@ export class WaitlistStore {
     await this.pool.query(`DELETE FROM waitlist_welcome_sends WHERE id = $1`, [claim]);
   }
 
-  /** Claim the oldest signup still waiting for its welcome, if the budget has
-   *  room. Null when nothing waits or the budget is spent. */
+  /** Claim the NEWEST signup still waiting for its welcome, if it's under a
+   *  day old and the backlog's share of the budget has room. Older waiting
+   *  rows are marked skipped ('expired'): after a flood, real people who
+   *  joined since get their email first, and junk ages out instead of queuing
+   *  for days. Takes the budget lock before any row lock, like join. */
   async claimBacklog(): Promise<WelcomeJob | null> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      await lockBudget(client);
+      await client.query(
+        `UPDATE waitlist SET welcome_skipped = 'expired'
+          WHERE welcome_sent_at IS NULL AND welcome_skipped IS NULL
+            AND created_at < now() - ($1 || ' hours')::interval`,
+        [String(BACKLOG_MAX_AGE_HOURS)],
+      );
+      if (!(await budgetHasRoom(client, this.budget, "backlog"))) {
+        const waiting = await waitingCount(client);
+        await client.query("COMMIT");
+        if (waiting > 0) logBudgetSpent(waiting);
+        return null;
+      }
       const next = await client.query<{ id: string; email: string; name: string; number: string }>(
-        `SELECT id, email, name, number FROM waitlist WHERE welcome_sent_at IS NULL
-          ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED`,
+        `SELECT id, email, name, number FROM waitlist
+          WHERE welcome_sent_at IS NULL AND welcome_skipped IS NULL
+          ORDER BY created_at DESC LIMIT 1 FOR UPDATE SKIP LOCKED`,
       );
       const row = next.rows[0];
-      const claim = row ? await claimWelcome(client, row.id, this.budget) : null;
+      const claim = row ? await claimRow(client, row.id) : null;
       await client.query("COMMIT");
       if (!row || !claim) return null;
       return { id: row.id, email: row.email, name: row.name, number: Number(row.number), claim };
@@ -163,6 +192,13 @@ export class WaitlistStore {
     } finally {
       client.release();
     }
+  }
+
+  /** The mail service refused this address (a 4xx): it will never take it, so
+   *  mark the welcome skipped and give the budget slot back. */
+  async skipWelcome(id: string, claim: string): Promise<void> {
+    await this.pool.query(`UPDATE waitlist SET welcome_sent_at = NULL, welcome_skipped = 'refused' WHERE id = $1`, [id]);
+    await this.pool.query(`DELETE FROM waitlist_welcome_sends WHERE id = $1`, [claim]);
   }
 
   /** Mint a token for this person. Details and decoy tokens expire; remove
@@ -235,10 +271,12 @@ export class WaitlistStore {
       name: string;
       email: string;
       job_title: string | null;
+      welcome_sent_at: Date | null;
+      welcome_skipped: string | null;
       business_type: string | null;
       url: string | null;
       created_at: Date;
-    }>(`SELECT number, name, email, job_title, business_type, url, created_at FROM waitlist ORDER BY number`);
+    }>(`SELECT number, name, email, job_title, business_type, url, created_at, welcome_sent_at, welcome_skipped FROM waitlist ORDER BY number`);
     return r.rows.map((x) => ({
       number: Number(x.number),
       name: x.name,
@@ -247,6 +285,7 @@ export class WaitlistStore {
       businessType: x.business_type,
       url: x.url,
       createdAt: x.created_at.toISOString(),
+      welcome: x.welcome_skipped === "expired" || x.welcome_skipped === "refused" ? x.welcome_skipped : x.welcome_sent_at ? "sent" : "waiting",
     }));
   }
 }
