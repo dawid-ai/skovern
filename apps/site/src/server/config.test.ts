@@ -33,6 +33,13 @@ describe("loadConfig", () => {
     expect(loadConfig(PROD).corsOrigins).toEqual(["https://skovern.com", "https://www.skovern.com"]);
   });
 
+  it("keeps account routes off in production unless ACCOUNT_ROUTES=1, and on in dev", () => {
+    expect(loadConfig(PROD).accountRoutes).toBe(false);
+    expect(loadConfig({ ...PROD, ACCOUNT_ROUTES: "1" }).accountRoutes).toBe(true);
+    expect(loadConfig({}).accountRoutes).toBe(true);
+    expect(loadConfig({ ACCOUNT_ROUTES: "0" }).accountRoutes).toBe(false);
+  });
+
   it("boots in dev with no settings", () => {
     const cfg = loadConfig({});
     expect(cfg.production).toBe(false);

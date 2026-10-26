@@ -22,6 +22,9 @@ export interface ServerConfig {
   adminToken: string | null;
   corsOrigins: string[];
   trustProxy: boolean;
+  /** Sign-in, DM, publish, news, and their admin pages. Off by default in
+   *  production until the beta: the public api is the waitlist and nothing else. */
+  accountRoutes: boolean;
   host: string;
   port: number;
 }
@@ -69,6 +72,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): ServerConfig {
     adminToken: val("SKOVERN_ADMIN_TOKEN"),
     corsOrigins: list(env["CORS_ORIGINS"]) ?? (production ? PROD_ORIGINS : [...PROD_ORIGINS, ...DEV_ORIGINS]),
     trustProxy: env["TRUST_PROXY"] === "1",
+    accountRoutes: env["ACCOUNT_ROUTES"] ? env["ACCOUNT_ROUTES"] === "1" : !production,
     host: val("HOST") ?? "127.0.0.1",
     port: Number(val("PORT") ?? 8787),
   };

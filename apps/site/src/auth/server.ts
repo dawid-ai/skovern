@@ -76,6 +76,9 @@ export function startAuthServer(opts: {
   /** Per-IP limiter for /auth/request; shares the waitlist's proxy rule. */
   limiter?: RateLimiter;
   trustProxy?: boolean;
+  /** Mount the account surface (auth, DM, publish, news, /u, admin DM/news).
+   *  Defaults to on so in-process tests and the desktop e2e keep working. */
+  accountRoutes?: boolean;
 }): Promise<RunningServer> {
   const adminToken = opts.adminToken ?? null;
   const server = createServer((req, res) => {
@@ -89,6 +92,11 @@ export function startAuthServer(opts: {
           return send(res, { status: 200, body: { ok: true } }, { "cache-control": "no-store" });
         }
         if (opts.waitlist && (await routeWaitlist(opts.waitlist, req, res, path))) return;
+        // Before the beta, production mounts only the waitlist: no sign-in, DM,
+        // publish, news, or their admin pages (ACCOUNT_ROUTES, loop 051 SECURE B1).
+        if (opts.accountRoutes === false) {
+          return send(res, { status: 404, body: { ok: false, message: "Not found." } });
+        }
         // Public news feed — GET only, no auth (readable without account).
         if (path === "/news" && opts.news) {
           if (method !== "GET") {

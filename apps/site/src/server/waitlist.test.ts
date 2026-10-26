@@ -234,3 +234,39 @@ describe("sweepExpired", () => {
     expect(magic.rows.map((r: { id: string }) => r.id)).toEqual(["new"]);
   });
 });
+
+describe("account routes off (production before the beta)", () => {
+  it("mounts only /healthz and the waitlist", async () => {
+    const auth = new AuthService(new AuthStore(pool), new ConsoleMailer(), { appUrl: "http://x" });
+    const limiter = new RateLimiter();
+    const off = await startAuthServer({
+      service: auth,
+      adminToken: ADMIN,
+      accountRoutes: false,
+      waitlist: {
+        deps: { store, mailer, appUrl: () => "https://api.test" },
+        limiter,
+        trustProxy: false,
+        corsOrigins: ["https://skovern.com"],
+        adminToken: ADMIN,
+        siteUrl: "https://skovern.com",
+      },
+    });
+    try {
+      const gone = [
+        ["POST", "/auth/request"], ["POST", "/auth/verify"], ["POST", "/dm"], ["GET", "/dm/thread"], ["POST", "/dm/read"],
+        ["POST", "/publish/visibility"], ["GET", "/u/visibility/x/og.png"], ["GET", "/u/news/x"], ["GET", "/news"],
+        ["GET", "/admin/dm"], ["POST", "/admin/dm/reply"], ["POST", "/admin/news"],
+      ] as const;
+      for (const [method, path] of gone) {
+        const r = await fetch(`${off.url}${path}`, { method, headers: { "content-type": "application/json" }, body: method === "POST" ? "{}" : undefined });
+        expect(r.status, `${method} ${path}`).toBe(404);
+      }
+      expect((await fetch(`${off.url}/healthz`)).status).toBe(200);
+      const auth401 = await fetch(`${off.url}/admin/waitlist`);
+      expect(auth401.status).toBe(401);
+    } finally {
+      await off.close();
+    }
+  });
+});

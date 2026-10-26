@@ -80,6 +80,7 @@ async function main(): Promise<void> {
     host: cfg.host,
     limiter,
     trustProxy: cfg.trustProxy,
+    accountRoutes: cfg.accountRoutes,
     waitlist: {
       deps: { store: waitlist, mailer: mailers.welcome, appUrl: () => authConfig.appUrl },
       limiter,
@@ -91,6 +92,11 @@ async function main(): Promise<void> {
   });
   if (!authConfig.appUrl) authConfig.appUrl = server.url;
   console.log(`[auth-server] listening on ${server.url}`);
+  console.log(
+    cfg.accountRoutes
+      ? "[auth-server] account routes ON (sign-in, messages, publish, news)"
+      : "[auth-server] account routes OFF: only /healthz and the waitlist are mounted (set ACCOUNT_ROUTES=1 to change)",
+  );
   console.log(
     cfg.adminToken
       ? `[auth-server] admin pages: /admin/dm and /admin/waitlist — log in with ANY username and your SKOVERN_ADMIN_TOKEN as the password`
