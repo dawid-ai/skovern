@@ -1,9 +1,14 @@
-import { app, BrowserWindow, Menu, Tray, dialog, nativeImage } from "electron";
+/// <reference types="electron-vite/node" />
+import { app, BrowserWindow, Menu, Tray, dialog, nativeImage, nativeTheme } from "electron";
 import { writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import electronUpdater from "electron-updater";
+// The app mark (loop 049): bundled files next to the build, never fetched.
+import appIconPath from "../../build/icon.png?asset";
+import trayIconPath from "../../build/tray.png?asset";
+import trayIcon2xPath from "../../build/tray@2x.png?asset";
 import {
   anthropicProvider,
   createAccountClient,
@@ -412,9 +417,12 @@ async function chatSend(chatId: string, text: string): Promise<ChatSendResult> {
   }
 }
 
-// ponytail: placeholder 16x16 orange square until the real icon exists
-const TRAY_ICON_DATA_URL =
-  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAJElEQVR4nGN4UaXH8KJK7z+ZmIESzWA8asCoAaMGUNEAirIzALsgiyMIAIRAAAAAAElFTkSuQmCC";
+// The tray mark at 16 px, plus a 32 px copy for high-DPI screens.
+function trayImage(): Electron.NativeImage {
+  const img = nativeImage.createFromPath(trayIconPath);
+  img.addRepresentation({ scaleFactor: 2, buffer: nativeImage.createFromPath(trayIcon2xPath).toPNG() });
+  return img;
+}
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -425,6 +433,9 @@ function createWindow(): void {
     width: 960,
     height: 640,
     title: "Skovern",
+    icon: appIconPath,
+    // Match the renderer's background so a dark-mode window never flashes white on open.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#141416" : "#f2f2f7",
     show: false,
     autoHideMenuBar: true,
     webPreferences: {
@@ -464,7 +475,7 @@ function createWindow(): void {
 }
 
 function createTray(): void {
-  tray = new Tray(nativeImage.createFromDataURL(TRAY_ICON_DATA_URL));
+  tray = new Tray(trayImage());
   tray.setToolTip("Skovern");
   tray.setContextMenu(
     Menu.buildFromTemplate([
