@@ -31,6 +31,11 @@ describe("deploy files", () => {
     expect(read(".github/workflows/ci.yml")).toMatch(/ASTRO_TELEMETRY_DISABLED: "1"/);
   });
 
+  it.each(["apps/site/railway.json", "apps/www/railway.json"])("%s runs one replica in US East (Virginia)", (p) => {
+    const cfg = JSON.parse(read(p)) as { deploy: { multiRegionConfig?: Record<string, { numReplicas: number }> } };
+    expect(cfg.deploy.multiRegionConfig).toEqual({ "us-east4-eqdc4a": { numReplicas: 1 } });
+  });
+
   it("pins pnpm with a corepack hash", () => {
     const pkg = JSON.parse(read("package.json")) as { packageManager: string };
     expect(pkg.packageManager).toMatch(/^pnpm@\d+\.\d+\.\d+\+sha512\.[0-9a-f]{128}$/);
