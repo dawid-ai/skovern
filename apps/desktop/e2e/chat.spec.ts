@@ -415,6 +415,11 @@ test("Issue 2/4/3b: an Ollama brain STREAMS token-by-token with a prepare status
 
     // exactly one on-machine receipt pair for the streamed Ollama message
     const receiptsPath = path.join(userDataDir, "receipts.jsonl");
+    // Loop 049 (e2e-load-flakes): the last token reaches the screen before main writes the "done"
+    // receipt, so under load an immediate read saw only "sent". Wait for the line, then count.
+    await expect
+      .poll(() => readFileSync(receiptsPath, "utf8"), { timeout: 15_000 })
+      .toMatch(/"provider":"local"[^\n]*"phase":"done"|"phase":"done"[^\n]*"provider":"local"/);
     const lines = readFileSync(receiptsPath, "utf8").trim().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
     const localModel = lines.filter((r) => r["provider"] === "local");
     expect(localModel.filter((r) => r["phase"] === "sent")).toHaveLength(1);
