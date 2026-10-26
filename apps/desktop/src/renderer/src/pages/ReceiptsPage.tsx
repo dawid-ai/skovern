@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ActivitySummary, ReceiptView } from "../../../shared/receipts.js";
-import { intensity } from "../../../shared/receipt-calendar.js";
+import { Calendar } from "./ReceiptCalendar.js";
 import { filterByRange, paginate } from "../../../shared/receipt-filter.js";
-import { direction, isFetch, isLocal, isRoutine, routineGroup } from "./receipt-classify.js";
+import { isFetch, isRoutine, routineGroup } from "./receipt-classify.js";
+import { Detail, FlowTag, FlowTile, fmtTime, where, who, why } from "./ReceiptRow.js";
+import { Icon } from "../components/Icon.js";
 
 // "What leaves your machine" — the activity log on its own page. Loop 027 adds, above the
 // list: a GitHub-style activity calendar (a colored square per day, darker = busier) drawn
@@ -11,164 +13,12 @@ import { direction, isFetch, isLocal, isRoutine, routineGroup } from "./receipt-
 // keep a spreadsheet of exactly what you picked. Read-only; sends nothing.
 
 const PAGE_SIZE = 20;
-const CAL_WEEKS = 26; // ~6 months of history in the grid
-
-function fmtBytes(n: number): string {
-  return n < 1024 ? `${n} bytes` : `${(n / 1024).toFixed(1)} KB`;
-}
-
-function fmtTime(ts: string): string {
-  const d = new Date(ts);
-  return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-
-const BRAIN_LABEL: Record<string, string> = {
-  openrouter: "OpenRouter",
-  anthropic: "Claude",
-  "claude-cli": "Claude Code",
-  local: "your computer",
-};
-
-// Who made the call, in florist words.
-function who(r: ReceiptView): string {
-  if (!isFetch(r)) return isLocal(r) ? "Your private brain" : "Your brain";
-  if (r.task.startsWith("Skovern:")) return "Skovern";
-  if (r.task.startsWith("skill:")) return "A connector";
-  if (r.task.startsWith("Downloading")) return "A model download";
-  return "A website";
-}
-
-// The plain-English reason for the call.
-function why(r: ReceiptView): string {
-  if (!isFetch(r)) return r.task; // e.g. "Test my brain"
-  if (r.task.startsWith("Skovern:")) return r.task.slice("Skovern:".length).trim();
-  if (r.task.startsWith("skill:")) return "read a website for a skill";
-  return r.task;
-}
-
-// Where it went.
-function where(r: ReceiptView): string {
-  return isFetch(r) ? r.host : `${BRAIN_LABEL[r.provider] ?? r.provider}`;
-}
-
-// A private (on-machine) brain call: when the engine reported token usage, show the
-// tokens it read/produced ("all on your computer") instead of bytes — nothing left.
-// If no counts came back (older engine / some models), the plain honest line.
-function localDetail(r: ReceiptView): string {
-  if (!isFetch(r) && r.tokensOut !== undefined) {
-    const inPart = r.tokensIn !== undefined ? `${r.tokensIn.toLocaleString()} tokens in, ` : "";
-    return `${inPart}${r.tokensOut.toLocaleString()} out — all on your computer`;
-  }
-  return "stayed on your computer — nothing left";
-}
-
-// The honest flow tag: GREEN "Local" (stayed here), ORANGE "Out ↑" (you sent), BLUE
-// "In ↓" (came to you). Falls back to a neutral "Online" if a call has no direction.
-function FlowTag({ r }: { r: ReceiptView }) {
-  if (isLocal(r)) return <span className="tag tag-local">Local</span>;
-  const dir = direction(r);
-  if (dir === "out") return <span className="tag tag-out">Out ↑</span>;
-  if (dir === "in") return <span className="tag tag-in">In ↓</span>;
-  return <span className="tag tag-online">Online</span>;
-}
-
-// The plain-English detail for a row: local shows its tokens/stayed line; an inbound
-// event with no bytes (a new reply) just says it arrived; everything else shows the
-// metadata byte summary + outcome.
-function Detail({ r }: { r: ReceiptView }) {
-  if (isLocal(r)) return <span className="receipt-ok">{localDetail(r)}</span>;
-  if (isFetch(r) && direction(r) === "in" && r.bytesSent === 0 && r.bytesReceived === 0) {
-    return <span className="receipt-ok">arrived</span>;
-  }
-  const okText = isFetch(r) ? (r.ok ? "went through" : "didn't get through") : r.ok ? "answered" : "no answer";
-  return (
-    <>
-      {fmtBytes(r.bytesSent)} out · {fmtBytes(r.bytesReceived)} back ·{" "}
-      <span className={r.ok ? "receipt-ok" : "receipt-fail"}>{okText}</span>
-    </>
-  );
-}
 
 interface RoutineGroup {
   key: string;
   label: string;
   count: number;
   lastTs: string;
-}
-
-// The calendar's day squares as week-columns (each column 7 days, Sunday→Saturday),
-// oldest week first, ending on the week that holds `today`. Pure date math in UTC so it
-// matches the index's day keys and is identical on any machine.
-function ymd(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
-function buildGrid(today: string, weeks: number): string[][] {
-  const end = new Date(`${today}T00:00:00Z`);
-  if (Number.isNaN(end.getTime())) return [];
-  const start = new Date(end);
-  start.setUTCDate(start.getUTCDate() - (weeks * 7 - 1));
-  start.setUTCDate(start.getUTCDate() - start.getUTCDay()); // back up to Sunday
-  const cols: string[][] = [];
-  const cur = new Date(start);
-  while (cur <= end) {
-    const col: string[] = [];
-    for (let i = 0; i < 7; i++) {
-      col.push(ymd(cur));
-      cur.setUTCDate(cur.getUTCDate() + 1);
-    }
-    cols.push(col);
-  }
-  return cols;
-}
-
-function Calendar({
-  summary,
-  onPickDay,
-}: {
-  summary: ActivitySummary;
-  onPickDay: (day: string) => void;
-}) {
-  const grid = useMemo(() => buildGrid(summary.today, CAL_WEEKS), [summary.today]);
-  const max = useMemo(() => Math.max(0, ...Object.values(summary.counts)), [summary.counts]);
-  const total = useMemo(() => Object.values(summary.counts).reduce((a, b) => a + b, 0), [summary.counts]);
-
-  return (
-    <div className="cal">
-      <div className="cal-head">
-        <h2>Your activity</h2>
-        <p className="hint">
-          {total === 0
-            ? "Nothing yet — the days will fill in as Skovern does things for you."
-            : `${total.toLocaleString()} ${total === 1 ? "thing has" : "things have"} happened. Darker means busier. Click a day to see just that day.`}
-        </p>
-      </div>
-      <div className="cal-scroll">
-        <div className="cal-grid" role="grid" aria-label="Activity calendar">
-          {grid.map((col, ci) => (
-            <div className="cal-col" role="row" key={ci}>
-              {col.map((day) => {
-                const future = day > summary.today;
-                const count = summary.counts[day] ?? 0;
-                const level = future ? 0 : intensity(count, max);
-                return (
-                  <button
-                    key={day}
-                    type="button"
-                    role="gridcell"
-                    className={`cal-day cal-${level}${future ? " cal-future" : ""}`}
-                    title={future ? day : `${day}: ${count} ${count === 1 ? "thing" : "things"}`}
-                    disabled={future}
-                    onClick={() => onPickDay(day)}
-                    aria-label={`${day}, ${count} ${count === 1 ? "thing" : "things"}`}
-                  />
-                );
-              })}
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
 }
 
 export function ReceiptsPage() {
@@ -346,8 +196,13 @@ export function ReceiptsPage() {
                           />
                         </td>
                         <td className="receipt-what">
-                          <span className="receipt-who">{who(r)}</span>
-                          <span className="receipt-why">{why(r)}</span>
+                          <span className="receipt-what-in">
+                            <FlowTile r={r} />
+                            <span>
+                              <span className="receipt-who">{who(r)}</span>
+                              <span className="receipt-why">{why(r)}</span>
+                            </span>
+                          </span>
                         </td>
                         <td>
                           <span className="receipt-where">{where(r)}</span>
@@ -386,22 +241,27 @@ export function ReceiptsPage() {
           )}
 
           {routine.length > 0 && (
-            <div className="receipt-routine">
+            <section className="group receipt-routine">
               <h2>Routine background checks</h2>
-              <p className="hint">
-                Skovern quietly checking for news and messages on a timer — no business data, nothing you need
-                to read. Counted here so the list above stays about what matters.
-              </p>
-              <ul>
+              <ul className="g-card">
                 {routine.map((g) => (
-                  <li key={g.key}>
-                    <span className="receipt-routine-label">{g.label}</span>
-                    <span className="receipt-count">{g.count}×</span>
-                    <span className="receipt-time">last at {fmtTime(g.lastTs)}</span>
+                  <li key={g.key} className="g-row">
+                    <span className="tile tile-gray">
+                      <Icon name="refresh" />
+                    </span>
+                    <span className="receipt-routine-label g-main">{g.label}</span>
+                    <span className="g-trail">
+                      <span className="receipt-count">{g.count}×</span>
+                      <span className="receipt-time">last at {fmtTime(g.lastTs)}</span>
+                    </span>
                   </li>
                 ))}
               </ul>
-            </div>
+              <p className="hint g-foot">
+                Skovern quietly checking for news and messages on a timer — no business data, nothing you need
+                to read. Counted here so the list above stays about what matters.
+              </p>
+            </section>
           )}
         </>
       )}

@@ -3,6 +3,9 @@ import type { ChatMessage, ChatMeta } from "../../../shared/chat.js";
 import type { BrainStatusView } from "../../../shared/brain.js";
 import { atBottom, nextOffset, prevOffset, BOTTOM_EPS } from "./chat-scroll.js";
 import { Answer } from "../components/Answer.js";
+import { Icon } from "../components/Icon.js";
+import { ChatList } from "./ChatList.js";
+import { providerName } from "../../../shared/brain.js";
 
 // "Chat" — talk to your brain, one conversation at a time, replies streaming in
 // token-by-token. Separate chats persist across restarts. The renderer never touches
@@ -19,8 +22,6 @@ export function ChatPage({ brain, onSetup }: { brain: BrainStatusView | null; on
   const [prepare, setPrepare] = useState(""); // launch/prepare phase while waiting (Issue 4), "" = none
   const [offerSetup, setOfferSetup] = useState(false); // last send had no usable brain (Issue 1/3)
   const [startingOllama, setStartingOllama] = useState(false);
-  const [renamingId, setRenamingId] = useState<string | null>(null);
-  const [renameText, setRenameText] = useState("");
 
   // A ref so the (once-registered) token listener always sees the current chat.
   const activeIdRef = useRef<string | null>(null);
@@ -192,15 +193,10 @@ export function ChatPage({ brain, onSetup }: { brain: BrainStatusView | null; on
     }
   }
 
-  async function saveRename(id: string): Promise<void> {
-    await window.skovern.chat.rename(id, renameText);
-    setRenamingId(null);
+  async function rename(id: string, title: string): Promise<void> {
+    await window.skovern.chat.rename(id, title);
     await loadList();
   }
-
-  // An untitled (empty) chat reads "Untitled chat" in the list — NOT "New chat", which would
-  // collide with the "New chat" button now that we auto-open an empty chat on arrival.
-  const titleOf = (m: ChatMeta): string => (m.title.trim().length > 0 ? m.title : "Untitled chat");
 
   // Jump buttons. Scrolling up any of these ways stops auto-follow; jumping to the bottom
   // re-pins it. After moving, remeasure so the buttons' disabled states stay honest.
@@ -223,62 +219,26 @@ export function ChatPage({ brain, onSetup }: { brain: BrainStatusView | null; on
 
   return (
     <section className="page chat-page">
-      <aside className="chat-list" aria-label="Your chats">
-        <button className="primary chat-new" onClick={() => void newChat()}>
-          New chat
-        </button>
-        {chats.length === 0 ? (
-          <p className="hint">No chats yet. Start one above.</p>
-        ) : (
-          <ul>
-            {chats.map((c) => (
-              <li key={c.id} className={c.id === activeId ? "chat-row active" : "chat-row"}>
-                {renamingId === c.id ? (
-                  <div className="chat-rename">
-                    <input
-                      aria-label="New name"
-                      value={renameText}
-                      onChange={(e) => setRenameText(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && void saveRename(c.id)}
-                    />
-                    <button className="link" onClick={() => void saveRename(c.id)}>
-                      Save name
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <button className="chat-title" onClick={() => void openChat(c.id)}>
-                      {titleOf(c)}
-                    </button>
-                    {c.id === activeId && (
-                      <div className="chat-row-actions">
-                        <button
-                          className="link"
-                          onClick={() => {
-                            setRenamingId(c.id);
-                            setRenameText(titleOf(c));
-                          }}
-                        >
-                          Rename
-                        </button>
-                        <button className="link" onClick={() => void remove(c.id)}>
-                          Delete
-                        </button>
-                      </div>
-                    )}
-                  </>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </aside>
+      <ChatList
+        chats={chats}
+        activeId={activeId}
+        onNew={() => void newChat()}
+        onOpen={(id) => void openChat(id)}
+        onRename={rename}
+        onDelete={(id) => void remove(id)}
+      />
 
       <div className="chat-main">
-        <header className="page-head">
-          <h1>Chat</h1>
-          <p>Talk to your brain. Each chat is saved on this computer.</p>
-        </header>
+        {/* The brain this chat talks to, centered in the toolbar (design A). */}
+        <div className="chat-bar">
+          {configured && brain?.provider && (
+            <span className={`conv-chip conv-chip-${brain.provider === "local" ? (brain.modelLoaded ? "local" : "asleep") : "online"}`}>
+              <span className="brain-dot" aria-hidden="true" />
+              {providerName(brain.provider)}
+              {brain.model ? `: ${brain.model}` : ""}
+            </span>
+          )}
+        </div>
 
         {leavesMachine && (
           <p className="notice chat-cloud-note">
@@ -316,6 +276,7 @@ export function ChatPage({ brain, onSetup }: { brain: BrainStatusView | null; on
           <>
             <div className="chat-thread-wrap">
             <div className="thread chat-thread" ref={threadRef} onScroll={onScroll}>
+              <p className="stamp">Talk to your brain. Each chat is saved on this computer.</p>
               {messages.length === 0 && streaming === null ? (
                 <p className="hint">Say something to get started.</p>
               ) : (
@@ -347,45 +308,53 @@ export function ChatPage({ brain, onSetup }: { brain: BrainStatusView | null; on
                 go that way (empty thread / already at an end), so it never lies. */}
             <div className="chat-jump" role="group" aria-label="Jump around this chat">
               <button className="chat-jump-btn" aria-label="Jump to top" title="Jump to top" disabled={atTop} onClick={() => jumpTo(0, false)}>
-                ⤒
+                <Icon name="top" />
               </button>
               <button className="chat-jump-btn" aria-label="Previous reply" title="Previous reply" disabled={prevTarget === null} onClick={() => prevTarget !== null && jumpTo(prevTarget, false)}>
-                ↑
+                <Icon name="chevUp" />
               </button>
               <button className="chat-jump-btn" aria-label="Next reply" title="Next reply" disabled={nextTarget === null} onClick={() => nextTarget !== null && jumpTo(nextTarget, false)}>
-                ↓
+                <Icon name="chevDown" />
               </button>
               <button className="chat-jump-btn" aria-label="Jump to newest" title="Jump to newest" disabled={atEnd} onClick={() => jumpTo(threadRef.current?.scrollHeight ?? 0, true)}>
-                ⤓
+                <Icon name="bottom" />
               </button>
             </div>
             </div>
 
             <div className="form chat-composer">
-              <textarea
-                ref={textareaRef}
-                aria-label="Message your brain"
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    void send();
-                  }
-                }}
-                placeholder={configured ? "Type your message…" : "Connect a brain in Settings first"}
-                rows={3}
-                disabled={!configured}
-              />
-              {sending ? (
-                <button className="primary" onClick={stop}>
-                  Stop
-                </button>
-              ) : (
-                <button className="primary" onClick={() => void send()} disabled={!configured || draft.trim().length === 0}>
-                  Send
-                </button>
-              )}
+              <div className="cbox">
+                <textarea
+                  ref={textareaRef}
+                  aria-label="Message your brain"
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      void send();
+                    }
+                  }}
+                  placeholder={configured ? "Type your message…" : "Connect a brain in Settings first"}
+                  rows={1}
+                  disabled={!configured}
+                />
+                {sending ? (
+                  <button className="send" onClick={stop} aria-label="Stop" title="Stop">
+                    <Icon name="stop" />
+                  </button>
+                ) : (
+                  <button
+                    className="send"
+                    onClick={() => void send()}
+                    disabled={!configured || draft.trim().length === 0}
+                    aria-label="Send"
+                    title="Send"
+                  >
+                    <Icon name="arrowUp" />
+                  </button>
+                )}
+              </div>
               {error.length > 0 && (
                 <p className="notice chat-error" role="alert">
                   {error}
