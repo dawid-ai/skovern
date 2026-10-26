@@ -4,7 +4,8 @@
 # Only the root manifests and apps/site are copied in, so desktop code, local
 # node_modules, and .env files never enter the build context's layers.
 
-FROM node:24-bookworm-slim AS build
+# Base images are pinned by digest (tag kept for reading); bump both together.
+FROM node:24-bookworm-slim@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205 AS build
 ENV CI=true PNPM_HOME=/pnpm PATH=/pnpm:$PATH
 RUN corepack enable
 WORKDIR /repo
@@ -21,10 +22,12 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
  && find /app/src -name "*.test.ts" -delete \
  && rm -rf /app/scripts /app/docker-compose.yml /app/Dockerfile* /app/vitest.config.ts
 
-FROM node:24-bookworm-slim
+FROM node:24-bookworm-slim@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=8080
 WORKDIR /app
-COPY --from=build --chown=node:node /app /app
+# Owned by root and not writable by the node user: the running server can't
+# change its own code or dependencies.
+COPY --from=build /app /app
 USER node
 EXPOSE 8080
 # Railway's health check hits /healthz; this one covers plain `docker run`.

@@ -1,6 +1,7 @@
 // Loop 051 metric: run the PRODUCTION api image (NODE_ENV=production) against a
-// Testcontainers Postgres and a fake Resend over TLS, and assert S1–S12 over
-// real HTTP. The stage (containers, TLS front) is in smoke/harness.ts.
+// Testcontainers Postgres and a fake Resend over TLS, and assert S1–S13 (S13:
+// the image's file permissions). The stage (containers, TLS front) is in
+// smoke/harness.ts.
 //
 //   docker build -f apps/site/Dockerfile -t skovern-api-smoke .
 //   node apps/site/scripts/smoke-image.ts
@@ -9,7 +10,7 @@
 // PASS/FAIL and the process exits non-zero on the first failure.
 import { connect } from "node:net";
 import pg from "pg";
-import { docker, startHarness, type Api } from "./smoke/harness.ts";
+import { docker, IMAGE, startHarness, type Api } from "./smoke/harness.ts";
 
 const ADMIN = "smoke-admin-token-0123456789abcdef";
 const SITE = "https://skovern.com";
@@ -43,6 +44,12 @@ try {
   api = await h.startApi();
   const base = api.base;
   check("S1", (await fetch(`${base}/healthz`)).status === 200, "GET /healthz → 200");
+
+  // S13: the server runs as node and can't write its own code or dependencies.
+  const who = docker(["run", "--rm", "--entrypoint", "sh", IMAGE, "-c",
+    "id -un; for f in /app/src/x /app/node_modules/x /app/package.json; do touch $f 2>/dev/null && echo WRITABLE $f; done; echo done"]);
+  const user = who.split(/\r?\n/)[0] ?? "";
+  check("S13", user === "node" && !who.includes("WRITABLE"), `runs as ${user}, /app read-only: ${!who.includes("WRITABLE")}`);
 
   let ipN = 0;
   const ip = (): string => `203.0.113.${(ipN += 1)}`;

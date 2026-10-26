@@ -12,6 +12,9 @@ permissions:
 jobs:
   gates:
     runs-on: ubuntu-latest
+    env:
+      # The www build must not phone home (Astro's anonymous usage stats).
+      ASTRO_TELEMETRY_DISABLED: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

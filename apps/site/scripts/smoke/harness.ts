@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 
 export const IMAGE = process.env["SMOKE_IMAGE"] ?? "skovern-api-smoke";
-const CADDY = "caddy:2.10.2-alpine";
+const CADDY = "caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d";
 const HOST_GW = ["--add-host", "host.docker.internal:host-gateway"];
 
 export interface SentEmail { to: string; subject: string; text: string; auth: string | undefined }
