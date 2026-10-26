@@ -4,8 +4,18 @@ import { expect, test, type Page } from "@playwright/test";
 
 const www = (): string => process.env["WWW_URL"] ?? "";
 const api = (): string => process.env["API_URL"] ?? "";
-// The api limits signups per client address (8 per 10 minutes). This file
-// makes 3 real signups per project, 6 in all, from one fresh api process.
+// The api limits signups per client address (3 per 10 minutes) and trusts the
+// rightmost X-Forwarded-For entry (TRUST_PROXY=1 in e2e/setup.ts). Each test
+// gets its own address, added to the api calls at the network layer, so no
+// test eats another's allowance.
+let seq = 0;
+test.beforeEach(async ({ page }, info) => {
+  seq += 1;
+  const addr = `198.51.100.${(info.project.name === "phone-375" ? 100 : 0) + seq}`;
+  await page.route(`${api()}/**`, (route) =>
+    route.continue({ headers: { ...route.request().headers(), "x-forwarded-for": addr } }),
+  );
+});
 
 async function noOverflow(page: Page): Promise<void> {
   const over = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
@@ -102,6 +112,10 @@ test("no page scrolls sideways", async ({ page }) => {
 
 test.describe("without JavaScript", () => {
   test.use({ javaScriptEnabled: false });
+  // These tests set their own X-Forwarded-For on the plain form posts.
+  test.beforeEach(async ({ page }) => {
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+  });
   // Each test posts from its own address, so the per-IP limit is measured per test.
   const ip = (project: string, n: number): string => `203.0.113.${(project === "phone-375" ? 100 : 0) + n}`;
 
@@ -133,7 +147,7 @@ test.describe("without JavaScript", () => {
 
   test("too many tries says it didn't go through", async ({ page }, info) => {
     const addr = ip(info.project.name, 3);
-    for (let i = 0; i < 8; i += 1) {
+    for (let i = 0; i < 3; i += 1) {
       await fetch(`${api()}/api/waitlist`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-forwarded-for": addr },
