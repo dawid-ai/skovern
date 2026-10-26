@@ -5,6 +5,7 @@ import type { OllamaLaunch, OllamaStatusView, SettingsView } from "../../../shar
 import { LocalBrainSetup } from "./LocalBrainSetup.js";
 import { UpdatesSection } from "../components/UpdatesSection.js";
 import { Icon } from "../components/Icon.js";
+import { OllamaSettings } from "./OllamaSettings.js";
 
 // "Settings" — for now, the brain picker: choose where your assistant thinks,
 // paste your key (kept safe on this computer), and test it with one real call.
@@ -257,57 +258,12 @@ export function SettingsPage({ onBrainChanged, onOpenYourBrain }: { onBrainChang
       </section>
 
       {ollama !== null && (
-        <section className="group ollama-settings">
-          <h2 className="g-head">Ollama (optional helper)</h2>
-          {ollama.installed && settings !== null && settings.ollamaLaunch === "ask" && (
-            // The consent OFFER (default state): ask before ever starting Ollama for the user.
-            <div className="g-card">
-              <div className="g-row ollama-consent" role="group" aria-label="Use Ollama?">
-                <p>
-                  We found Ollama on your computer. Want Skovern to start it automatically when you
-                  use an Ollama brain? You can change this anytime.
-                </p>
-                <div className="row">
-                  <button className="primary" onClick={() => void changeOllamaLaunch("always")}>
-                    Yes, start it automatically
-                  </button>
-                  <button className="link" onClick={() => void useBuiltin()}>
-                    No, use my built-in brain
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-          {ollama.installed && settings !== null && settings.ollamaLaunch !== "ask" && (
-            <div className="g-card">
-              <div className="g-row g-field">
-                <label htmlFor="ollama-launch">If you pick an Ollama brain and Ollama isn&apos;t running:</label>
-                <select
-                  id="ollama-launch"
-                  value={settings.ollamaLaunch}
-                  onChange={(e) => {
-                    const v = e.target.value as OllamaLaunch;
-                    // Picking "just use my built-in" with no model on disk → route to download it.
-                    if (v === "never") void useBuiltin();
-                    else void changeOllamaLaunch(v);
-                  }}
-                >
-                  <option value="always">Start Ollama for me automatically</option>
-                  <option value="never">Just use my built-in brain</option>
-                </select>
-              </div>
-            </div>
-          )}
-          <p className="g-foot">
-            Ollama is a free helper that can run bigger brains on your computer. Skovern doesn&apos;t
-            need it — your built-in brain works on its own.{" "}
-            {ollama.installed
-              ? ollama.running
-                ? "It's installed and running."
-                : "It's installed, but not running right now."
-              : "It's not installed on this computer — that's perfectly fine."}
-          </p>
-        </section>
+        <OllamaSettings
+          ollama={ollama}
+          settings={settings}
+          onLaunch={(v) => void changeOllamaLaunch(v)}
+          onUseBuiltin={() => void useBuiltin()}
+        />
       )}
 
       <UpdatesSection />
