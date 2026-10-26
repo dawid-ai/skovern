@@ -61,6 +61,8 @@ describe("privacy and contact", () => {
   it("says who, why, how long, and what you can do", () => {
     const text = read("privacy/index.html").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").replace(/&#39;/g, "'");
     expect(text).toContain("Dawid Jóźwiak, Skovern");
+    expect(text).toContain("hosted on Railway in the United States (US East, in Virginia)");
+    expect(text).toContain("We send email through Resend, also in the United States.");
     expect(text).toContain("joining the list is your consent");
     expect(text).toContain("until the waitlist closes after Skovern's public launch");
     expect(text).toContain("You can see the details we keep about you, fix them, or delete them.");
