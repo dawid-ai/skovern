@@ -118,7 +118,7 @@ test.describe("without JavaScript", () => {
     await submit(page, "Rosa", `nojs-${info.project.name}@bloom.test`);
     await expect(page).toHaveURL(/\/waitlist\/done\/\?n=\d+$/);
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("You're on the list.");
-    await expect(page.getByText("We emailed you your number.")).toBeVisible();
+    await expect(page.getByText("Check your inbox for your number.")).toBeVisible();
     await noOverflow(page);
   });
 
@@ -127,7 +127,7 @@ test.describe("without JavaScript", () => {
     await submit(page, "Rosa", "rosa@bloom");
     await expect(page).toHaveURL(/\/waitlist\/oops\/\?error=email$/);
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("That didn't go through.");
-    await expect(page.getByText("Check your email address and try again.")).toBeVisible();
+    await expect(page.locator("#oops-why")).toHaveText("Check what you typed and try again in a minute.");
     await expect(page.getByText("You're on the list")).toHaveCount(0);
   });
 
