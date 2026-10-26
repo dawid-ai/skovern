@@ -7,10 +7,11 @@
 /* The frames are mostly empty space (room for the turn and the shadow); the tile
    fills ~45% of the width, so the box is oversized and pulled in with margins. */
 #a-hero{--w:min(48vw,680px,92svh);width:var(--w);aspect-ratio:1;margin:calc(var(--w) * -.2) 0 calc(var(--w) * -.17)}
-#a-hero .still,#a-hero canvas{position:absolute;inset:0;width:100%;height:100%;will-change:transform}
-#a-hero canvas{opacity:0;transition:opacity .4s}
-#a-hero.scrub-on canvas{opacity:1}
-#a-hero.scrub-on .still{opacity:0;transition:opacity .4s .1s}
+#a-hero .still{position:absolute;inset:0;width:100%;height:100%}
+/* The flying icon (scripts/icon-flight.ts): one fixed canvas over the page. The
+   anchors' stills hide while it runs and stay for reduced motion or no JS. */
+#icon-fly{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:30}
+html.fly-on .anchor .still,html.fly-on .socket .still{opacity:0;transition:opacity .3s}
 .hero .copy{max-width:1180px;width:100%;margin:0 auto;padding:0 22px 64px}
 .hero .copy .eyebrow{color:var(--ink);margin-bottom:12px}
 .hero .row{display:flex;align-items:flex-end;justify-content:space-between;gap:32px;flex-wrap:wrap;margin-top:22px}
