@@ -130,13 +130,19 @@ port the custom domains target.
    - `CORS_ORIGINS=https://skovern.com,https://www.skovern.com`
    - `MAIL_FROM=Skovern <hi@skovern.com>`
    - `DATABASE_URL=${{Postgres.DATABASE_URL}}` (a Railway reference)
-   - Secrets: `RESEND_API_KEY`, `SKOVERN_ADMIN_TOKEN`. Set them with
+   - Secrets: `RESEND_API_KEY`, `SKOVERN_ADMIN_TOKEN` (32 characters or more). Set them with
      `railway variables --service api --set-from-stdin <NAME>`, never on the command line.
+   - Optional: `WELCOME_MAX_PER_HOUR` (default 30) and `WELCOME_MAX_PER_DAY` (default 90) cap
+     welcome emails across all signups, to stay inside Resend's free tier. Over the cap, signups
+     are still saved and the welcome goes out later, oldest first.
+   - Leave `ACCOUNT_ROUTES` unset until the beta. In production it defaults to off, so the api
+     serves only `/healthz`, the waitlist, the remove page, and the waitlist admin view.
 4. Variables on `www`: `PORT=8080`. The api origin is baked in at build time
    (`PUBLIC_API_URL`, default `https://api.skovern.com`).
 
 The api refuses to boot in production without `RESEND_API_KEY`, `APP_URL`, or
-`DATABASE_URL`, and says which one is missing in the deploy log.
+`DATABASE_URL`, with an admin token under 32 characters, or with a non-https
+`RESEND_API_URL`, and says which setting is wrong in the deploy log.
 
 ### Before a deploy
 
