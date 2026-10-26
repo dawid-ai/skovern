@@ -1,4 +1,10 @@
 {
   "extends": "../../tsconfig.base.json",
-  "include": ["src", "scripts"]
+  "include": ["src", "scripts"],
+  "compilerOptions": {
+    // The smoke scripts run under Node's own type stripping, which needs the
+    // real ".ts" extension on local imports. The package is never emitted.
+    "allowImportingTsExtensions": true,
+    "noEmit": true
+  }
 }

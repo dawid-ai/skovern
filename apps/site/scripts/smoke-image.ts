@@ -1,19 +1,16 @@
 // Loop 051 metric: run the PRODUCTION api image (NODE_ENV=production) against a
-// Testcontainers Postgres and a fake Resend, and assert S1–S10 over real HTTP.
+// Testcontainers Postgres and a fake Resend over TLS, and assert S1–S12 over
+// real HTTP. The stage (containers, TLS front) is in smoke/harness.ts.
 //
 //   docker build -f apps/site/Dockerfile -t skovern-api-smoke .
 //   node apps/site/scripts/smoke-image.ts
 //
 // Plain Node (built-in type stripping), no test runner: each clause prints
 // PASS/FAIL and the process exits non-zero on the first failure.
-import { execFileSync, spawnSync } from "node:child_process";
-import { createServer, type IncomingMessage } from "node:http";
 import { connect } from "node:net";
-import type { AddressInfo } from "node:net";
 import pg from "pg";
-import { PostgreSqlContainer } from "@testcontainers/postgresql";
+import { docker, startHarness, type Api } from "./smoke/harness.ts";
 
-const IMAGE = process.env["SMOKE_IMAGE"] ?? "skovern-api-smoke";
 const ADMIN = "smoke-admin-token-0123456789abcdef";
 const SITE = "https://skovern.com";
 
@@ -22,96 +19,60 @@ function check(id: string, ok: boolean, detail: string): void {
   if (!ok) throw new Error(`${id} failed: ${detail}`);
 }
 
-const docker = (args: string[]): string => execFileSync("docker", args, { encoding: "utf8" }).trim();
-
-// --- fake Resend: records every email the image sends --------------------
-interface SentEmail { to: string; subject: string; text: string; auth: string | undefined }
-const sent: SentEmail[] = [];
-const resend = createServer((req: IncomingMessage, res) => {
-  let raw = "";
-  req.on("data", (c: Buffer) => (raw += c.toString()));
-  req.on("end", () => {
-    if (req.method === "POST" && req.url === "/emails") {
-      const body = JSON.parse(raw) as { to: string; subject: string; text: string };
-      // Answer slowly, like a real mail API, so concurrent joins overlap the send.
-      setTimeout(() => {
-        sent.push({ ...body, auth: req.headers.authorization });
-        res.writeHead(200, { "content-type": "application/json" }).end('{"id":"fake"}');
-      }, 400);
-    } else res.writeHead(404).end();
-  });
-});
-await new Promise<void>((r) => resend.listen(0, "0.0.0.0", () => r()));
-const resendPort = (resend.address() as AddressInfo).port;
-
-console.log("Starting Postgres…");
-const db = await new PostgreSqlContainer("postgres:17-alpine").start();
-const dbUrlFromImage = `postgres://${db.getUsername()}:${db.getPassword()}@host.docker.internal:${db.getPort()}/${db.getDatabase()}`;
-
-const baseEnv: Record<string, string> = {
-  NODE_ENV: "production",
-  APP_URL: "https://api.skovern.com",
-  DATABASE_URL: dbUrlFromImage,
-  RESEND_API_KEY: "re_smoke_key",
-  RESEND_API_URL: `http://host.docker.internal:${resendPort}`,
-  SKOVERN_ADMIN_TOKEN: ADMIN,
-  TRUST_PROXY: "1",
-};
-const envArgs = (env: Record<string, string>): string[] => Object.entries(env).flatMap(([k, v]) => ["-e", `${k}=${v}`]);
-const HOST_GW = ["--add-host", "host.docker.internal:host-gateway"];
-
-let container = "";
+const h = await startHarness(ADMIN);
+const { sent } = h;
+let api: Api | undefined;
+let accounts: Api | undefined;
+const pool = new pg.Pool({ connectionString: h.db.getConnectionUri() });
+pool.on("error", () => {});
 try {
-  // S2: a production boot without each required setting fails, naming it.
-  for (const key of ["RESEND_API_KEY", "APP_URL", "DATABASE_URL"]) {
-    const env = { ...baseEnv };
-    delete env[key];
-    const r = spawnSync("docker", ["run", "--rm", ...HOST_GW, ...envArgs(env), IMAGE], { encoding: "utf8", timeout: 60_000 });
-    const out = `${r.stdout}${r.stderr}`;
-    check("S2", r.status !== 0 && out.includes(key), `boot without ${key} exits ${r.status} and names it`);
+  // S2: a production boot without each required setting, or with an unsafe one, fails and names it.
+  const refusals: [string, Record<string, string>][] = [
+    ["RESEND_API_KEY", { RESEND_API_KEY: "" }],
+    ["APP_URL", { APP_URL: "" }],
+    ["DATABASE_URL", { DATABASE_URL: "" }],
+    ["RESEND_API_URL", { RESEND_API_URL: "http://resend.test" }],
+    ["SKOVERN_ADMIN_TOKEN", { SKOVERN_ADMIN_TOKEN: "too-short" }],
+  ];
+  for (const [key, change] of refusals) {
+    const r = h.runOnce({ ...h.baseEnv, ...change });
+    check("S2", r.status !== 0 && r.out.includes(key), `boot with bad ${key} exits ${r.status} and names it`);
   }
 
-  // S1: boots and answers /healthz.
-  container = docker(["run", "-d", ...HOST_GW, "-p", "127.0.0.1::8080", ...envArgs(baseEnv), IMAGE]);
-  const port = docker(["port", container, "8080/tcp"]).split("\n")[0]!.split(":").pop()!;
-  const base = `http://127.0.0.1:${port}`;
-  let health = 0;
-  for (let i = 0; i < 120 && health !== 200; i += 1) {
-    health = await fetch(`${base}/healthz`).then((r) => r.status, () => 0);
-    if (health !== 200) await new Promise((r) => setTimeout(r, 250));
-  }
-  check("S1", health === 200, `GET /healthz → ${health}`);
+  // S1: boots (account routes off, the production default) and answers /healthz.
+  api = await h.startApi();
+  const base = api.base;
+  check("S1", (await fetch(`${base}/healthz`)).status === 200, "GET /healthz → 200");
 
   let ipN = 0;
   const ip = (): string => `203.0.113.${(ipN += 1)}`;
-  const post = (path: string, body: unknown, headers: Record<string, string> = {}): Promise<Response> =>
-    fetch(`${base}${path}`, {
+  const postTo = (b: string, path: string, body: unknown, headers: Record<string, string> = {}): Promise<Response> =>
+    fetch(`${b}${path}`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-forwarded-for": ip(), origin: SITE, ...headers },
       body: JSON.stringify(body),
     });
+  const post = (path: string, body: unknown, headers: Record<string, string> = {}): Promise<Response> => postTo(base, path, body, headers);
 
-  const pool = new pg.Pool({ connectionString: db.getConnectionUri() });
-  pool.on("error", () => {});
-  // S3: signup → number + welcome email with a remove link → details save → repeat is idempotent.
+  // S3: signup → number + welcome email (over TLS) with a remove link → details save → repeat is idempotent.
   const j1 = await post("/api/waitlist", { name: "Rosa", email: "rosa@bloom.test" });
   const a = (await j1.json()) as { number: number; detailsToken: string };
   const mail = sent[0];
   const removeUrl = mail?.text.match(/https:\/\/api\.skovern\.com\/waitlist\/remove\?t=[\w-]{43}/)?.[0];
   check("S3", j1.status === 201 && a.number === 1, `step 1 → ${j1.status} #${a.number}`);
-  check("S3", mail?.to === "rosa@bloom.test" && mail.auth === "Bearer re_smoke_key" && !!removeUrl, "welcome reached fake Resend with a remove link");
+  check("S3", mail?.to === "rosa@bloom.test" && mail.auth === "Bearer re_smoke_key" && !!removeUrl, "welcome reached fake Resend over https with a remove link");
+  check("S3", mail?.text.startsWith("Hi Rosa,\n") === true, "the welcome greets with the first name only");
   const det = await post("/api/waitlist/details", { detailsToken: a.detailsToken, jobTitle: "Owner", businessType: "florist", url: "bloom.test" });
   check("S3", det.status === 204, `details saved → ${det.status}`);
   const j2 = await post("/api/waitlist", { name: "Rosa", email: "ROSA@bloom.test" });
-  const b = (await j2.json()) as { number: number };
+  const b = (await j2.json()) as { number: number; detailsToken: string };
   check("S3", j2.status === 201 && b.number === 1 && sent.length === 1, `repeat → #${b.number}, emails sent ${sent.length}`);
   const race = await Promise.all([1, 2].map(() => post("/api/waitlist", { name: "Kim", email: "race@bloom.test" }).then((r) => r.json() as Promise<{ number: number }>)));
   const raceMails = sent.filter((m) => m.to === "race@bloom.test").length;
   check("S3", race[0]!.number === race[1]!.number && raceMails === 1, `two joins at once → #${race[0]!.number}/#${race[1]!.number}, ${raceMails} welcome`);
-  const again = (await (await post("/api/waitlist", { name: "Rosa", email: "rosa@bloom.test" })).json()) as { detailsToken: string };
-  await post("/api/waitlist/details", { detailsToken: again.detailsToken, jobTitle: "PWNED", url: "evil.test" });
+  const decoy = await post("/api/waitlist/details", { detailsToken: b.detailsToken, jobTitle: "PWNED", url: "evil.test" });
   const kept = (await pool.query(`SELECT job_title, url FROM waitlist WHERE email = 'rosa@bloom.test'`)).rows[0] as { job_title: string; url: string };
-  check("S3", kept.job_title === "Owner" && kept.url === "https://bloom.test", `a later token can't change saved answers (${kept.job_title}, ${kept.url})`);
+  check("S3", decoy.status === 204 && kept.job_title === "Owner" && kept.url === "https://bloom.test", `a repeat join's token saves nothing (${decoy.status}, ${kept.job_title}, ${kept.url})`);
 
   // S4: each bad input is rejected with its own reason.
   const reject = async (path: string, body: unknown, field: string, label: string): Promise<void> => {
@@ -122,7 +83,8 @@ try {
   await reject("/api/waitlist", { name: "Rosa", email: "rosa@" }, "email", "bad email");
   await reject("/api/waitlist", { name: "x".repeat(81), email: "x@bloom.test" }, "name", "81-char name");
   await reject("/api/waitlist", { name: "Win <a href=x>cash</a>", email: "x@bloom.test" }, "name", "markup in the name");
-  await reject("/api/waitlist", { name: "Claim prize at evil.com", email: "x@bloom.test" }, "name", "domain in the name");
+  await reject("/api/waitlist", { name: "Claim at Refund.ICU", email: "x@bloom.test" }, "name", "domain in the name");
+  await reject("/api/waitlist", { name: "Pay at x.bond today", email: "x@bloom.test" }, "name", "one-letter domain in the name");
   await reject("/api/waitlist/details", { detailsToken: a.detailsToken, url: "javascript:alert(1)" }, "url", "javascript: URL");
   await reject("/api/waitlist/details", { detailsToken: a.detailsToken, businessType: "casino" }, "businessType", "unknown business type");
   await pool.query(`UPDATE waitlist_tokens SET expires_at = now() - interval '1 minute' WHERE kind = 'details'`);
@@ -150,18 +112,28 @@ try {
     check("S5", want ? acao === origin : acao === null, `${origin} → ACAO ${acao ?? "(none)"}`);
   }
 
-  // S6: 429 past the limit; rotating the client-supplied XFF prefix doesn't help.
-  const flood = async (path: string, body: unknown, n: number): Promise<number[]> => {
+  // S12: a foreign Origin is refused on the JSON and form paths; non-JSON bodies get 415.
+  const foreignJson = await post("/api/waitlist", { name: "Eve", email: "eve@evil.test" }, { origin: "https://evil.test" });
+  const foreignForm = await fetch(`${base}/api/waitlist`, {
+    method: "POST",
+    redirect: "manual",
+    headers: { "content-type": "application/x-www-form-urlencoded", origin: "https://evil.test", "x-forwarded-for": ip() },
+    body: "name=Eve&email=eve%40evil.test",
+  });
+  check("S12", foreignJson.status === 403 && foreignForm.status === 403, `foreign Origin → JSON ${foreignJson.status}, form ${foreignForm.status}`);
+  const plain = await post("/api/waitlist", { name: "Tim", email: "tim@bloom.test" }, { "content-type": "text/plain" });
+  check("S12", plain.status === 415, `text/plain → ${plain.status}`);
+
+  // S6: 429 past the limit (3 per 10 minutes); rotating the client-supplied XFF prefix doesn't help.
+  const flood = async (b: string, path: string, body: unknown, n: number): Promise<number[]> => {
     const out: number[] = [];
     for (let i = 0; i < n; i += 1) {
-      out.push((await post(path, body, { "x-forwarded-for": `10.0.${i}.1, 198.51.100.77` })).status);
+      out.push((await postTo(b, path, body, { "x-forwarded-for": `10.0.${i}.1, 198.51.100.77` })).status);
     }
     return out;
   };
-  const wl = await flood("/api/waitlist", { name: "", email: "" }, 10);
-  check("S6", wl.slice(-2).every((s) => s === 429) && !wl.slice(0, 8).includes(429), `/api/waitlist statuses ${wl.join(",")}`);
-  const au = await flood("/auth/request", { email: "x@bloom.test" }, 8);
-  check("S6", au.slice(-2).every((s) => s === 429) && !au.slice(0, 6).includes(429), `/auth/request statuses ${au.join(",")}`);
+  const wl = await flood(base, "/api/waitlist", { name: "", email: "" }, 5);
+  check("S6", wl.slice(-2).every((s) => s === 429) && !wl.slice(0, 3).includes(429), `/api/waitlist statuses ${wl.join(",")}`);
 
   // S8: admin auth + CSV formula neutralization.
   const csvJoin = (await (await post("/api/waitlist", { name: "Csv", email: "csv@bloom.test" })).json()) as { detailsToken: string };
@@ -173,35 +145,50 @@ try {
   const csv = await (await fetch(`${base}/admin/waitlist.csv`, { headers: basic })).text();
   check("S8", csv.includes(`"'=HYPERLINK(""http://x"")"`) && !/(^|,)"=/m.test(csv), "CSV prefixes the formula with '");
 
+  // S11: before the beta, production mounts only the waitlist. Every account route is a 404.
+  const gone: [string, string][] = [
+    ["POST", "/auth/request"], ["POST", "/auth/verify"], ["POST", "/dm"], ["GET", "/dm/thread"], ["POST", "/dm/read"],
+    ["POST", "/publish/visibility"], ["GET", "/u/visibility/smoke1/og.png"], ["GET", "/u/news/x"], ["GET", "/news"],
+    ["GET", "/admin/dm"], ["POST", "/admin/dm/reply"], ["POST", "/admin/news"],
+  ];
+  for (const [method, path] of gone) {
+    const r = await fetch(`${base}${path}`, { method, headers: { "content-type": "application/json" }, body: method === "POST" ? "{}" : undefined });
+    check("S11", r.status === 404, `${method} ${path} → ${r.status}`);
+  }
+
+  // With ACCOUNT_ROUTES=1 (the beta), the same image serves them, rate-limited.
+  accounts = await h.startApi({ ACCOUNT_ROUTES: "1" });
+  const au = await flood(accounts.base, "/auth/request", { email: "x@bloom.test" }, 8);
+  check("S6", au.slice(-2).every((s) => s === 429) && !au.slice(0, 6).includes(429), `/auth/request statuses ${au.join(",")}`);
+
   // S9: the OG card renders inside the image (resvg native + bundled font) and caches.
   await pool.query(
     `INSERT INTO published_visibility (id, account_id, business, score, competitors) VALUES ('smoke1', 'acct', 'Bloom & Vine', 72, '["Petal Co"]')`,
   );
-  const og1 = await fetch(`${base}/u/visibility/smoke1/og.png`);
+  const og1 = await fetch(`${accounts.base}/u/visibility/smoke1/og.png`);
   const png = Buffer.from(await og1.arrayBuffer());
-  const og2 = await fetch(`${base}/u/visibility/smoke1/og.png`);
+  const og2 = await fetch(`${accounts.base}/u/visibility/smoke1/og.png`);
   check("S9", og1.status === 200 && png.subarray(1, 4).toString() === "PNG" && png.length > 5000, `og.png ${og1.status}, ${png.length} bytes`);
   check("S9", og1.headers.get("x-skovern-cache") === "miss" && og2.headers.get("x-skovern-cache") === "hit", "second hit served from cache");
-  await pool.end();
 
   // S10: SIGTERM drains and exits within 10 s, even with an idle keep-alive socket open.
-  const sock = connect(Number(port), "127.0.0.1");
+  const sock = connect(api.port, "127.0.0.1");
   await new Promise<void>((r) => sock.once("connect", () => r()));
   sock.write(`GET /healthz HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\n`);
   await new Promise((r) => setTimeout(r, 300));
   const t0 = Date.now();
-  docker(["stop", "-t", "15", container]);
+  docker(["stop", "-t", "15", api.id]);
   const took = (Date.now() - t0) / 1000;
-  const code = docker(["inspect", container, "--format", "{{.State.ExitCode}}"]);
+  const code = docker(["inspect", api.id, "--format", "{{.State.ExitCode}}"]);
   sock.destroy();
   check("S10", took < 10 && code === "0", `stopped in ${took.toFixed(1)} s, exit ${code}`);
   console.log("\nAll smoke clauses passed.");
 } catch (err) {
-  if (container) console.error(spawnSync("docker", ["logs", container], { encoding: "utf8" }).stdout);
+  for (const c of [api, accounts]) if (c) console.error(c.logs());
   console.error((err as Error).message);
   process.exitCode = 1;
 } finally {
-  if (container) spawnSync("docker", ["rm", "-f", container]);
-  await db.stop();
-  resend.close();
+  await pool.end();
+  await h.close();
 }
+
