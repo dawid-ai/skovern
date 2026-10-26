@@ -85,18 +85,57 @@ describe("W3: blog posts", () => {
   });
 
   it("fails the build when a post is missing front matter", () => {
-    const tmp = join(root, ".w3-tmp");
-    rmSync(tmp, { recursive: true, force: true });
-    mkdirSync(tmp);
-    for (const p of ["src", "astro.config.mjs", "tsconfig.json"]) cpSync(join(root, p), join(tmp, p), { recursive: true });
-    writeFileSync(join(tmp, "src/content/blog/no-front-matter.md"), "Just a body, no title or date.\n");
-    const astro = join(root, "node_modules/astro/bin/astro.mjs");
-    expect(existsSync(astro)).toBe(true);
-    const r = spawnSync(process.execPath, [astro, "build", "--root", tmp], { encoding: "utf8", timeout: 170_000 });
-    rmSync(tmp, { recursive: true, force: true });
-    const out = `${r.stdout}${r.stderr}`;
+    const r = buildWith({ "no-front-matter.md": "Just a body, no title or date.\n" });
     expect(r.status).not.toBe(0);
-    expect(out).toMatch(/no-front-matter/);
-    expect(out).toMatch(/title/);
+    expect(r.out).toMatch(/no-front-matter/);
+    expect(r.out).toMatch(/title/);
   });
 });
+
+describe("JSON-LD can't be broken out of", () => {
+  it("keeps a </script> in a post title inside the JSON", () => {
+    const title = 'When "</script><script>alert(1)</script>" shows up';
+    const r = buildWith({
+      "script-title.md": `---
+title: '${title}'
+description: A post whose title tries to close the JSON-LD tag early.
+date: 2026-10-20
+category: guides
+---
+
+Body.
+`,
+    });
+    expect(r.status, r.out).toBe(0);
+    const page = r.read("blog/script-title/index.html");
+    const block = page.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)?.[1] ?? "";
+    expect(block).not.toMatch(/<\/script/i);
+    expect((JSON.parse(block) as { headline: string }).headline).toBe(title);
+    // Outside attribute values (where "<" is inert text), no injected tag survives.
+    expect(page.replace(/"[^"]*"/g, '""')).not.toMatch(/<script>alert\(1\)/);
+    // A build outside the dev server always points the form at production.
+    expect(page).toContain('action="https://api.skovern.com/api/waitlist"');
+  });
+});
+
+/** Build a copy of the site with extra posts; returns the exit code, the
+ *  output, and a reader for the built files. Cleans up after itself. */
+function buildWith(posts: Record<string, string>): { status: number | null; out: string; read: (p: string) => string } {
+  const tmp = join(root, ".w3-tmp");
+  rmSync(tmp, { recursive: true, force: true });
+  mkdirSync(tmp);
+  for (const p of ["src", "astro.config.mjs", "tsconfig.json"]) cpSync(join(root, p), join(tmp, p), { recursive: true });
+  for (const [name, text] of Object.entries(posts)) writeFileSync(join(tmp, "src/content/blog", name), text);
+  const astro = join(root, "node_modules/astro/bin/astro.mjs");
+  expect(existsSync(astro)).toBe(true);
+  const r = spawnSync(process.execPath, [astro, "build", "--root", tmp], { encoding: "utf8", timeout: 170_000 });
+  const files = new Map<string, string>();
+  const read = (p: string): string => {
+    if (!files.has(p)) files.set(p, readFileSync(join(tmp, "dist", p), "utf8"));
+    return files.get(p) ?? "";
+  };
+  // Read what the caller will need before cleaning up: the built posts.
+  if (r.status === 0) for (const name of Object.keys(posts)) read(`blog/${name.replace(/\.md$/, "")}/index.html`);
+  rmSync(tmp, { recursive: true, force: true });
+  return { status: r.status, out: `${r.stdout}${r.stderr}`, read };
+}

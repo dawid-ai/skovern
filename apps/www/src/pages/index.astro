@@ -1,4 +1,5 @@
 ---
+import { jsonLd } from "../lib/json-ld";
 import Base from "../layouts/Base.astro";
 import HomeHero from "../components/HomeHero.astro";
 import HomePrivate from "../components/HomePrivate.astro";
@@ -22,7 +23,7 @@ const ld = {
 };
 ---
 <Base title="Skovern · Free AI for your shop. You control what leaves." joinHref="#waitlist">
-  <script slot="head" type="application/ld+json" set:html={JSON.stringify(ld)} />
+  <script slot="head" type="application/ld+json" set:html={jsonLd(ld)} />
   <HomeHero />
   <HomePrivate />
   <HomeReceipts />

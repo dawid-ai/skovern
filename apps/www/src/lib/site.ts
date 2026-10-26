@@ -4,7 +4,7 @@ export const SITE_URL = "https://skovern.com";
 export const SITE_NAME = "Skovern";
 
 const fromEnv = (import.meta.env.PUBLIC_API_URL as string | undefined)?.trim();
-export const API_URL = (fromEnv || (import.meta.env.DEV ? "http://127.0.0.1:41787" : "https://api.skovern.com")).replace(
+export const API_URL = (fromEnv || (import.meta.env.MODE === "development" ? "http://127.0.0.1:41787" : "https://api.skovern.com")).replace(
   /\/$/,
   "",
 );

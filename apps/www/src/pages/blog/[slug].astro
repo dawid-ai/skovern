@@ -1,4 +1,5 @@
 ---
+import { jsonLd } from "../../lib/json-ld";
 import { render } from "astro:content";
 import Base from "../../layouts/Base.astro";
 import Cover from "../../components/Cover.astro";
@@ -49,7 +50,7 @@ const ld = {
     <meta name="author" content={by.name}>
     <meta property="article:published_time" content={iso(d.date)}>
     <meta property="article:section" content={categoryLabel(d.category)}>
-    <script type="application/ld+json" set:html={JSON.stringify(ld)} />
+    <script type="application/ld+json" set:html={jsonLd(ld)} />
   </Fragment>
   <div class="progress" id="progress" aria-hidden="true"></div>
   <article>
