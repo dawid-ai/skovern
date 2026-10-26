@@ -37,9 +37,6 @@ for (const f of frames) webp(join(src, "frames", f), join(pub, "hero", f.replace
 webp(join(src, "still.png"), join(pub, "img", "icon-still.webp"), 88, true);
 webp(join(src, "front.png"), join(pub, "img", "icon-front.webp"), 88);
 webp(join(src, "front-dark.png"), join(pub, "img", "icon-front-dark.webp"), 88);
-// A small PNG of the front still, kept next to the script for the H1 glyph test
-// (test/icon.test.ts measures the S's bowls from it).
-ff("-i", join(src, "front.png"), "-vf", "scale=256:256", "-pix_fmt", "rgba", join(dirname(fileURLToPath(import.meta.url)), "front-check.png"));
 // The Open Graph card is opaque: flatten the transparent render onto the stage grey.
 ff("-f", "lavfi", "-i", "color=c=0xf5f5f7:s=1200x630", "-i", join(src, "og.png"),
   "-filter_complex", "[0][1]overlay=format=auto,format=rgb24", "-frames:v", "1", join(pub, "og.png"));

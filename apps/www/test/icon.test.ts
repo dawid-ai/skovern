@@ -1,7 +1,6 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { readPng } from "./png";
 
 // H1 (the S is a real typeface glyph, the right way up) and H4 (weight).
 
@@ -15,36 +14,8 @@ describe("H1: the S", () => {
     expect(py).toMatch(/cu\.body = "S"/);
     expect(py).not.toMatch(/def s_stroke/);
   });
-
-  it("has a bottom bowl at least as wide as the top bowl on the rendered front still", () => {
-    const { width, height, rgba } = readPng(readFileSync(join(root, "art", "front-check.png")));
-    // The glyph is the near-white ink in the middle of the tile (the glass rim's
-    // highlights are near-white too, so look only at the centre).
-    const x0 = Math.floor(width * 0.22), x1 = Math.ceil(width * 0.78);
-    const y0 = Math.floor(height * 0.15), y1 = Math.ceil(height * 0.85);
-    const rows: { y: number; w: number }[] = [];
-    for (let y = y0; y < y1; y += 1) {
-      let lo = -1, hi = -1;
-      for (let x = x0; x < x1; x += 1) {
-        const o = (y * width + x) * 4;
-        const white = (rgba[o] ?? 0) > 225 && (rgba[o + 1] ?? 0) > 215 && (rgba[o + 2] ?? 0) > 200;
-        if (white) {
-          if (lo < 0) lo = x;
-          hi = x;
-        }
-      }
-      if (lo >= 0) rows.push({ y, w: hi - lo });
-    }
-    expect(rows.length).toBeGreaterThan(height * 0.2);
-    const top = rows[0]!.y, bottom = rows.at(-1)!.y, mid = (top + bottom) / 2;
-    const topBowl = Math.max(...rows.filter((r) => r.y < mid).map((r) => r.w));
-    const bottomBowl = Math.max(...rows.filter((r) => r.y > mid).map((r) => r.w));
-    // A typeface S is wider at the bottom. Strictly wider, because the old
-    // hand-drawn S had two equal bowls (88 px and 88 px on this still) and read
-    // as upside down.
-    expect(bottomBowl).toBeGreaterThanOrEqual(topBowl);
-    expect(bottomBowl).toBeGreaterThan(topBowl);
-  });
+  // The bowls and the mirror check run on the SHIPPED WebP renders, decoded by
+  // the browser: e2e/icon.spec.ts, "H1: the shipped renders' S".
 });
 
 describe("H4: weight", () => {
