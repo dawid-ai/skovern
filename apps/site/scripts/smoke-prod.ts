@@ -1,8 +1,9 @@
 // Hand-validation after deploy (not part of the loop metric): a subset of the
 // image smoke (S1, S3, S5, S7) against the live api.
 //
-//   1. node apps/site/scripts/smoke-prod.ts https://api.skovern.com
-//        Signs up smoke+<time>@skovern.com and checks health, the number, and CORS.
+//   1. node apps/site/scripts/smoke-prod.ts https://api.skovern.com you+smoke@example.com
+//        Signs up that address (one you can read) and checks health, the number,
+//        and CORS. It uses up one waitlist number for good: numbers never repeat.
 //   2. Open that welcome email, copy its remove link, then:
 //      node apps/site/scripts/smoke-prod.ts https://api.skovern.com --remove "<link>"
 //        Checks GET only shows the button, then POST removes the test address.
@@ -10,9 +11,11 @@
 // Set SKOVERN_ADMIN_TOKEN in the environment to also confirm the row through
 // /admin/waitlist.csv. The token is read from the environment, never printed.
 
-const [base = "", flag, link] = process.argv.slice(2);
-if (!/^https:\/\/[^/]+$/.test(base)) {
-  console.error("Usage: node smoke-prod.ts https://api.skovern.com [--remove <link>]");
+const [base = "", second = "", link] = process.argv.slice(2);
+const removing = second === "--remove";
+if (!/^https:\/\/[^/]+$/.test(base) || (removing ? !link : !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(second))) {
+  console.error("Usage: node smoke-prod.ts https://api.skovern.com <test address you can read>");
+  console.error("       node smoke-prod.ts https://api.skovern.com --remove <link from the welcome email>");
   process.exit(2);
 }
 const admin = process.env["SKOVERN_ADMIN_TOKEN"];
@@ -30,7 +33,7 @@ async function listed(email: string): Promise<boolean | null> {
   return (await r.text()).includes(`"${email}"`);
 }
 
-if (flag === "--remove") {
+if (removing) {
   const url = new URL(link ?? "");
   const t = url.searchParams.get("t") ?? "";
   const g = await fetch(`${base}/waitlist/remove?t=${encodeURIComponent(t)}`);
@@ -44,7 +47,7 @@ if (flag === "--remove") {
 } else {
   const h = await fetch(`${base}/healthz`);
   check("S1", h.status === 200, `GET /healthz → ${h.status}`);
-  const email = `smoke+${Date.now()}@skovern.com`;
+  const email = second;
   const r = await fetch(`${base}/api/waitlist`, {
     method: "POST",
     headers: { "content-type": "application/json", origin: "https://skovern.com" },

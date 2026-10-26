@@ -150,9 +150,11 @@ docker build -f apps/www/Dockerfile -t skovern-www-smoke .
 ### After a deploy
 
 1. `curl https://api.skovern.com/healthz` and `curl https://skovern.com/healthz` both say ok.
-2. `node apps/site/scripts/smoke-prod.ts https://api.skovern.com` signs up a
-   `smoke+<time>@skovern.com` address and checks the number and CORS. Open that welcome email
-   and run the script again with `--remove "<link>"` to check the remove page and delete it.
+2. `node apps/site/scripts/smoke-prod.ts https://api.skovern.com <address>` signs up a test
+   address you can read (there's no inbox at `skovern.com`) and checks the number and CORS.
+   Open that welcome email and run the script again with `--remove "<link>"` to check the
+   remove page and delete the address. The test uses up one waitlist number for good, because
+   numbers never repeat: the next real signup gets the one after it.
 3. Open `https://api.skovern.com/admin/waitlist` and sign in with any user name and the
    `SKOVERN_ADMIN_TOKEN` value as the password. It's in the Railway dashboard under the `api`
    service's **Variables**.
