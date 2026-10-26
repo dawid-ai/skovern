@@ -2,27 +2,20 @@
 import Base from "../../layouts/Base.astro";
 import "../../styles/page.css";
 
-// Where the waitlist form lands when it runs without JavaScript: the api
-// redirects here with ?n=<number> or ?error=<field>.
+// Where the waitlist form lands when it runs without JavaScript, after the api
+// saved the signup (it redirects here with ?n=<number> only on success).
+// Refusals go to /waitlist/oops/ instead.
 ---
 <Base title="You're on the list · Skovern" description="You're on the Skovern waitlist." noindex>
-  <div class="page" id="done" data-state="ok">
-    <div data-ok>
-      <p class="eyebrow">Waitlist</p>
-      <h1>You're on the list.</h1>
-      <p class="done-num" id="done-num" aria-live="polite"></p>
-      <p class="lede">We'll email you when your invite is ready. Check your inbox for a welcome note. It has a link to leave the list, if you ever want to.</p>
-      <div class="actions"><a class="pill fill md" href="/">Back to Skovern</a><a class="pill line md" href="/blog/">Read the blog</a></div>
-    </div>
-    <div data-error hidden>
-      <p class="eyebrow">Waitlist</p>
-      <h1>That didn't go through.</h1>
-      <p class="lede" id="done-why">Something in the form needs a fix.</p>
-      <div class="actions"><a class="pill fill md" href="/#waitlist">Try again</a></div>
-    </div>
+  <div class="page">
+    <p class="eyebrow">Waitlist</p>
+    <h1>You're on the list.</h1>
+    <p class="done-num" id="done-num" aria-live="polite"></p>
+    <p class="lede">We emailed you your number. It has a link to leave the list, if you ever want to. We'll write again when your invite is ready.</p>
+    <div class="actions"><a class="pill fill md" href="/">Back to Skovern</a><a class="pill line md" href="/blog/">Read the blog</a></div>
   </div>
 </Base>
 <script>
-  import { startDone } from "../../scripts/done";
-  startDone();
+  import { showNumber } from "../../scripts/done";
+  showNumber();
 </script>

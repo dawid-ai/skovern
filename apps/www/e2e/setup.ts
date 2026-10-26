@@ -56,6 +56,10 @@ export default async function setup(): Promise<() => Promise<void>> {
     NODE_ENV: "development",
     RESEND_API_KEY: "",
     CORS_ORIGINS: wwwUrl,
+    SITE_URL: wwwUrl,
+    // Only the no-JS tests send X-Forwarded-For (plain form posts, so no CORS
+    // preflight); the JS tests fall back to the socket address.
+    TRUST_PROXY: "1",
     SKOVERN_ADMIN_TOKEN: adminPassword,
   });
   await waitFor(`${apiUrl}/healthz`, "api", api.child, api.log);

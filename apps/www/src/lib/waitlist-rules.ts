@@ -19,9 +19,14 @@ export const BUSINESS_TYPES = [
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const URLISH = /^(https?:\/\/)?([a-z0-9-]+\.)+[a-z]{2,}(:\d+)?(\/\S*)?$/i;
 
+const NAME = /^[\p{L}\p{M}'’ .-]{1,80}$/u;
+const DOMAIN_LIKE = /\.\p{L}{2,}/u;
+
 export function nameError(name: string): string {
   if (!name) return "Tell us what to call you.";
   if (name.length > 80) return "That name is a bit long. A first name is plenty.";
+  if (!NAME.test(name)) return "Use just letters in your name, please.";
+  if (DOMAIN_LIKE.test(name)) return "That looks like a web address. Just your name, please.";
   return "";
 }
 

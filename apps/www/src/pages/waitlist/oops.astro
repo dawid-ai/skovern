@@ -1,0 +1,20 @@
+---
+import Base from "../../layouts/Base.astro";
+import "../../styles/page.css";
+
+// Where the no-JS waitlist form lands when the api refused the signup (bad
+// input, too many tries). The default text is true for every refusal; with
+// JavaScript it names the reason from ?error=.
+---
+<Base title="That didn't go through · Skovern" description="Your waitlist signup didn't go through." noindex>
+  <div class="page">
+    <p class="eyebrow">Waitlist</p>
+    <h1>That didn't go through.</h1>
+    <p class="lede" id="oops-why">Check your email address and try again.</p>
+    <div class="actions"><a class="pill fill md" href="/#waitlist">Try again</a></div>
+  </div>
+</Base>
+<script>
+  import { explainOops } from "../../scripts/done";
+  explainOops();
+</script>

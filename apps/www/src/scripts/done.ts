@@ -1,22 +1,20 @@
-// /waitlist/done/: show the number (or the problem) the api sent back.
+// The no-JS landing pages, improved when scripts run: show the number on the
+// done page, and the specific reason on the oops page.
 const WHY: Record<string, string> = {
-  name: "We need your name, and a short one is plenty.",
-  email: "That email looked off. Check for a typo and try again.",
+  name: "Check your name: letters only, and a short one is plenty. Then try again.",
+  email: "Check your email address for a typo, and try again.",
+  busy: "Lots of tries from here. Wait a few minutes and try again.",
 };
 
-export function startDone(): void {
-  const q = new URLSearchParams(location.search);
-  const n = q.get("n");
-  const error = q.get("error");
-  const ok = document.querySelector<HTMLElement>("[data-ok]");
-  const bad = document.querySelector<HTMLElement>("[data-error]");
-  if (error && ok && bad) {
-    ok.hidden = true;
-    bad.hidden = false;
-    const why = document.getElementById("done-why");
-    if (why) why.textContent = WHY[error] ?? "Something in the form needs a fix.";
-    return;
-  }
+export function showNumber(): void {
+  const n = new URLSearchParams(location.search).get("n");
   const num = document.getElementById("done-num");
   if (num && n && /^\d{1,9}$/.test(n)) num.textContent = `#${n}`;
+}
+
+export function explainOops(): void {
+  const error = new URLSearchParams(location.search).get("error") ?? "";
+  const why = document.getElementById("oops-why");
+  const text = WHY[error];
+  if (why && text) why.textContent = text;
 }
