@@ -18,5 +18,7 @@ describe("welcome greeting", () => {
   it("never puts a dotted word in the greeting", () => {
     expect(greetingName("secure.login.vip")).toBeNull();
     expect(greetingName("Pay x.bond")).toBe("Pay");
+    // The name rule lets one-letter hosts through; the greeting keeps them out of the email.
+    expect(welcomeText({ name: "x.bond", number: 1, removeUrl: "https://a.test/r" }).text).not.toContain("x.bond");
   });
 });

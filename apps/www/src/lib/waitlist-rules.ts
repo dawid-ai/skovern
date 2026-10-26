@@ -26,13 +26,12 @@ const HAS_LETTER = /\p{L}/u;
 /** Two or more letters, a period, two or more letters: "refund.icu", "evil .com",
  *  "Refund.ICU". Initials don't match ("J.Smith", "A.J. Okafor", "St. Clair"). */
 const WORD_DOT_WORD = /\p{L}{2,}\s*\.\p{L}{2,}/iu;
-/** A lowercase letter, a period, two or more lowercase letters: a one-letter host
- *  like "x.bond" or "x.co". A capital after the period reads as an initial. */
-const LOWER_DOT_LOWER = /\p{Ll}\.\p{Ll}{2,}/u;
 
-/** True when a name reads like a web address. */
+/** True when a name reads like a web address. A one-letter host ("x.bond") gets
+ *  through, because refusing it would refuse "mary j.blige" too; the welcome
+ *  email drops any word with a period (greetingName), so it never reaches a mailbox. */
 export function looksLikeDomain(name: string): boolean {
-  return WORD_DOT_WORD.test(name) || LOWER_DOT_LOWER.test(name);
+  return WORD_DOT_WORD.test(name);
 }
 
 export function nameError(name: string): string {

@@ -91,7 +91,7 @@ try {
   await reject("/api/waitlist", { name: "x".repeat(81), email: "x@bloom.test" }, "name", "81-char name");
   await reject("/api/waitlist", { name: "Win <a href=x>cash</a>", email: "x@bloom.test" }, "name", "markup in the name");
   await reject("/api/waitlist", { name: "Claim at Refund.ICU", email: "x@bloom.test" }, "name", "domain in the name");
-  await reject("/api/waitlist", { name: "Pay at x.bond today", email: "x@bloom.test" }, "name", "one-letter domain in the name");
+  await reject("/api/waitlist", { name: "Verify at secure.login.vip now", email: "x@bloom.test" }, "name", "dotted host in the name");
   await reject("/api/waitlist/details", { detailsToken: a.detailsToken, url: "javascript:alert(1)" }, "url", "javascript: URL");
   await reject("/api/waitlist/details", { detailsToken: a.detailsToken, businessType: "casino" }, "businessType", "unknown business type");
   await pool.query(`UPDATE waitlist_tokens SET expires_at = now() - interval '1 minute' WHERE kind = 'details'`);
