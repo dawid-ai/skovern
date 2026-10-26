@@ -50,7 +50,7 @@ export class RateLimiter {
 
 /** The public limits. Signups are rare per person; these stop scripted floods. */
 export const LIMITS = {
-  waitlist: { max: 8, windowMs: 10 * 60_000 },
+  waitlist: { max: 3, windowMs: 10 * 60_000 },
   waitlistDetails: { max: 20, windowMs: 10 * 60_000 },
   waitlistRemove: { max: 20, windowMs: 10 * 60_000 },
   authRequest: { max: 6, windowMs: 10 * 60_000 },

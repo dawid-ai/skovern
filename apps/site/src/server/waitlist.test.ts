@@ -150,9 +150,39 @@ describe("waitlist API", () => {
     expect(await form("name=Nia&email=nia%40bloom", freshIp())).toBe("https://skovern.com/waitlist/oops/?error=email");
     const ip = "192.0.2.200";
     const spent: (string | null)[] = [];
-    for (let i = 0; i < 9; i += 1) spent.push(await form("name=&email=", ip));
-    expect(spent.slice(0, 8).every((l) => l === "https://skovern.com/waitlist/oops/?error=name")).toBe(true);
-    expect(spent[8]).toBe("https://skovern.com/waitlist/oops/?error=busy");
+    for (let i = 0; i < 4; i += 1) spent.push(await form("name=&email=", ip));
+    expect(spent.slice(0, 3).every((l) => l === "https://skovern.com/waitlist/oops/?error=name")).toBe(true);
+    expect(spent[3]).toBe("https://skovern.com/waitlist/oops/?error=busy");
+  });
+
+  it("refuses a foreign Origin on the JSON and the form path", async () => {
+    const json = await post("/api/waitlist", { name: "Eve", email: "eve@evil.test" }, { origin: "https://evil.test" });
+    expect(json.status).toBe(403);
+    expect(json.headers.get("access-control-allow-origin")).toBeNull();
+    const details = await post("/api/waitlist/details", { detailsToken: "a".repeat(43), jobTitle: "x" }, { origin: "https://evil.test" });
+    expect(details.status).toBe(403);
+    const form = await fetch(`${server.url}/api/waitlist`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { "content-type": "application/x-www-form-urlencoded", origin: "https://evil.test", "x-forwarded-for": freshIp() },
+      body: "name=Eve&email=eve%40evil.test",
+    });
+    expect(form.status).toBe(403);
+    expect((await store.list()).some((x) => x.email === "eve@evil.test")).toBe(false);
+  });
+
+  it.each([
+    ["/api/waitlist", "text/plain"],
+    ["/api/waitlist", ""],
+    ["/api/waitlist/details", "text/plain"],
+    ["/api/waitlist/details", "application/x-www-form-urlencoded"],
+  ])("answers %s with %j as 415", async (path, type) => {
+    const r = await fetch(`${server.url}${path}`, {
+      method: "POST",
+      headers: { ...(type ? { "content-type": type } : {}), "x-forwarded-for": freshIp() },
+      body: JSON.stringify({ name: "Tim", email: "tim@bloom.shop" }),
+    });
+    expect(r.status).toBe(415);
   });
 
   it("stores nothing when the honeypot is filled", async () => {
@@ -207,12 +237,12 @@ describe("waitlist API", () => {
 
   it("limits per IP on the rightmost X-Forwarded-For entry", async () => {
     const statuses: number[] = [];
-    for (let i = 0; i < 10; i += 1) {
+    for (let i = 0; i < 5; i += 1) {
       const r = await post("/api/waitlist", { name: "", email: "" }, { "x-forwarded-for": `10.9.9.${i}, 203.0.113.7` });
       statuses.push(r.status);
     }
-    expect(statuses.slice(0, 8).every((s) => s === 400)).toBe(true);
-    expect(statuses.slice(8)).toEqual([429, 429]);
+    expect(statuses.slice(0, 3).every((s) => s === 400)).toBe(true);
+    expect(statuses.slice(3)).toEqual([429, 429]);
   });
 });
 

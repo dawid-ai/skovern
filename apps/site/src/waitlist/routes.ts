@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { HttpResult } from "../auth/handlers.js";
-import { clientIp, isFormPost, readForm, readJson, send } from "../http.js";
+import { clientIp, readForm, readJson, send } from "../http.js";
 import { LIMITS, type Limit, type RateLimiter } from "../server/rate-limit.js";
 import { handleAdminWaitlist, handleAdminWaitlistCsv } from "./admin.js";
 import { handleDetails, handleJoin, handleRemove, handleRemovePage, type WaitlistDeps } from "./handlers.js";
@@ -19,6 +19,8 @@ export interface WaitlistRouteContext {
 }
 
 const BAD_REQUEST: HttpResult = { status: 400, body: { ok: false, message: "Bad request." } };
+const FOREIGN_ORIGIN: HttpResult = { status: 403, body: { ok: false, message: "This form only works on skovern.com." } };
+const UNSUPPORTED: HttpResult = { status: 415, body: { ok: false, message: "Send JSON." } };
 const USE = (m: string): HttpResult => ({ status: 405, body: { ok: false, message: `Use ${m}.` } });
 
 /** CORS headers for an allowed browser origin; none at all for anyone else. */
@@ -80,7 +82,16 @@ export async function routeWaitlist(
     }
     if (method !== "POST") return reply(USE("POST"), cors);
     const join = path === "/api/waitlist";
-    const form = join && isFormPost(req);
+    // A browser always sends Origin on a cross-site POST. If one is there, it
+    // must be ours, for the JSON calls and the no-JS form alike, so no other
+    // site can post signups (and welcome emails) through a visitor's browser.
+    const origin = req.headers.origin;
+    if (origin !== undefined && !ctx.corsOrigins.includes(origin)) return reply(FOREIGN_ORIGIN);
+    // JSON only, except the no-JS signup form. Anything else (text/plain, the
+    // "simple" type a cross-site form or beacon can send) is refused.
+    const type = (req.headers["content-type"] ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
+    const form = join && type === "application/x-www-form-urlencoded";
+    if (!form && type !== "application/json") return reply(UNSUPPORTED, cors);
     const over = limited(ctx, req, join ? "waitlist" : "details", join ? LIMITS.waitlist : LIMITS.waitlistDetails);
     let result: HttpResult;
     if (over) {

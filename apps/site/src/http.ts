@@ -66,8 +66,3 @@ export function clientIp(req: IncomingMessage, trustProxy: boolean): string {
   }
   return req.socket.remoteAddress ?? "unknown";
 }
-
-/** True when the request body is an HTML form post (the no-JS waitlist path). */
-export function isFormPost(req: IncomingMessage): boolean {
-  return (req.headers["content-type"] ?? "").startsWith("application/x-www-form-urlencoded");
-}
