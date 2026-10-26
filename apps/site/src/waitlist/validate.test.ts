@@ -17,6 +17,14 @@ describe("checkSignup", () => {
     [{ name: "Rosa <b>hi</b>", email: "a@b.co" }, "name", "Use just letters in your name, please."],
     [{ name: "Win at https://x.co", email: "a@b.co" }, "name", "Use just letters in your name, please."],
     [{ name: "Visit bloom.shop now", email: "a@b.co" }, "name", "That looks like a web address. Just your name, please."],
+    [{ name: "evil.com", email: "a@b.co" }, "name", "That looks like a web address. Just your name, please."],
+    [{ name: "evil .com", email: "a@b.co" }, "name", "That looks like a web address. Just your name, please."],
+    [{ name: "x.co", email: "a@b.co" }, "name", "That looks like a web address. Just your name, please."],
+    [{ name: "Go to EVIL.COM", email: "a@b.co" }, "name", "That looks like a web address. Just your name, please."],
+    [{ name: "bloom.florist", email: "a@b.co" }, "name", "That looks like a web address. Just your name, please."],
+    [{ name: "...", email: "a@b.co" }, "name", "Use just letters in your name, please."],
+    [{ name: "' - .", email: "a@b.co" }, "name", "Use just letters in your name, please."],
+    [{ name: "‌‌", email: "a@b.co" }, "name", "Use just letters in your name, please."],
     [{ name: "Rosa" }, "email", "We need an email to save your spot."],
     [{ name: "Rosa", email: "rosa@" }, "email", "That email looks off. Check for a typo?"],
     [{ name: "Rosa", email: `${"a".repeat(250)}@b.co` }, "email", "That email looks off. Check for a typo?"],
@@ -28,7 +36,12 @@ describe("checkSignup", () => {
     expect(checkSignup({ name: "x".repeat(80), email: "a@b.co" }).ok).toBe(true);
   });
 
-  it.each(["Zoë O'Brien", "Anne-Marie", "José", "Dr. Ngozi", "Mary J. Blige", "Łukasz", "Aná", "Saoirse O’Neill"])(
+  it.each(["J.Smith", "Mary J.Blige", "Mehr‌naz", "مهر‌ناز", "A.J. Okafor", "St. Clair"])(
+    "accepts initials and joiners: %s",
+    (name) => expect(checkSignup({ name, email: "a@b.co" }).ok).toBe(true),
+  );
+
+  it.each(["Zoë O'Brien", "Anne-Marie", "José", "Dr. Ngozi", "Mary J. Blige","Łukasz", "Aná", "Saoirse O’Neill"])(
     "accepts the real name %s",
     (name) => expect(checkSignup({ name, email: "a@b.co" }).ok).toBe(true),
   );

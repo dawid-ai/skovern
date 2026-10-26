@@ -21,10 +21,20 @@ export const MAX_NAME = 80;
 export const MAX_JOB = 80;
 export const MAX_URL = 200;
 
-/** Letters (any language), combining marks, spaces, apostrophes, periods, hyphens. */
-const NAME = /^[\p{L}\p{M}'’ .-]{1,80}$/u;
-/** A period followed by two or more letters, like ".com" or "bloom.shop". */
-const DOMAIN_LIKE = /\.\p{L}{2,}/u;
+/** Letters (any language), combining marks, the zero-width non-joiner (Persian
+ *  names), spaces, apostrophes, periods, hyphens. At least one letter. */
+const NAME = /^[\p{L}\p{M}‌'’ .-]{1,80}$/u;
+const HAS_LETTER = /\p{L}/u;
+/** A period before a common web ending, like "evil.com" or "evil .com". */
+const KNOWN_TLD =
+  /\.\s*(?:com|net|org|info|biz|io|co|ai|app|dev|me|shop|store|site|online|xyz|top|link|click|live|ly|us|uk|ru|cn|de|fr|pl)(?![\p{L}\p{N}])/iu;
+/** One unbroken word ending in a lowercase ".<letters>", like "bloom.florist". */
+const BARE_DOMAIN = /^\S+\.\p{Ll}{2,24}$/u;
+
+/** True when a name reads like a web address. "J.Smith" and "Mary J. Blige" don't. */
+export function looksLikeDomain(name: string): boolean {
+  return KNOWN_TLD.test(name) || BARE_DOMAIN.test(name);
+}
 
 export interface FieldError {
   field: string;
@@ -59,8 +69,8 @@ export function checkSignup(body: unknown): Checked<SignupInput> {
   // The name goes into the welcome email ("Hi Rosa,"), so it may hold only
   // letters, spaces, and the marks real names use. That keeps links, markup, and
   // control characters out of a message we send to whatever address was typed.
-  if (!NAME.test(name)) return fail("name", "Use just letters in your name, please.");
-  if (DOMAIN_LIKE.test(name)) return fail("name", "That looks like a web address. Just your name, please.");
+  if (!NAME.test(name) || !HAS_LETTER.test(name)) return fail("name", "Use just letters in your name, please.");
+  if (looksLikeDomain(name)) return fail("name", "That looks like a web address. Just your name, please.");
   const rawEmail = str(body, "email");
   if (typeof rawEmail !== "string" || !rawEmail.trim()) {
     return fail("email", "We need an email to save your spot.");

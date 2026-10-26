@@ -19,14 +19,26 @@ export const BUSINESS_TYPES = [
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const URLISH = /^(https?:\/\/)?([a-z0-9-]+\.)+[a-z]{2,}(:\d+)?(\/\S*)?$/i;
 
-const NAME = /^[\p{L}\p{M}'’ .-]{1,80}$/u;
-const DOMAIN_LIKE = /\.\p{L}{2,}/u;
+/** Letters (any language), combining marks, the zero-width non-joiner (Persian
+ *  names), spaces, apostrophes, periods, hyphens. At least one letter. */
+const NAME = /^[\p{L}\p{M}‌'’ .-]{1,80}$/u;
+const HAS_LETTER = /\p{L}/u;
+/** A period before a common web ending, like "evil.com" or "evil .com". */
+const KNOWN_TLD =
+  /\.\s*(?:com|net|org|info|biz|io|co|ai|app|dev|me|shop|store|site|online|xyz|top|link|click|live|ly|us|uk|ru|cn|de|fr|pl)(?![\p{L}\p{N}])/iu;
+/** One unbroken word ending in a lowercase ".<letters>", like "bloom.florist". */
+const BARE_DOMAIN = /^\S+\.\p{Ll}{2,24}$/u;
+
+/** True when a name reads like a web address. "J.Smith" and "Mary J. Blige" don't. */
+export function looksLikeDomain(name: string): boolean {
+  return KNOWN_TLD.test(name) || BARE_DOMAIN.test(name);
+}
 
 export function nameError(name: string): string {
   if (!name) return "Tell us what to call you.";
   if (name.length > 80) return "That name is a bit long. A first name is plenty.";
-  if (!NAME.test(name)) return "Use just letters in your name, please.";
-  if (DOMAIN_LIKE.test(name)) return "That looks like a web address. Just your name, please.";
+  if (!NAME.test(name) || !HAS_LETTER.test(name)) return "Use just letters in your name, please.";
+  if (looksLikeDomain(name)) return "That looks like a web address. Just your name, please.";
   return "";
 }
 
