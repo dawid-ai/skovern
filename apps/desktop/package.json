@@ -1,7 +1,7 @@
 {
   "name": "@skovern/desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Skovern desktop app (Electron shell + React UI)",
   "type": "module",
   "main": "out/main/index.js",
