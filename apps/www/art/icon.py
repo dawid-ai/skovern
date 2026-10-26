@@ -8,7 +8,10 @@ Rendered with Blender 5.2.3 (portable build) and Cycles. Reproduce from the repo
     blender -b -P apps/www/art/icon.py -- --mode front-dark --out <dir>   # front-dark.png, lit for a black backdrop
     blender -b -P apps/www/art/icon.py -- --mode og         --out <dir>   # og.png, 1200x630 transparent
 
-Optional flags: --samples N, --frames N (default 72), --res N (default 1200), --cpu.
+Optional flags: --samples N, --frames N (default 72), --res N (default 1200), --cpu,
+--font <ttf> (or SKOVERN_ICON_FONT). The S is the font's own glyph outline. The
+shipped renders use Inter Bold (SIL Open Font License; the static TTF from Google
+Fonts, Inter v20, wght 700); without --font it falls back to Segoe UI Bold on Windows.
 
 Then convert the PNGs to WebP (and flatten the OG card onto #f5f5f7) with
 `node apps/www/art/encode.mjs <render dir>`, which shells out to ffmpeg (libwebp).
@@ -32,6 +35,7 @@ import bpy
 from mathutils import Vector
 
 ORANGE = (0.807, 0.195, 0.026)  # linear #e87a2e
+FONT = ""  # set from --font in main()
 WARM = (1.0, 0.42, 0.12)
 
 
@@ -45,6 +49,7 @@ def parse_args():
     p.add_argument("--frames", type=int, default=72)
     p.add_argument("--res", type=int, default=1200)
     p.add_argument("--cpu", action="store_true")
+    p.add_argument("--font", default=os.environ.get("SKOVERN_ICON_FONT", "C:/Windows/Fonts/segoeuib.ttf"))
     return p.parse_args(argv)
 
 
@@ -113,43 +118,41 @@ def squircle_slab(name, w, depth, bevel, segs, n=5.0):
     return obj
 
 
-def s_stroke(r, radius, flat):
-    """The Skovern S: two arcs (the sCurve of the web mock) as a tube with round caps."""
-    pts = []
-    steps = 96
-    for i in range(steps + 1):
-        a = math.radians(28 + (270 - 28) * i / steps)
-        pts.append((math.cos(a) * r, r + math.sin(a) * r))
-    for i in range(1, steps + 1):
-        a = math.radians(90 + (-152 - 90) * i / steps)
-        pts.append((math.cos(a) * r, -r + math.sin(a) * r))
-    cu = bpy.data.curves.new("S", "CURVE")
-    cu.dimensions = "3D"
-    sp = cu.splines.new("POLY")
-    sp.points.add(len(pts) - 1)
-    for p, (x, y) in zip(sp.points, pts):
-        p.co = (x, y, 0, 1)
-    cu.bevel_mode = "ROUND"
-    cu.bevel_depth = radius
-    cu.bevel_resolution = 10
-    cu.use_fill_caps = True
+def s_glyph(font_path, height, depth):
+    """The Skovern S from a real typeface outline (Inter Bold by default): the
+    font's own "S" as a curve, extruded and lightly bevelled, then scaled so the
+    glyph is `height` tall and centred on the tile. A typeface S has the larger
+    bowl at the bottom; the old hand-drawn stroke had it the wrong way round."""
+    font = bpy.data.fonts.load(font_path)
+    cu = bpy.data.curves.new("S", "FONT")
+    cu.body = "S"
+    cu.font = font
+    cu.size = 1.0
+    cu.align_x = "CENTER"
+    cu.align_y = "CENTER"
+    cu.resolution_u = 24
+    cu.extrude = 0.06
+    cu.bevel_depth = 0.022
+    cu.bevel_resolution = 6
     obj = bpy.data.objects.new("S", cu)
     bpy.context.collection.objects.link(obj)
-    # round caps: a sphere at each end, joined after conversion
-    caps = []
-    for x, y in (pts[0], pts[-1]):
-        bpy.ops.mesh.primitive_uv_sphere_add(radius=radius, segments=48, ring_count=24, location=(x, y, 0))
-        caps.append(bpy.context.active_object)
     bpy.ops.object.select_all(action="DESELECT")
     obj.select_set(True)
     bpy.context.view_layer.objects.active = obj
     bpy.ops.object.convert(target="MESH")
-    for c in caps:
-        c.select_set(True)
-    bpy.ops.object.join()
     s = bpy.context.active_object
+    # Centre on the glyph's own bounds (fonts centre on the em box, not the ink).
+    xs = [v.co.x for v in s.data.vertices]
+    ys = [v.co.y for v in s.data.vertices]
+    zs = [v.co.z for v in s.data.vertices]
+    cx, cy, cz = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2, (min(zs) + max(zs)) / 2
+    k = height / (max(ys) - min(ys))
+    kz = depth / (max(zs) - min(zs))
+    for v in s.data.vertices:
+        v.co.x = (v.co.x - cx) * k
+        v.co.y = (v.co.y - cy) * k
+        v.co.z = (v.co.z - cz) * kz
     bpy.ops.object.shade_smooth()
-    s.scale = (1, 1, flat)
     return s
 
 
@@ -231,7 +234,7 @@ def build_icon():
     core.location = (0, 0, -0.03)
     core.data.materials.append(core_mat())
 
-    s = s_stroke(0.15, 0.06, 0.4)
+    s = s_glyph(FONT, 0.56, 0.05)
     s.location = (0, 0, 0.065)
     s.data.materials.append(s_mat())
 
@@ -347,6 +350,10 @@ def render_to(path):
 
 def main():
     a = parse_args()
+    global FONT
+    FONT = a.font
+    if not os.path.exists(FONT):
+        raise SystemExit(f"font not found: {FONT}")
     os.makedirs(a.out, exist_ok=True)
     reset()
     device = use_device(a.cpu)
