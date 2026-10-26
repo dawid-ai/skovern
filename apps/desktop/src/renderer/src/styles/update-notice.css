@@ -19,7 +19,7 @@
   animation: pop 0.6s var(--spring) both;
 }
 
-@media (max-width: 860px) {
+@media (max-width: 920px) {
   .update-notice {
     width: min(360px, calc(100vw - 88px));
   }

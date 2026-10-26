@@ -224,7 +224,7 @@
 }
 
 /* A narrow window: the sidebar becomes an icon rail. Labels stay in the accessible name. */
-@container win (max-width: 860px) {
+@container win (max-width: 920px) {
   .sidebar {
     width: 64px;
     padding: 12px 8px 10px;

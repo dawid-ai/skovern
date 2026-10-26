@@ -186,7 +186,7 @@
   }
 }
 
-@container win (max-width: 860px) {
+@container win (max-width: 920px) {
   .chat-page {
     grid-template-columns: 196px minmax(0, 1fr);
   }
