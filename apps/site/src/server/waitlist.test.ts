@@ -1,0 +1,166 @@
+import pg from "pg";
+import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { AuthService, AuthStore, ConsoleMailer } from "../auth/service.js";
+import { startAuthServer, type RunningServer } from "../auth/server.js";
+import { DevWelcomeMailer } from "../waitlist/mail.js";
+import { WaitlistStore } from "../waitlist/store.js";
+import { RateLimiter } from "./rate-limit.js";
+import { sweepExpired } from "./sweep.js";
+
+// The waitlist API in-process against a real Postgres: signup, repeat, details,
+// remove (GET confirms, POST deletes), admin auth, CORS, the per-IP limit, and
+// the expiry sweep.
+
+let container: StartedPostgreSqlContainer;
+let pool: pg.Pool;
+let server: RunningServer;
+let store: WaitlistStore;
+const mailer = new DevWelcomeMailer();
+const ADMIN = "admin-token-for-tests";
+let ipSeq = 0;
+const freshIp = (): string => `198.51.100.${(ipSeq += 1)}`;
+
+beforeAll(async () => {
+  container = await new PostgreSqlContainer("postgres:17-alpine").start();
+  pool = new pg.Pool({ connectionString: container.getConnectionUri() });
+  await new AuthStore(pool).migrate();
+  store = new WaitlistStore(pool);
+  await store.migrate();
+  const auth = new AuthService(new AuthStore(pool), new ConsoleMailer(), { appUrl: "http://x" });
+  const limiter = new RateLimiter();
+  server = await startAuthServer({
+    service: auth,
+    adminToken: ADMIN,
+    limiter,
+    trustProxy: true,
+    waitlist: {
+      deps: { store, mailer, appUrl: () => "https://api.test" },
+      limiter,
+      trustProxy: true,
+      corsOrigins: ["https://skovern.com"],
+      adminToken: ADMIN,
+      siteUrl: "https://skovern.com",
+    },
+  });
+});
+
+afterAll(async () => {
+  await server?.close();
+  await pool?.end();
+  await container?.stop();
+});
+
+async function post(path: string, body: unknown, headers: Record<string, string> = {}): Promise<Response> {
+  return fetch(`${server.url}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-forwarded-for": freshIp(), ...headers },
+    body: JSON.stringify(body),
+  });
+}
+
+describe("waitlist API", () => {
+  it("signs up, repeats with the same number and no second email, saves details", async () => {
+    const r1 = await post("/api/waitlist", { name: "Rosa", email: "Rosa@Bloom.shop" });
+    expect(r1.status).toBe(201);
+    const a = (await r1.json()) as { number: number; detailsToken: string };
+    expect(a.number).toBe(1);
+    expect(mailer.sent).toHaveLength(1);
+    expect(mailer.sent[0]?.welcome.removeUrl).toMatch(/^https:\/\/api\.test\/waitlist\/remove\?t=[\w-]{43}$/);
+
+    const r2 = await post("/api/waitlist", { name: "Rosa D", email: "rosa@bloom.shop" });
+    const b = (await r2.json()) as { number: number; detailsToken: string };
+    expect(b.number).toBe(1);
+    expect(b.detailsToken).not.toBe(a.detailsToken);
+    expect(mailer.sent).toHaveLength(1);
+
+    const d = await post("/api/waitlist/details", {
+      detailsToken: b.detailsToken,
+      jobTitle: "Owner",
+      businessType: "florist",
+      url: "bloom.shop",
+    });
+    expect(d.status).toBe(204);
+    const [row] = await store.list();
+    expect(row).toMatchObject({ number: 1, name: "Rosa", jobTitle: "Owner", businessType: "florist", url: "https://bloom.shop" });
+  });
+
+  it("stores nothing when the honeypot is filled", async () => {
+    const before = (await store.list()).length;
+    const r = await post("/api/waitlist", { name: "Bot", email: "bot@spam.biz", company_website: "spam.biz" });
+    expect(r.status).toBe(201);
+    expect(((await r.json()) as { number: number }).number).toBeGreaterThan(0);
+    expect((await store.list()).length).toBe(before);
+  });
+
+  it("removes only on POST, and kills the details token with it", async () => {
+    const r = await post("/api/waitlist", { name: "Lee", email: "lee@bakery.test" });
+    const { detailsToken } = (await r.json()) as { detailsToken: string };
+    const link = new URL(mailer.sent.at(-1)!.welcome.removeUrl);
+    const t = link.searchParams.get("t")!;
+
+    const page = await fetch(`${server.url}/waitlist/remove?t=${t}`);
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain("Remove me");
+    expect((await store.list()).some((x) => x.email === "lee@bakery.test")).toBe(true);
+
+    const del = await fetch(`${server.url}/waitlist/remove`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: `t=${t}`,
+    });
+    expect(del.status).toBe(200);
+    expect(await del.text()).toContain("You're off the list.");
+    expect((await store.list()).some((x) => x.email === "lee@bakery.test")).toBe(false);
+
+    const again = await post("/api/waitlist/details", { detailsToken, jobTitle: "Baker" });
+    expect(again.status).toBe(400);
+    expect(((await again.json()) as { field: string }).field).toBe("detailsToken");
+  });
+
+  it("guards the admin view and CSV with the admin token", async () => {
+    expect((await fetch(`${server.url}/admin/waitlist`)).status).toBe(401);
+    const auth = { authorization: `Basic ${Buffer.from(`x:${ADMIN}`).toString("base64")}` };
+    const html = await fetch(`${server.url}/admin/waitlist`, { headers: auth });
+    expect(html.status).toBe(200);
+    expect(await html.text()).toContain("Florist");
+    const csv = await fetch(`${server.url}/admin/waitlist.csv`, { headers: auth });
+    expect(csv.headers.get("content-type")).toContain("text/csv");
+  });
+
+  it("sends CORS headers only to allowed origins", async () => {
+    const ok = await fetch(`${server.url}/api/waitlist`, { method: "OPTIONS", headers: { origin: "https://skovern.com" } });
+    expect(ok.headers.get("access-control-allow-origin")).toBe("https://skovern.com");
+    const bad = await fetch(`${server.url}/api/waitlist`, { method: "OPTIONS", headers: { origin: "https://evil.test" } });
+    expect(bad.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  it("limits per IP on the rightmost X-Forwarded-For entry", async () => {
+    const statuses: number[] = [];
+    for (let i = 0; i < 10; i += 1) {
+      const r = await post("/api/waitlist", { name: "", email: "" }, { "x-forwarded-for": `10.9.9.${i}, 203.0.113.7` });
+      statuses.push(r.status);
+    }
+    expect(statuses.slice(0, 8).every((s) => s === 400)).toBe(true);
+    expect(statuses.slice(8)).toEqual([429, 429]);
+  });
+});
+
+describe("sweepExpired", () => {
+  it("deletes expired detail tokens, sessions, and old magic links, and keeps live ones", async () => {
+    const { id } = await store.join("sweep@shop.test", "Sweep");
+    await store.issueToken(id, "details");
+    await store.issueToken(id, "remove");
+    await pool.query(`UPDATE waitlist_tokens SET expires_at = now() - interval '1 minute'
+                       WHERE waitlist_id = $1 AND kind = 'details'`, [id]);
+    await pool.query(`INSERT INTO magic_tokens (id, secret_hash, email, expires_at)
+                      VALUES ('old', 'h', 'a@b.co', now() - interval '2 days'), ('new', 'h', 'a@b.co', now() + interval '5 minutes')`);
+    const counts = await sweepExpired(pool);
+    expect(counts.waitlistTokens).toBeGreaterThanOrEqual(1);
+    expect(counts.magicTokens).toBe(1);
+    const left = await pool.query(`SELECT kind FROM waitlist_tokens WHERE waitlist_id = $1`, [id]);
+    expect(left.rows.map((r: { kind: string }) => r.kind)).toEqual(["remove"]);
+    const magic = await pool.query(`SELECT id FROM magic_tokens`);
+    expect(magic.rows.map((r: { id: string }) => r.id)).toEqual(["new"]);
+  });
+});
