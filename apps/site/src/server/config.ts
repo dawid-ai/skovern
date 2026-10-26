@@ -25,6 +25,8 @@ export interface ServerConfig {
   /** Sign-in, DM, publish, news, and their admin pages. Off by default in
    *  production until the beta: the public api is the waitlist and nothing else. */
   accountRoutes: boolean;
+  /** Global cap on welcome emails (Resend's free tier is 100 a day). */
+  welcomeBudget: { perHour: number; perDay: number };
   host: string;
   port: number;
 }
@@ -37,6 +39,14 @@ function list(raw: string | undefined): string[] | null {
     .split(",")
     .map((s) => s.trim().replace(/\/$/, ""))
     .filter(Boolean);
+}
+
+function positiveInt(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
+  const raw = env[key]?.trim();
+  if (!raw) return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1) throw new ConfigError(`${key} must be a whole number of 1 or more.`);
+  return n;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv): ServerConfig {
@@ -73,6 +83,10 @@ export function loadConfig(env: NodeJS.ProcessEnv): ServerConfig {
     corsOrigins: list(env["CORS_ORIGINS"]) ?? (production ? PROD_ORIGINS : [...PROD_ORIGINS, ...DEV_ORIGINS]),
     trustProxy: env["TRUST_PROXY"] === "1",
     accountRoutes: env["ACCOUNT_ROUTES"] ? env["ACCOUNT_ROUTES"] === "1" : !production,
+    welcomeBudget: {
+      perHour: positiveInt(env, "WELCOME_MAX_PER_HOUR", 30),
+      perDay: positiveInt(env, "WELCOME_MAX_PER_DAY", 90),
+    },
     host: val("HOST") ?? "127.0.0.1",
     port: Number(val("PORT") ?? 8787),
   };

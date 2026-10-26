@@ -2,6 +2,13 @@ import { randomBytes } from "node:crypto";
 import type pg from "pg";
 import { sha256 } from "../auth/tokens.js";
 import type { BusinessType } from "./validate.js";
+import {
+  claimWelcome,
+  DEFAULT_WELCOME_BUDGET,
+  WELCOME_BUDGET_MIGRATION,
+  WELCOME_COOLDOWN_HOURS,
+  type WelcomeBudget,
+} from "./welcome-budget.js";
 
 type Pool = pg.Pool;
 
@@ -36,8 +43,6 @@ CREATE INDEX IF NOT EXISTS waitlist_tokens_expiry ON waitlist_tokens (expires_at
 `;
 
 export const DETAILS_TTL_HOURS = 24;
-/** A repeat signup inside this window gets no second welcome email. */
-export const WELCOME_COOLDOWN_HOURS = 24;
 
 export interface WaitlistEntry {
   number: number;
@@ -52,8 +57,18 @@ export interface WaitlistEntry {
 export interface JoinResult {
   id: string;
   number: number;
-  /** True when the welcome email is due (new, or last one older than the cooldown). */
-  welcomeDue: boolean;
+  /** Set when this join claimed the welcome email (due and within budget):
+   *  the budget log row, handed back to releaseWelcome if the send fails. */
+  welcomeClaim: string | null;
+}
+
+/** A saved signup whose welcome is claimed and ready to send. */
+export interface WelcomeJob {
+  id: string;
+  email: string;
+  name: string;
+  number: number;
+  claim: string;
 }
 
 export function newToken(): { raw: string; hash: string } {
@@ -62,10 +77,14 @@ export function newToken(): { raw: string; hash: string } {
 }
 
 export class WaitlistStore {
-  constructor(private readonly pool: Pool) {}
+  constructor(
+    private readonly pool: Pool,
+    private readonly budget: WelcomeBudget = DEFAULT_WELCOME_BUDGET,
+  ) {}
 
   async migrate(): Promise<void> {
     await this.pool.query(MIGRATION);
+    await this.pool.query(WELCOME_BUDGET_MIGRATION);
   }
 
   /** Add the person, or find them. The number is drawn once and never changes;
@@ -78,9 +97,11 @@ export class WaitlistStore {
     try {
       await client.query("BEGIN");
       await client.query("SELECT pg_advisory_xact_lock(hashtext('waitlist:' || $1))", [email]);
-      const found = await client.query<{ id: string; number: string }>(
-        `SELECT id, number FROM waitlist WHERE email = $1`,
-        [email],
+      const found = await client.query<{ id: string; number: string; due: boolean }>(
+        `SELECT id, number,
+                (welcome_sent_at IS NULL OR welcome_sent_at < now() - ($2 || ' hours')::interval) AS due
+           FROM waitlist WHERE email = $1`,
+        [email, String(WELCOME_COOLDOWN_HOURS)],
       );
       let row = found.rows[0];
       if (!row) {
@@ -88,17 +109,14 @@ export class WaitlistStore {
           `INSERT INTO waitlist (email, name) VALUES ($1, $2) RETURNING id, number`,
           [email, name],
         );
-        row = inserted.rows[0];
-        if (!row) throw new Error("waitlist insert failed");
+        const ins = inserted.rows[0];
+        if (!ins) throw new Error("waitlist insert failed");
+        row = { ...ins, due: true };
       }
-      const claimed = await client.query(
-        `UPDATE waitlist SET welcome_sent_at = now()
-          WHERE id = $1 AND (welcome_sent_at IS NULL OR welcome_sent_at < now() - ($2 || ' hours')::interval)
-          RETURNING id`,
-        [row.id, String(WELCOME_COOLDOWN_HOURS)],
-      );
+      // Only a due welcome takes the (global) budget lock; repeats skip it.
+      const claim = row.due ? await claimWelcome(client, row.id, this.budget) : null;
       await client.query("COMMIT");
-      return { id: row.id, number: Number(row.number), welcomeDue: (claimed.rowCount ?? 0) > 0 };
+      return { id: row.id, number: Number(row.number), welcomeClaim: claim };
     } catch (err) {
       await client.query("ROLLBACK");
       throw err;
@@ -107,9 +125,34 @@ export class WaitlistStore {
     }
   }
 
-  /** The welcome send failed: give the claim back so the next join retries it. */
-  async releaseWelcome(id: string): Promise<void> {
+  /** The welcome send failed: give the claim and its budget slot back, so the
+   *  backlog sender (or the next join) retries it. */
+  async releaseWelcome(id: string, claim: string): Promise<void> {
     await this.pool.query(`UPDATE waitlist SET welcome_sent_at = NULL WHERE id = $1`, [id]);
+    await this.pool.query(`DELETE FROM waitlist_welcome_sends WHERE id = $1`, [claim]);
+  }
+
+  /** Claim the oldest signup still waiting for its welcome, if the budget has
+   *  room. Null when nothing waits or the budget is spent. */
+  async claimBacklog(): Promise<WelcomeJob | null> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const next = await client.query<{ id: string; email: string; name: string; number: string }>(
+        `SELECT id, email, name, number FROM waitlist WHERE welcome_sent_at IS NULL
+          ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED`,
+      );
+      const row = next.rows[0];
+      const claim = row ? await claimWelcome(client, row.id, this.budget) : null;
+      await client.query("COMMIT");
+      if (!row || !claim) return null;
+      return { id: row.id, email: row.email, name: row.name, number: Number(row.number), claim };
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   /** Mint a token for this person. Details tokens expire; remove tokens last

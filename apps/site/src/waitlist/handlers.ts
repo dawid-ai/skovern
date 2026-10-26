@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { HttpResult } from "../auth/handlers.js";
 import { escapeHtml } from "../html.js";
 import type { WelcomeMailer } from "./mail.js";
+import { deliverWelcome } from "./welcome.js";
 import type { WaitlistStore } from "./store.js";
 import { checkDetails, checkSignup, type FieldError } from "./validate.js";
 
@@ -29,16 +30,10 @@ export async function handleJoin(deps: WaitlistDeps, body: unknown): Promise<Htt
   }
   const joined = await deps.store.join(email, name);
   const detailsToken = await deps.store.issueToken(joined.id, "details");
-  if (joined.welcomeDue) {
-    try {
-      const removeToken = await deps.store.issueToken(joined.id, "remove");
-      const removeUrl = `${deps.appUrl()}/waitlist/remove?t=${removeToken}`;
-      await deps.mailer.sendWelcome(email, { name, number: joined.number, removeUrl });
-    } catch (err) {
-      // The signup is saved; hand the claim back so the next join retries. Never log the address.
-      console.error("[waitlist] welcome email failed:", (err as Error).message);
-      await deps.store.releaseWelcome(joined.id);
-    }
+  // Over the global email budget, the claim is null and the welcome waits in
+  // the backlog; the person still gets the normal answer and their number.
+  if (joined.welcomeClaim) {
+    await deliverWelcome(deps, { id: joined.id, email, name, number: joined.number, claim: joined.welcomeClaim });
   }
   return { status: 201, body: { number: joined.number, detailsToken } };
 }

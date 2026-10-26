@@ -12,7 +12,7 @@ import { WaitlistStore } from "../waitlist/store.js";
 import { DevWelcomeMailer, ResendWelcomeMailer, type WelcomeMailer } from "../waitlist/mail.js";
 import { ConfigError, loadConfig, type ServerConfig } from "./config.js";
 import { RateLimiter } from "./rate-limit.js";
-import { startSweep } from "./sweep.js";
+import { startSweep, startWelcomeBacklog } from "./sweep.js";
 
 /** SIGTERM must end the process within this, even with a stuck socket (ledger shutdown-watchdog). */
 const SHUTDOWN_DEADLINE_MS = 8_000;
@@ -45,7 +45,7 @@ async function main(): Promise<void> {
   const news = new NewsStore(pool);
   const dm = new DmStore(pool);
   const visibility = new VisibilityStore(pool);
-  const waitlist = new WaitlistStore(pool);
+  const waitlist = new WaitlistStore(pool, cfg.welcomeBudget);
   try {
     await new AuthStore(pool).migrate();
     await news.migrate();
@@ -104,6 +104,7 @@ async function main(): Promise<void> {
   );
 
   const stopSweep = startSweep(pool);
+  const stopBacklog = startWelcomeBacklog({ store: waitlist, mailer: mailers.welcome, appUrl: () => authConfig.appUrl });
   const pruneTimer = setInterval(() => limiter.prune(), 5 * 60_000);
   pruneTimer.unref();
 
@@ -113,6 +114,7 @@ async function main(): Promise<void> {
     shuttingDown = true;
     console.log(`[auth-server] ${signal}: draining…`);
     stopSweep();
+    stopBacklog();
     // Watchdog: a hung socket or a stuck pool must not keep the old container alive.
     setTimeout(() => {
       console.error("[auth-server] drain took too long; exiting anyway");

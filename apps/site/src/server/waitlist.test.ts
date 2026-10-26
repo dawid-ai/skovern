@@ -6,7 +6,8 @@ import { startAuthServer, type RunningServer } from "../auth/server.js";
 import type { Welcome, WelcomeMailer } from "../waitlist/mail.js";
 import { WaitlistStore } from "../waitlist/store.js";
 import { RateLimiter } from "./rate-limit.js";
-import { sweepExpired } from "./sweep.js";
+import { sendWelcomeBacklog, sweepExpired } from "./sweep.js";
+import { handleJoin } from "../waitlist/handlers.js";
 
 // The waitlist API in-process against a real Postgres: signup, repeat, details,
 // remove (GET confirms, POST deletes), admin auth, CORS, the per-IP limit, and
@@ -44,7 +45,7 @@ beforeAll(async () => {
     if (err.code !== "57P01") throw err;
   });
   await new AuthStore(pool).migrate();
-  store = new WaitlistStore(pool);
+  store = new WaitlistStore(pool, { perHour: 1000, perDay: 1000 });
   await store.migrate();
   const auth = new AuthService(new AuthStore(pool), new ConsoleMailer(), { appUrl: "http://x" });
   const limiter = new RateLimiter();
@@ -298,5 +299,45 @@ describe("account routes off (production before the beta)", () => {
     } finally {
       await off.close();
     }
+  });
+});
+
+describe("welcome email budget", () => {
+  it("saves a signup over budget without sending, then the backlog sends it oldest first", async () => {
+    await pool.query("TRUNCATE waitlist_welcome_sends");
+    await pool.query(`UPDATE waitlist SET welcome_sent_at = now() WHERE welcome_sent_at IS NULL`);
+    const tight = new WaitlistStore(pool, { perHour: 1, perDay: 90 });
+    const deps = { store: tight, mailer, appUrl: () => "https://api.test" };
+    const before = mailer.sent.length;
+
+    const a = await handleJoin(deps, { name: "Una", email: "budget-a@bloom.shop" });
+    const b = await handleJoin(deps, { name: "Bo", email: "budget-b@bloom.shop" });
+    const c = await handleJoin(deps, { name: "Cy", email: "budget-c@bloom.shop" });
+    expect([a.status, b.status, c.status]).toEqual([201, 201, 201]);
+    expect(mailer.sent.slice(before).map((m) => m.to)).toEqual(["budget-a@bloom.shop"]);
+    const waiting = await pool.query(
+      `SELECT email FROM waitlist WHERE welcome_sent_at IS NULL AND email LIKE 'budget-%' ORDER BY created_at`,
+    );
+    expect(waiting.rows.map((r: { email: string }) => r.email)).toEqual(["budget-b@bloom.shop", "budget-c@bloom.shop"]);
+
+    // Still over budget: the backlog waits.
+    expect(await sendWelcomeBacklog(deps)).toBe(0);
+
+    // An hour later the hourly slot frees up: the oldest waiting signup goes first.
+    await pool.query(`UPDATE waitlist_welcome_sends SET sent_at = sent_at - interval '61 minutes'`);
+    expect(await sendWelcomeBacklog(deps)).toBe(1);
+    expect(mailer.sent.at(-1)?.to).toBe("budget-b@bloom.shop");
+  });
+
+  it("puts a failed send back in the backlog, and the backlog retries it", async () => {
+    await pool.query("TRUNCATE waitlist_welcome_sends");
+    await pool.query(`UPDATE waitlist SET welcome_sent_at = now() WHERE welcome_sent_at IS NULL`);
+    const deps = { store, mailer, appUrl: () => "https://api.test" };
+    mailer.failNext = true;
+    await handleJoin(deps, { name: "Flo", email: "retry-later@bloom.shop" });
+    expect(mailer.sent.some((m) => m.to === "retry-later@bloom.shop")).toBe(false);
+    expect((await pool.query(`SELECT count(*)::int AS n FROM waitlist_welcome_sends`)).rows[0].n).toBe(0);
+    expect(await sendWelcomeBacklog(deps)).toBe(1);
+    expect(mailer.sent.at(-1)?.to).toBe("retry-later@bloom.shop");
   });
 });
