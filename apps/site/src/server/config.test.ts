@@ -128,6 +128,22 @@ describe("limitFailures", () => {
     expect((await limitFailures(rl, "k", limit, bad, failed)).status).toBe(401);
     expect((await limitFailures(rl, "k", limit, ok, failed)).status).toBe(429);
   });
+
+  it("counts an attempt before it runs, so concurrent wrong guesses can't all get in", async () => {
+    const rl = new RateLimiter(() => 0);
+    const limit = { max: 2, windowMs: 1000 };
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const slowBad = async () => {
+      await gate;
+      return { status: 401, body: {} };
+    };
+    const failed = (r: { status: number }) => r.status === 401;
+    const all = Array.from({ length: 5 }, () => limitFailures(rl, "k", limit, slowBad, failed));
+    release();
+    const statuses = (await Promise.all(all)).map((r) => r.status).sort();
+    expect(statuses).toEqual([401, 401, 429, 429, 429]);
+  });
 });
 
 describe("LruCache", () => {

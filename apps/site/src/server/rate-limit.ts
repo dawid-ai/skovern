@@ -35,10 +35,10 @@ export class RateLimiter {
     return entry.count <= limit.max;
   }
 
-  /** True when this key already used up its window (counts nothing). */
-  blocked(key: string, limit: Limit): boolean {
+  /** Give back one hit (an attempt that turned out not to count). */
+  refund(key: string): void {
     const entry = this.hits.get(key);
-    return !!entry && entry.resetAt > this.now() && entry.count >= limit.max;
+    if (entry && entry.resetAt > this.now() && entry.count > 0) entry.count -= 1;
   }
 
   /** Seconds until this key's window resets (for Retry-After). */
@@ -84,8 +84,10 @@ export async function limitFailures(
   attempt: () => Promise<HttpResult>,
   failed: (result: HttpResult) => boolean,
 ): Promise<HttpResult> {
-  if (limiter.blocked(key, limit)) return TOO_MANY(limiter, key);
+  // Count first, so concurrent attempts can't all slip in under the limit; a
+  // success hands its hit back.
+  if (!limiter.take(key, limit)) return TOO_MANY(limiter, key);
   const result = await attempt();
-  if (failed(result)) limiter.take(key, limit);
+  if (!failed(result)) limiter.refund(key);
   return result;
 }
