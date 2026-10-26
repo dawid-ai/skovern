@@ -1,3 +1,5 @@
+import type { HttpResult } from "../auth/handlers.js";
+
 // Per-key fixed-window rate limiter, in memory (one api replica). Keys are
 // `<bucket>:<client ip>`. The map is pruned as windows expire and hard-capped,
 // so a spray of spoofed addresses can't grow memory without bound.
@@ -33,6 +35,12 @@ export class RateLimiter {
     return entry.count <= limit.max;
   }
 
+  /** True when this key already used up its window (counts nothing). */
+  blocked(key: string, limit: Limit): boolean {
+    const entry = this.hits.get(key);
+    return !!entry && entry.resetAt > this.now() && entry.count >= limit.max;
+  }
+
   /** Seconds until this key's window resets (for Retry-After). */
   retryAfter(key: string): number {
     const entry = this.hits.get(key);
@@ -54,4 +62,30 @@ export const LIMITS = {
   waitlistDetails: { max: 20, windowMs: 10 * 60_000 },
   waitlistRemove: { max: 20, windowMs: 10 * 60_000 },
   authRequest: { max: 6, windowMs: 10 * 60_000 },
+  /** Wrong or missing admin passwords, per address. */
+  adminFail: { max: 10, windowMs: 10 * 60_000 },
 } satisfies Record<string, Limit>;
+
+export const TOO_MANY = (limiter: RateLimiter, key: string): HttpResult => ({
+  status: 429,
+  body: { ok: false, message: "Lots of tries from here. Wait a few minutes and try again." },
+  headers: { "retry-after": String(limiter.retryAfter(key)) },
+});
+
+/**
+ * Run `attempt`, counting only FAILED attempts against `limit`. Used where a
+ * success must never be throttled (one-click unsubscribes from mail providers)
+ * and a failure is the signal (guessing admin passwords or remove links).
+ */
+export async function limitFailures(
+  limiter: RateLimiter,
+  key: string,
+  limit: Limit,
+  attempt: () => Promise<HttpResult>,
+  failed: (result: HttpResult) => boolean,
+): Promise<HttpResult> {
+  if (limiter.blocked(key, limit)) return TOO_MANY(limiter, key);
+  const result = await attempt();
+  if (failed(result)) limiter.take(key, limit);
+  return result;
+}

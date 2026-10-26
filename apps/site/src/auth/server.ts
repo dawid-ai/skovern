@@ -15,7 +15,7 @@ import {
 import { handlePublish, handlePublishVisibility, handleVisibilityPage } from "../publish/handlers.js";
 import type { VisibilityStore } from "../publish/visibility-store.js";
 import { bearer, clientIp, readForm, readJson, send } from "../http.js";
-import { LIMITS, type RateLimiter } from "../server/rate-limit.js";
+import { LIMITS, limitFailures, RateLimiter } from "../server/rate-limit.js";
 import { routeWaitlist, type WaitlistRouteContext } from "../waitlist/routes.js";
 
 export interface RunningServer {
@@ -81,6 +81,11 @@ export function startAuthServer(opts: {
   accountRoutes?: boolean;
 }): Promise<RunningServer> {
   const adminToken = opts.adminToken ?? null;
+  const { dm, news } = opts;
+  // Wrong admin passwords count per address; past the limit even a right one waits.
+  const adminLimiter = opts.limiter ?? new RateLimiter();
+  const adminAttempt = (req: IncomingMessage, attempt: () => Promise<HttpResult>): Promise<HttpResult> =>
+    limitFailures(adminLimiter, `admin-fail:${clientIp(req, opts.trustProxy ?? false)}`, LIMITS.adminFail, attempt, (r) => r.status === 401);
   const server = createServer((req, res) => {
     void (async () => {
       try {
@@ -119,14 +124,14 @@ export function startAuthServer(opts: {
           return send(res, { status: 404, body: { ok: false, message: "Not found." } });
         }
         // Founder DM inbox: per-user threads + reply boxes (GET, Basic-auth).
-        if (path === "/admin/dm" && opts.dm) {
+        if (path === "/admin/dm" && dm) {
           if (method !== "GET") {
             return send(res, { status: 405, body: { ok: false, message: "Use GET." } });
           }
-          return send(res, await handleAdminDm(opts.dm, adminToken, req.headers.authorization ?? null));
+          return send(res, await adminAttempt(req, () => handleAdminDm(dm, adminToken, req.headers.authorization ?? null)));
         }
         // Founder reply to a user (form POST from the admin page, Basic-auth).
-        if (path === "/admin/dm/reply" && opts.dm) {
+        if (path === "/admin/dm/reply" && dm) {
           if (method !== "POST") {
             return send(res, { status: 405, body: { ok: false, message: "Use POST." } });
           }
@@ -139,11 +144,11 @@ export function startAuthServer(opts: {
           }
           return send(
             res,
-            await handleAdminDmReply(opts.dm, adminToken, req.headers.authorization ?? null, form),
+            await adminAttempt(req, () => handleAdminDmReply(dm, adminToken, req.headers.authorization ?? null, form)),
           );
         }
         // Founder news publish (POST, same Basic-auth guard).
-        if (path === "/admin/news" && opts.news) {
+        if (path === "/admin/news" && news) {
           if (method !== "POST") {
             return send(res, { status: 405, body: { ok: false, message: "Use POST." } });
           }
@@ -156,7 +161,7 @@ export function startAuthServer(opts: {
           }
           return send(
             res,
-            await handleAdminNews(opts.news, adminToken, req.headers.authorization ?? null, newsBody),
+            await adminAttempt(req, () => handleAdminNews(news, adminToken, req.headers.authorization ?? null, newsBody)),
           );
         }
         // …and the authenticated send (POST, session bearer token).

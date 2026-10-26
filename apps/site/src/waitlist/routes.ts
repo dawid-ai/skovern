@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { HttpResult } from "../auth/handlers.js";
 import { clientIp, readForm, readJson, send } from "../http.js";
-import { LIMITS, type Limit, type RateLimiter } from "../server/rate-limit.js";
+import { LIMITS, limitFailures, type Limit, type RateLimiter } from "../server/rate-limit.js";
 import { handleAdminWaitlist, handleAdminWaitlistCsv } from "./admin.js";
 import { handleDetails, handleJoin, handleRemove, handleRemovePage, type WaitlistDeps } from "./handlers.js";
 
@@ -116,26 +116,42 @@ export async function routeWaitlist(
   if (path === "/waitlist/remove") {
     if (method === "GET") return reply(await handleRemovePage(ctx.deps, query.get("t")));
     if (method !== "POST") return reply(USE("GET or POST"));
-    const over = limited(ctx, req, "remove", LIMITS.waitlistRemove);
-    if (over) return reply(over);
     let form: URLSearchParams;
     try {
       form = await readForm(req);
     } catch {
       return reply(BAD_REQUEST);
     }
-    // The confirm page posts `t` in the body; RFC 8058 one-click posts to the link itself.
-    return reply(await handleRemove(ctx.deps, form.get("t") ?? query.get("t")));
+    // The confirm page posts `t` in the body; RFC 8058 one-click posts to the link
+    // itself. Only dead links count against the limit, so a mail provider's
+    // one-click unsubscribes (many people, one address) are never refused.
+    const token = form.get("t") ?? query.get("t");
+    return reply(
+      await limitFailures(
+        ctx.limiter,
+        `remove-fail:${clientIp(req, ctx.trustProxy)}`,
+        LIMITS.waitlistRemove,
+        () => handleRemove(ctx.deps, token),
+        (r) => r.status !== 200,
+      ),
+    );
   }
 
   if (path === "/admin/waitlist" || path === "/admin/waitlist.csv") {
     if (method !== "GET") return reply(USE("GET"));
     const auth = req.headers.authorization ?? null;
-    const result =
-      path === "/admin/waitlist"
-        ? await handleAdminWaitlist(ctx.deps.store, ctx.adminToken, auth)
-        : await handleAdminWaitlistCsv(ctx.deps.store, ctx.adminToken, auth);
-    return reply(result);
+    return reply(
+      await limitFailures(
+        ctx.limiter,
+        `admin-fail:${clientIp(req, ctx.trustProxy)}`,
+        LIMITS.adminFail,
+        () =>
+          path === "/admin/waitlist"
+            ? handleAdminWaitlist(ctx.deps.store, ctx.adminToken, auth)
+            : handleAdminWaitlistCsv(ctx.deps.store, ctx.adminToken, auth),
+        (r) => r.status === 401,
+      ),
+    );
   }
   return false;
 }

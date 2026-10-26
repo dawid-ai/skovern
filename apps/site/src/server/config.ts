@@ -64,6 +64,14 @@ export function loadConfig(env: NodeJS.ProcessEnv): ServerConfig {
       );
     }
   }
+  const adminToken = val("SKOVERN_ADMIN_TOKEN");
+  if (production && adminToken && adminToken.length < 32) {
+    throw new ConfigError("SKOVERN_ADMIN_TOKEN must be at least 32 characters in production.");
+  }
+  const resendUrl = (val("RESEND_API_URL") ?? "https://api.resend.com").replace(/\/$/, "");
+  if (production && !resendUrl.startsWith("https://")) {
+    throw new ConfigError("RESEND_API_URL must use https:// in production.");
+  }
   const appUrl = (val("APP_URL") ?? "").replace(/\/$/, "");
   if (appUrl && !/^https?:\/\/[^/]+$/.test(appUrl)) {
     throw new ConfigError(`APP_URL must be a bare origin like https://api.skovern.com (got a path or bad scheme).`);
@@ -77,9 +85,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): ServerConfig {
     appUrl,
     siteUrl: (val("SITE_URL") ?? "https://skovern.com").replace(/\/$/, ""),
     resendKey: val("RESEND_API_KEY"),
-    resendUrl: val("RESEND_API_URL") ?? "https://api.resend.com",
+    resendUrl,
     mailFrom: val("MAIL_FROM") ?? "Skovern <hi@skovern.com>",
-    adminToken: val("SKOVERN_ADMIN_TOKEN"),
+    adminToken,
     corsOrigins: list(env["CORS_ORIGINS"]) ?? (production ? PROD_ORIGINS : [...PROD_ORIGINS, ...DEV_ORIGINS]),
     trustProxy: env["TRUST_PROXY"] === "1",
     accountRoutes: env["ACCOUNT_ROUTES"] ? env["ACCOUNT_ROUTES"] === "1" : !production,

@@ -62,7 +62,25 @@ export function clientIp(req: IncomingMessage, trustProxy: boolean): string {
     const raw = req.headers["x-forwarded-for"];
     const header = Array.isArray(raw) ? raw.join(",") : raw;
     const rightmost = header?.split(",").pop()?.trim();
-    if (rightmost) return rightmost;
+    if (rightmost) return limitKey(rightmost);
   }
-  return req.socket.remoteAddress ?? "unknown";
+  return limitKey(req.socket.remoteAddress ?? "unknown");
+}
+
+/**
+ * The address a limit counts against. An IPv6 home or phone connection owns a
+ * whole /64 and can rotate through it freely, so IPv6 is keyed on its first
+ * four groups; an IPv4-mapped IPv6 address is keyed as plain IPv4.
+ */
+export function limitKey(ip: string): string {
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(ip);
+  if (mapped?.[1]) return mapped[1];
+  if (!ip.includes(":")) return ip;
+  const [head = "", tail = ""] = ip.toLowerCase().split("%")[0]!.split("::");
+  const left = head ? head.split(":") : [];
+  const right = ip.includes("::") && tail ? tail.split(":") : [];
+  const groups = ip.includes("::")
+    ? [...left, ...Array<string>(Math.max(0, 8 - left.length - right.length)).fill("0"), ...right]
+    : left;
+  return `${groups.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, "")).join(":")}::/64`;
 }

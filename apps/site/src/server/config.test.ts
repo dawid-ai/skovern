@@ -1,8 +1,9 @@
 import type { IncomingMessage } from "node:http";
 import { describe, expect, it } from "vitest";
 import { ConfigError, loadConfig } from "./config.js";
-import { RateLimiter } from "./rate-limit.js";
-import { clientIp } from "../http.js";
+import { limitFailures, RateLimiter } from "./rate-limit.js";
+import { clientIp, limitKey } from "../http.js";
+import { pickMailers } from "./mailers.js";
 import { LruCache } from "../publish/og-cache.js";
 
 const PROD = {
@@ -40,6 +41,29 @@ describe("loadConfig", () => {
     expect(loadConfig({ ACCOUNT_ROUTES: "0" }).accountRoutes).toBe(false);
   });
 
+  it("refuses a short admin token in production, and accepts a long one or none", () => {
+    expect(() => loadConfig({ ...PROD, SKOVERN_ADMIN_TOKEN: "x".repeat(31) })).toThrow(
+      "SKOVERN_ADMIN_TOKEN must be at least 32 characters in production.",
+    );
+    expect(loadConfig({ ...PROD, SKOVERN_ADMIN_TOKEN: "a".repeat(64) }).adminToken).toHaveLength(64);
+    expect(loadConfig(PROD).adminToken).toBeNull();
+    expect(loadConfig({ SKOVERN_ADMIN_TOKEN: "short" }).adminToken).toBe("short");
+  });
+
+  it("requires an https Resend URL in production", () => {
+    expect(() => loadConfig({ ...PROD, RESEND_API_URL: "http://resend.test" })).toThrow(
+      "RESEND_API_URL must use https:// in production.",
+    );
+    expect(loadConfig({ ...PROD, RESEND_API_URL: "https://resend.test/" }).resendUrl).toBe("https://resend.test");
+  });
+
+  it("never picks the link-printing dev mailers in production", () => {
+    const prod = { ...loadConfig(PROD), resendKey: null };
+    expect(() => pickMailers(prod)).toThrow("RESEND_API_KEY is required in production.");
+    expect(pickMailers(loadConfig({})).welcome.constructor.name).toBe("DevWelcomeMailer");
+    expect(pickMailers(loadConfig(PROD)).welcome.constructor.name).toBe("ResendWelcomeMailer");
+  });
+
   it("boots in dev with no settings", () => {
     const cfg = loadConfig({});
     expect(cfg.production).toBe(false);
@@ -73,6 +97,36 @@ describe("clientIp", () => {
 
   it("ignores the header when no proxy is trusted", () => {
     expect(clientIp(req("1.2.3.4"), false)).toBe("10.0.0.9");
+  });
+});
+
+describe("limitKey", () => {
+  it("keys IPv6 on its /64, so rotating the last 64 bits doesn't help", () => {
+    const k = limitKey("2001:db8:aa:bb:1:2:3:4");
+    expect(k).toBe("2001:db8:aa:bb::/64");
+    expect(limitKey("2001:db8:aa:bb:ffff:ffff:ffff:ffff")).toBe(k);
+    expect(limitKey("2001:0db8:00aa:00bb::9")).toBe(k);
+    expect(limitKey("2001:db8:aa:bc::1")).not.toBe(k);
+    expect(limitKey("2001:db8::1")).toBe("2001:db8:0:0::/64");
+  });
+
+  it("keys IPv4 and IPv4-mapped IPv6 as plain IPv4", () => {
+    expect(limitKey("203.0.113.7")).toBe("203.0.113.7");
+    expect(limitKey("::ffff:203.0.113.7")).toBe("203.0.113.7");
+  });
+});
+
+describe("limitFailures", () => {
+  it("counts only failures, and then refuses even a success", async () => {
+    const rl = new RateLimiter(() => 0);
+    const limit = { max: 2, windowMs: 1000 };
+    const ok = async () => ({ status: 200, body: {} });
+    const bad = async () => ({ status: 401, body: {} });
+    const failed = (r: { status: number }) => r.status === 401;
+    for (let i = 0; i < 5; i += 1) expect((await limitFailures(rl, "k", limit, ok, failed)).status).toBe(200);
+    expect((await limitFailures(rl, "k", limit, bad, failed)).status).toBe(401);
+    expect((await limitFailures(rl, "k", limit, bad, failed)).status).toBe(401);
+    expect((await limitFailures(rl, "k", limit, ok, failed)).status).toBe(429);
   });
 });
 

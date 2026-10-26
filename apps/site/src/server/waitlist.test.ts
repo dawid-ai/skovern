@@ -278,6 +278,43 @@ describe("sweepExpired", () => {
   });
 });
 
+describe("failure-only limits", () => {
+  it("locks an address out of admin after 10 wrong passwords, even with the right one", async () => {
+    const ip = "192.0.2.77";
+    const tryAdmin = (pw: string) =>
+      fetch(`${server.url}/admin/waitlist`, {
+        headers: { authorization: `Basic ${Buffer.from(`x:${pw}`).toString("base64")}`, "x-forwarded-for": ip },
+      }).then((r) => r.status);
+    expect(await tryAdmin(ADMIN)).toBe(200);
+    for (let i = 0; i < 10; i += 1) expect(await tryAdmin("wrong")).toBe(401);
+    expect(await tryAdmin(ADMIN)).toBe(429);
+    // Another address is unaffected.
+    expect(
+      await fetch(`${server.url}/admin/waitlist`, {
+        headers: { authorization: `Basic ${Buffer.from(`x:${ADMIN}`).toString("base64")}`, "x-forwarded-for": "192.0.2.78" },
+      }).then((r) => r.status),
+    ).toBe(200);
+  });
+
+  it("never refuses working one-click removes from one address; dead links count", async () => {
+    const ip = "192.0.2.90";
+    const remove = (t: string) =>
+      fetch(`${server.url}/waitlist/remove?t=${t}`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded", "x-forwarded-for": ip },
+        body: "List-Unsubscribe=One-Click",
+      }).then((r) => r.status);
+    for (let i = 0; i < 25; i += 1) {
+      const { id } = await store.join(`unsub-${i}@bloom.shop`, "Una");
+      expect(await remove(await store.issueToken(id, "remove"))).toBe(200);
+    }
+    const dead: number[] = [];
+    for (let i = 0; i < 21; i += 1) dead.push(await remove("x".repeat(43)));
+    expect(dead.slice(0, 20).every((st) => st === 404)).toBe(true);
+    expect(dead[20]).toBe(429);
+  });
+});
+
 describe("account routes off (production before the beta)", () => {
   it("mounts only /healthz and the waitlist", async () => {
     const auth = new AuthService(new AuthStore(pool), new ConsoleMailer(), { appUrl: "http://x" });

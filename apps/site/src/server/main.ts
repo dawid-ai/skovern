@@ -1,5 +1,4 @@
 import pg from "pg";
-import { DevLinkMailer, ResendMailer, type Mailer } from "../auth/mailer.js";
 import { AuthService } from "../auth/service.js";
 import { AuthStore } from "../auth/store.js";
 import { startAuthServer } from "../auth/server.js";
@@ -9,25 +8,13 @@ import { DmStore } from "../dm/store.js";
 import { pickNotifier } from "../dm/notifier.js";
 import { VisibilityStore } from "../publish/visibility-store.js";
 import { WaitlistStore } from "../waitlist/store.js";
-import { DevWelcomeMailer, ResendWelcomeMailer, type WelcomeMailer } from "../waitlist/mail.js";
 import { ConfigError, loadConfig, type ServerConfig } from "./config.js";
+import { pickMailers } from "./mailers.js";
 import { RateLimiter } from "./rate-limit.js";
 import { startSweep, startWelcomeBacklog } from "./sweep.js";
 
 /** SIGTERM must end the process within this, even with a stuck socket (ledger shutdown-watchdog). */
 const SHUTDOWN_DEADLINE_MS = 8_000;
-
-function pickMailers(cfg: ServerConfig): { magic: Mailer; welcome: WelcomeMailer } {
-  // loadConfig already refused a production boot without a key, so the dev
-  // mailers (which print full single-use links) can only run outside production.
-  if (cfg.resendKey) {
-    return {
-      magic: new ResendMailer(cfg.resendKey, cfg.mailFrom, cfg.resendUrl),
-      welcome: new ResendWelcomeMailer(cfg.resendKey, cfg.mailFrom, cfg.resendUrl),
-    };
-  }
-  return { magic: new DevLinkMailer(), welcome: new DevWelcomeMailer() };
-}
 
 async function main(): Promise<void> {
   let cfg: ServerConfig;
