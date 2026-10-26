@@ -4,7 +4,7 @@ import path from "node:path";
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import pg from "pg";
-import { AuthService, AuthStore, ConsoleMailer, startAuthServer, type RunningServer } from "@skovern/site";
+import { AuthService, AuthStore, ConsoleMailer, ConsoleNotifier, DmStore, startAuthServer, type RunningServer } from "@skovern/site";
 
 // Loop 049 (design A "Clear") app-level metric: the REAL Electron UI against the real server.
 //   D1 every page × light/dark × 1100×720 and 800×520: no sideways overflow, nav + page title
@@ -27,6 +27,13 @@ const HARDWARE = JSON.stringify({
   diskFreeBytes: 400 * 1024 ** 3,
   notes: [],
 });
+const ADMIN_PW = "design-a-loop-test-pw";
+// Long strings that would push a layout sideways if anything forgot to wrap or truncate (N8).
+const LONG_TITLE = "Wedding quote for the Parkers: twelve centerpieces, a bridal bouquet, and the ceremony arch";
+const LONG_URL = "https://www.bloomandvine-wholesale-flower-supplier-catalogue.example.co.uk/catalogue/autumn-2026/dried-hydrangea-bundles-xl";
+const LONG_HOST = "www.bloomandvine-wholesale-flower-supplier-catalogue.example.co.uk";
+const LONG_FILE = "qwen2.5-14b-instruct-q4_k_m-00001-of-00002-extra-long-shard-name-for-layout.gguf";
+const FOUNDER_REPLY = "Thanks for trying Skovern. Anything confusing so far?";
 const PAGES = ["What's new", "Chat", "Your brain", "Messages", "Skills", "Receipts", "Settings"] as const;
 const SIZES = [
   [1100, 720],
@@ -45,7 +52,9 @@ test.beforeAll(async () => {
   await new AuthStore(pool).migrate();
   mailer = new ConsoleMailer();
   const auth = new AuthService(new AuthStore(pool), mailer, { appUrl: "https://app.test" });
-  server = await startAuthServer({ service: auth });
+  const dm = new DmStore(pool);
+  await dm.migrate();
+  server = await startAuthServer({ service: auth, dm: { auth, store: dm, notifier: new ConsoleNotifier() }, adminToken: ADMIN_PW });
 });
 
 test.afterAll(async () => {
@@ -65,19 +74,21 @@ function seedReceipts(dir: string): void {
     ...fetchRow("Skovern: update check", "github.com", "in", true, 0, 0),
     ...fetchRow("Skovern: messages", "127.0.0.1", "in", true, 0, 300),
     ...fetchRow("Skovern: your message to Dawid", "127.0.0.1", "out", false, 1200, 300),
+    ...fetchRow(`Downloading ${LONG_FILE}`, "huggingface.co", "in", false, 400, 8_988_110_976),
+    ...fetchRow(`skill:ai-visibility fetch ${LONG_URL}`, LONG_HOST, "in", false, 600, 48_200),
     { provider: "local", model: "qwen2.5:3b", task: "Chat", bytesSent: 0, bytesReceived: 0, ok: true, phase: "done", local: true, tokensIn: 40, tokensOut: 90, ts: day },
   ];
   writeFileSync(path.join(dir, "receipts.jsonl"), rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
 }
 
-function seedChat(dir: string, turns: number): void {
+function seedChat(dir: string, turns: number, title = "Autumn wreath captions"): void {
   const chats = path.join(dir, "chats");
   mkdirSync(chats, { recursive: true });
   const ts = "2026-10-20T10:00:00.000Z";
-  writeFileSync(path.join(chats, "index.json"), JSON.stringify([{ id: "long", title: "Autumn wreath captions", createdAt: ts, updatedAt: ts }]));
+  writeFileSync(path.join(chats, "index.json"), JSON.stringify([{ id: "long", title, createdAt: ts, updatedAt: ts }]));
   const lines: string[] = [];
   for (let i = 0; i < turns; i++) {
-    lines.push(JSON.stringify({ role: "user", content: `question ${i}: can you help with the wreaths?`, ts }));
+    lines.push(JSON.stringify({ role: "user", content: `question ${i}: can you check ${LONG_URL} for the wreaths?`, ts }));
     lines.push(JSON.stringify({ role: "assistant", content: `answer ${i}: sure, here is a short caption for the window.`, ts }));
   }
   writeFileSync(path.join(chats, "long.jsonl"), lines.join("\n") + "\n");
@@ -128,11 +139,27 @@ async function resize(app: ElectronApplication, page: Page, w: number, h: number
   await expect.poll(() => page.evaluate(() => [window.innerWidth, window.innerHeight])).toEqual([w, h]);
 }
 
-const nav = (page: Page, name: string) => page.getByRole("navigation", { name: "Main" }).getByRole("button", { name, exact: true });
+const nav = (page: Page, name: string) =>
+  page.getByRole("navigation", { name: "Main" }).getByRole("button", { name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`) });
+
+// A speaker label under a bubble ("Your brain", "Dawid") must really be on screen: a real height,
+// not clipped away, not transparent. Playwright's toBeVisible() counts a 1x1 clipped box as visible.
+async function labelShown(page: Page, selector: string): Promise<{ height: number; clipped: boolean; opacity: number; text: string }> {
+  return page.locator(selector).last().evaluate((el) => {
+    let opacity = 1;
+    let clipped = false;
+    for (let e: Element | null = el; e; e = e.parentElement) {
+      const cs = getComputedStyle(e);
+      opacity *= Number(cs.opacity);
+      if ((cs.clipPath !== "none" && cs.clipPath !== "") || (cs.clip !== "auto" && cs.clip !== "")) clipped = true;
+    }
+    return { height: el.getBoundingClientRect().height, clipped, opacity, text: el.textContent ?? "" };
+  });
+}
 
 // In-page measurements from computed styles: overflow, body luminance, and contrast ratios with
 // translucent colors composited over the element's real (ancestor) background.
-async function measure(page: Page): Promise<{ overflow: number; bodyLum: number; text: number; title: number; navSel: number }> {
+async function measure(page: Page): Promise<{ overflow: number; bodyLum: number; text: number; secondary: number; weakest: string; title: number; navSel: number }> {
   return page.evaluate(() => {
     type C = [number, number, number, number];
     const parse = (s: string): C => {
@@ -177,6 +204,23 @@ async function measure(page: Page): Promise<{ overflow: number; bodyLum: number;
       overflow,
       bodyLum: lum(parse(getComputedStyle(document.body).backgroundColor)),
       text: contrast(document.querySelector("main .page-head p, main .stamp")),
+      // The weakest secondary text actually on screen: hints, footers, sub-lines, times, labels.
+      ...(() => {
+        const sel = "main .hint, main .g-foot, main .g-intro, main .receipt-where, main .receipt-why, main .chat-when, main .bubble .who, main .cal-head p, .og-badge, .brain-chip-state";
+        let secondary = 99;
+        let weakest = "";
+        for (const el of Array.from(document.querySelectorAll(sel))) {
+          const r = el.getBoundingClientRect();
+          if (r.height < 6 || r.bottom < 0 || r.top > window.innerHeight || !(el.textContent ?? "").trim()) continue;
+          if (el.closest(".from-you") && el.classList.contains("who")) continue; // "You" is screen-reader only
+          const c = contrast(el);
+          if (c < secondary) {
+            secondary = c;
+            weakest = `${el.className}: ${(el.textContent ?? "").trim().slice(0, 40)}`;
+          }
+        }
+        return { secondary, weakest };
+      })(),
       title: contrast(document.querySelector("main h1")),
       navSel: contrast(document.querySelector(".nav-item.active .nav-label")),
     };
@@ -187,7 +231,7 @@ test("D1 + D4 + D5: every page, both themes, both sizes; reduced motion; nothing
   test.setTimeout(240_000);
   const dir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
   seedReceipts(dir);
-  seedChat(dir, 6);
+  seedChat(dir, 6, LONG_TITLE);
   const { app, page } = await launch(dir, { SKOVERN_BRAIN_LOADED: "1" });
   const offBox: string[] = [];
   page.on("request", (r) => {
@@ -197,6 +241,33 @@ test("D1 + D4 + D5: every page, both themes, both sizes; reduced motion; nothing
   try {
     await signIn(page);
     await seedLocalBrain(app, page);
+
+    // Dawid replies, so Messages has a founder bubble with its label.
+    const email = `design${accounts}@shop.test`;
+    const { rows: acct } = await pool.query<{ id: string }>("SELECT id FROM accounts WHERE email = $1", [email]);
+    const res = await fetch(`${server.url}/admin/dm/reply`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", authorization: "Basic " + Buffer.from(`admin:${ADMIN_PW}`).toString("base64") },
+      body: new URLSearchParams({ accountId: acct[0]!.id, body: FOUNDER_REPLY }).toString(),
+      redirect: "manual",
+    });
+    expect([302, 303]).toContain(res.status);
+    await expect(page.getByLabel(/unread/)).toBeVisible({ timeout: 20_000 });
+    await nav(page, "Messages").click();
+    await expect(page.getByText(FOUNDER_REPLY)).toBeVisible();
+
+    // N6: a chat row's accessible name is exactly its title; the time beside it is decoration.
+    await nav(page, "Chat").click();
+    await expect(page.locator(".chat-list").getByRole("button", { name: LONG_TITLE, exact: true })).toBeVisible();
+
+    // N2: the receipts list is still a table to a screen reader, with all six column headers.
+    await nav(page, "Receipts").click();
+    const table = page.getByRole("table");
+    await expect(table.getByRole("columnheader")).toHaveCount(6);
+    const dataRows = await page.locator(".receipt-list tbody tr").count();
+    expect(dataRows).toBeGreaterThan(0);
+    await expect(table.getByRole("row")).toHaveCount(dataRows + 1);
+    await expect(table.getByRole("cell")).toHaveCount(dataRows * 6);
 
     for (const scheme of ["light", "dark"] as const) {
       await page.emulateMedia({ colorScheme: scheme });
@@ -218,8 +289,18 @@ test("D1 + D4 + D5: every page, both themes, both sizes; reduced motion; nothing
           if (scheme === "light") expect(m.bodyLum, where).toBeGreaterThan(0.85);
           else expect(m.bodyLum, where).toBeLessThan(0.1);
           expect(m.text, `${where}: body text contrast`).toBeGreaterThanOrEqual(4.5);
+          expect(m.secondary, `${where}: weakest secondary text (${m.weakest})`).toBeGreaterThanOrEqual(4.5);
           expect(m.title, `${where}: title contrast`).toBeGreaterThanOrEqual(4.5);
           expect(m.navSel, `${where}: selected nav contrast`).toBeGreaterThanOrEqual(4.5);
+          // The speaker labels are real, visible text (the copy freeze): "Your brain" and "Dawid".
+          const label = name === "Chat" ? ".chat-thread .from-brain .who" : name === "Messages" ? ".from-founder .who" : null;
+          if (label) {
+            const l = await labelShown(page, label);
+            expect(l.text, where).toBe(name === "Chat" ? "Your brain" : "Dawid");
+            expect(l.height, `${where}: label height`).toBeGreaterThanOrEqual(6);
+            expect(l.clipped, `${where}: label clipped`).toBe(false);
+            expect(l.opacity, `${where}: label opacity`).toBeGreaterThan(0.9);
+          }
         }
       }
     }
