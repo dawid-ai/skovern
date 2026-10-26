@@ -33,8 +33,11 @@ const resend = createServer((req: IncomingMessage, res) => {
   req.on("end", () => {
     if (req.method === "POST" && req.url === "/emails") {
       const body = JSON.parse(raw) as { to: string; subject: string; text: string };
-      sent.push({ ...body, auth: req.headers.authorization });
-      res.writeHead(200, { "content-type": "application/json" }).end('{"id":"fake"}');
+      // Answer slowly, like a real mail API, so concurrent joins overlap the send.
+      setTimeout(() => {
+        sent.push({ ...body, auth: req.headers.authorization });
+        res.writeHead(200, { "content-type": "application/json" }).end('{"id":"fake"}');
+      }, 400);
     } else res.writeHead(404).end();
   });
 });
@@ -88,6 +91,8 @@ try {
       body: JSON.stringify(body),
     });
 
+  const pool = new pg.Pool({ connectionString: db.getConnectionUri() });
+  pool.on("error", () => {});
   // S3: signup → number + welcome email with a remove link → details save → repeat is idempotent.
   const j1 = await post("/api/waitlist", { name: "Rosa", email: "rosa@bloom.test" });
   const a = (await j1.json()) as { number: number; detailsToken: string };
@@ -100,6 +105,13 @@ try {
   const j2 = await post("/api/waitlist", { name: "Rosa", email: "ROSA@bloom.test" });
   const b = (await j2.json()) as { number: number };
   check("S3", j2.status === 201 && b.number === 1 && sent.length === 1, `repeat → #${b.number}, emails sent ${sent.length}`);
+  const race = await Promise.all([1, 2].map(() => post("/api/waitlist", { name: "Kim", email: "race@bloom.test" }).then((r) => r.json() as Promise<{ number: number }>)));
+  const raceMails = sent.filter((m) => m.to === "race@bloom.test").length;
+  check("S3", race[0]!.number === race[1]!.number && raceMails === 1, `two joins at once → #${race[0]!.number}/#${race[1]!.number}, ${raceMails} welcome`);
+  const again = (await (await post("/api/waitlist", { name: "Rosa", email: "rosa@bloom.test" })).json()) as { detailsToken: string };
+  await post("/api/waitlist/details", { detailsToken: again.detailsToken, jobTitle: "PWNED", url: "evil.test" });
+  const kept = (await pool.query(`SELECT job_title, url FROM waitlist WHERE email = 'rosa@bloom.test'`)).rows[0] as { job_title: string; url: string };
+  check("S3", kept.job_title === "Owner" && kept.url === "https://bloom.test", `a later token can't change saved answers (${kept.job_title}, ${kept.url})`);
 
   // S4: each bad input is rejected with its own reason.
   const reject = async (path: string, body: unknown, field: string, label: string): Promise<void> => {
@@ -109,9 +121,10 @@ try {
   };
   await reject("/api/waitlist", { name: "Rosa", email: "rosa@" }, "email", "bad email");
   await reject("/api/waitlist", { name: "x".repeat(81), email: "x@bloom.test" }, "name", "81-char name");
+  await reject("/api/waitlist", { name: "Win <a href=x>cash</a>", email: "x@bloom.test" }, "name", "markup in the name");
+  await reject("/api/waitlist", { name: "Claim prize at evil.com", email: "x@bloom.test" }, "name", "domain in the name");
   await reject("/api/waitlist/details", { detailsToken: a.detailsToken, url: "javascript:alert(1)" }, "url", "javascript: URL");
   await reject("/api/waitlist/details", { detailsToken: a.detailsToken, businessType: "casino" }, "businessType", "unknown business type");
-  const pool = new pg.Pool({ connectionString: db.getConnectionUri() });
   await pool.query(`UPDATE waitlist_tokens SET expires_at = now() - interval '1 minute' WHERE kind = 'details'`);
   await reject("/api/waitlist/details", { detailsToken: a.detailsToken, jobTitle: "Owner" }, "detailsToken", "expired token");
 
@@ -119,14 +132,14 @@ try {
   const lee = (await (await post("/api/waitlist", { name: "Lee", email: "lee@bakery.test" })).json()) as { detailsToken: string };
   const leeLink = sent.at(-1)?.text.match(/remove\?t=([\w-]{43})/)?.[1] ?? "";
   const g = await fetch(`${base}/waitlist/remove?t=${leeLink}`);
-  const count = async (): Promise<number> => Number((await pool.query(`SELECT count(*) AS n FROM waitlist`)).rows[0].n);
-  check("S7", g.status === 200 && (await g.text()).includes("Remove me") && (await count()) === 2, "GET shows a confirm button and deletes nothing");
+  const count = async (): Promise<number> => Number((await pool.query(`SELECT count(*) AS n FROM waitlist WHERE email = 'lee@bakery.test'`)).rows[0].n);
+  check("S7", g.status === 200 && (await g.text()).includes("Remove me") && (await count()) === 1, "GET shows a confirm button and deletes nothing");
   const p = await fetch(`${base}/waitlist/remove`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded", "x-forwarded-for": ip() },
     body: `t=${leeLink}`,
   });
-  check("S7", p.status === 200 && (await count()) === 1, `POST deletes → ${p.status}, rows left ${await count()}`);
+  check("S7", p.status === 200 && (await count()) === 0, `POST deletes → ${p.status}, Lee's rows left ${await count()}`);
   await reject("/api/waitlist/details", { detailsToken: lee.detailsToken, jobTitle: "Baker" }, "detailsToken", "token reused after remove");
 
   // S5: CORS only for the two skovern.com origins.
@@ -151,7 +164,8 @@ try {
   check("S6", au.slice(-2).every((s) => s === 429) && !au.slice(0, 6).includes(429), `/auth/request statuses ${au.join(",")}`);
 
   // S8: admin auth + CSV formula neutralization.
-  await post("/api/waitlist", { name: "=HYPERLINK(\"http://x\")", email: "csv@bloom.test" });
+  const csvJoin = (await (await post("/api/waitlist", { name: "Csv", email: "csv@bloom.test" })).json()) as { detailsToken: string };
+  await post("/api/waitlist/details", { detailsToken: csvJoin.detailsToken, jobTitle: "=HYPERLINK(\"http://x\")" });
   const noAuth = await fetch(`${base}/admin/waitlist`);
   const basic = { authorization: `Basic ${Buffer.from(`dawid:${ADMIN}`).toString("base64")}` };
   const withAuth = await fetch(`${base}/admin/waitlist`, { headers: basic });

@@ -44,6 +44,19 @@ function limited(ctx: WaitlistRouteContext, req: IncomingMessage, bucket: string
   };
 }
 
+/** No-JS fallback: the plain HTML form posts here, so send the person back to
+ *  the site. Only a real 201 goes to the done page; every refusal (bad input,
+ *  429, bad body) goes to the "didn't go through" page. */
+export function formRedirect(siteUrl: string, result: HttpResult): HttpResult {
+  const b = result.body as { number?: unknown; field?: unknown };
+  const why = result.status === 429 ? "busy" : typeof b.field === "string" ? b.field : "form";
+  const to =
+    result.status === 201 && typeof b.number === "number"
+      ? `${siteUrl}/waitlist/done/?n=${b.number}`
+      : `${siteUrl}/waitlist/oops/?error=${encodeURIComponent(why)}`;
+  return { status: 303, body: "", contentType: "text/plain", headers: { location: to, "cache-control": "no-store" } };
+}
+
 /** Handles the route and returns true, or returns false if the path isn't ours. */
 export async function routeWaitlist(
   ctx: WaitlistRouteContext,
@@ -67,25 +80,25 @@ export async function routeWaitlist(
     }
     if (method !== "POST") return reply(USE("POST"), cors);
     const join = path === "/api/waitlist";
-    const over = limited(ctx, req, join ? "waitlist" : "details", join ? LIMITS.waitlist : LIMITS.waitlistDetails);
-    if (over) return reply(over, cors);
     const form = join && isFormPost(req);
-    let body: unknown;
-    try {
-      body = form ? Object.fromEntries(await readForm(req)) : await readJson(req);
-    } catch {
-      return reply(BAD_REQUEST, cors);
+    const over = limited(ctx, req, join ? "waitlist" : "details", join ? LIMITS.waitlist : LIMITS.waitlistDetails);
+    let result: HttpResult;
+    if (over) {
+      result = over;
+    } else {
+      let body: unknown;
+      try {
+        body = form ? Object.fromEntries(await readForm(req)) : await readJson(req);
+        result = join ? await handleJoin(ctx.deps, body) : await handleDetails(ctx.deps, body);
+      } catch (err) {
+        const badBody = err instanceof SyntaxError || (err as Error).message === "body too large";
+        // A JSON caller gets the server's generic 500; a no-JS form still lands on a real page.
+        if (!badBody && !form) throw err;
+        if (!badBody) console.error("[waitlist] form signup failed:", (err as Error).message);
+        result = badBody ? BAD_REQUEST : { status: 500, body: { ok: false } };
+      }
     }
-    const result = join ? await handleJoin(ctx.deps, body) : await handleDetails(ctx.deps, body);
-    if (form) {
-      // No-JS fallback: the plain HTML form posts here; send the person back to the site.
-      const b = result.body as { number?: number; field?: string };
-      const to =
-        result.status === 201
-          ? `${ctx.siteUrl}/waitlist/done/?n=${b.number ?? ""}`
-          : `${ctx.siteUrl}/waitlist/done/?error=${encodeURIComponent(b.field ?? "form")}`;
-      return reply({ status: 303, body: "", contentType: "text/plain", headers: { location: to } });
-    }
+    if (form) return reply(formRedirect(ctx.siteUrl, result));
     return reply(result, cors);
   }
 

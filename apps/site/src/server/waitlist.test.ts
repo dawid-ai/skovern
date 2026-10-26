@@ -3,7 +3,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AuthService, AuthStore, ConsoleMailer } from "../auth/service.js";
 import { startAuthServer, type RunningServer } from "../auth/server.js";
-import { DevWelcomeMailer } from "../waitlist/mail.js";
+import type { Welcome, WelcomeMailer } from "../waitlist/mail.js";
 import { WaitlistStore } from "../waitlist/store.js";
 import { RateLimiter } from "./rate-limit.js";
 import { sweepExpired } from "./sweep.js";
@@ -16,7 +16,20 @@ let container: StartedPostgreSqlContainer;
 let pool: pg.Pool;
 let server: RunningServer;
 let store: WaitlistStore;
-const mailer = new DevWelcomeMailer();
+// A slow mail service (like a real one), so two joins overlap while it "sends".
+class SlowMailer implements WelcomeMailer {
+  readonly sent: { to: string; welcome: Welcome }[] = [];
+  failNext = false;
+  async sendWelcome(to: string, welcome: Welcome): Promise<void> {
+    await new Promise((r) => setTimeout(r, 300));
+    if (this.failNext) {
+      this.failNext = false;
+      throw new Error("email send failed (503)");
+    }
+    this.sent.push({ to, welcome });
+  }
+}
+const mailer = new SlowMailer();
 const ADMIN = "admin-token-for-tests";
 let ipSeq = 0;
 const freshIp = (): string => `198.51.100.${(ipSeq += 1)}`;
@@ -86,6 +99,57 @@ describe("waitlist API", () => {
     expect(d.status).toBe(204);
     const [row] = await store.list();
     expect(row).toMatchObject({ number: 1, name: "Rosa", jobTitle: "Owner", businessType: "florist", url: "https://bloom.shop" });
+  });
+
+  it("sends one welcome when the same new address joins twice at once", async () => {
+    const before = mailer.sent.length;
+    const [a, b] = await Promise.all([
+      post("/api/waitlist", { name: "Kim", email: "race@bloom.shop" }),
+      post("/api/waitlist", { name: "Kim", email: "race@bloom.shop" }),
+    ]);
+    const na = ((await a.json()) as { number: number }).number;
+    const nb = ((await b.json()) as { number: number }).number;
+    expect(na).toBe(nb);
+    expect(mailer.sent.slice(before).filter((m) => m.to === "race@bloom.shop")).toHaveLength(1);
+  });
+
+  it("hands the welcome back when the send fails, so the next join retries", async () => {
+    mailer.failNext = true;
+    await post("/api/waitlist", { name: "Ade", email: "retry@bloom.shop" });
+    expect(mailer.sent.some((m) => m.to === "retry@bloom.shop")).toBe(false);
+    await post("/api/waitlist", { name: "Ade", email: "retry@bloom.shop" });
+    expect(mailer.sent.filter((m) => m.to === "retry@bloom.shop")).toHaveLength(1);
+  });
+
+  it("keeps the first step-2 answers when a later token tries to change them", async () => {
+    const first = (await (await post("/api/waitlist", { name: "Sam", email: "keep@bloom.shop" })).json()) as { detailsToken: string };
+    expect((await post("/api/waitlist/details", { detailsToken: first.detailsToken, jobTitle: "Owner" })).status).toBe(204);
+    const again = (await (await post("/api/waitlist", { name: "Sam", email: "keep@bloom.shop" })).json()) as { detailsToken: string };
+    expect(
+      (await post("/api/waitlist/details", { detailsToken: again.detailsToken, jobTitle: "PWNED", businessType: "cafe" })).status,
+    ).toBe(204);
+    const row = (await store.list()).find((x) => x.email === "keep@bloom.shop");
+    // The empty field fills in; the answered one stays.
+    expect(row).toMatchObject({ jobTitle: "Owner", businessType: "cafe" });
+  });
+
+  it("sends a no-JS form to the done page only on success", async () => {
+    const form = async (body: string, ip: string): Promise<string | null> =>
+      (
+        await fetch(`${server.url}/api/waitlist`, {
+          method: "POST",
+          redirect: "manual",
+          headers: { "content-type": "application/x-www-form-urlencoded", "x-forwarded-for": ip },
+          body,
+        })
+      ).headers.get("location");
+    expect(await form("name=Nia&email=nia%40bloom.shop", freshIp())).toMatch(/^https:\/\/skovern\.com\/waitlist\/done\/\?n=\d+$/);
+    expect(await form("name=Nia&email=nia%40bloom", freshIp())).toBe("https://skovern.com/waitlist/oops/?error=email");
+    const ip = "192.0.2.200";
+    const spent: (string | null)[] = [];
+    for (let i = 0; i < 9; i += 1) spent.push(await form("name=&email=", ip));
+    expect(spent.slice(0, 8).every((l) => l === "https://skovern.com/waitlist/oops/?error=name")).toBe(true);
+    expect(spent[8]).toBe("https://skovern.com/waitlist/oops/?error=busy");
   });
 
   it("stores nothing when the honeypot is filled", async () => {

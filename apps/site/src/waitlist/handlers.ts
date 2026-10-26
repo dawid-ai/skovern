@@ -34,10 +34,10 @@ export async function handleJoin(deps: WaitlistDeps, body: unknown): Promise<Htt
       const removeToken = await deps.store.issueToken(joined.id, "remove");
       const removeUrl = `${deps.appUrl()}/waitlist/remove?t=${removeToken}`;
       await deps.mailer.sendWelcome(email, { name, number: joined.number, removeUrl });
-      await deps.store.markWelcomed(joined.id);
     } catch (err) {
-      // The signup is saved; a failed email retries on the next join. Never log the address.
+      // The signup is saved; hand the claim back so the next join retries. Never log the address.
       console.error("[waitlist] welcome email failed:", (err as Error).message);
+      await deps.store.releaseWelcome(joined.id);
     }
   }
   return { status: 201, body: { number: joined.number, detailsToken } };

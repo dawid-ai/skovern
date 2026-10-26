@@ -69,17 +69,18 @@ export class WaitlistStore {
   }
 
   /** Add the person, or find them. The number is drawn once and never changes;
-   *  same-email joins are serialized so the sequence never skips a value. */
+   *  same-email joins are serialized so the sequence never skips a value.
+   *  The welcome email is CLAIMED inside the same lock (welcome_sent_at set
+   *  now), so two simultaneous joins can't both send it. If the send then
+   *  fails, call releaseWelcome to hand the claim back. */
   async join(email: string, name: string): Promise<JoinResult> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
       await client.query("SELECT pg_advisory_xact_lock(hashtext('waitlist:' || $1))", [email]);
-      const found = await client.query<{ id: string; number: string; due: boolean }>(
-        `SELECT id, number,
-                (welcome_sent_at IS NULL OR welcome_sent_at < now() - ($2 || ' hours')::interval) AS due
-           FROM waitlist WHERE email = $1`,
-        [email, String(WELCOME_COOLDOWN_HOURS)],
+      const found = await client.query<{ id: string; number: string }>(
+        `SELECT id, number FROM waitlist WHERE email = $1`,
+        [email],
       );
       let row = found.rows[0];
       if (!row) {
@@ -87,12 +88,17 @@ export class WaitlistStore {
           `INSERT INTO waitlist (email, name) VALUES ($1, $2) RETURNING id, number`,
           [email, name],
         );
-        const ins = inserted.rows[0];
-        if (!ins) throw new Error("waitlist insert failed");
-        row = { ...ins, due: true };
+        row = inserted.rows[0];
+        if (!row) throw new Error("waitlist insert failed");
       }
+      const claimed = await client.query(
+        `UPDATE waitlist SET welcome_sent_at = now()
+          WHERE id = $1 AND (welcome_sent_at IS NULL OR welcome_sent_at < now() - ($2 || ' hours')::interval)
+          RETURNING id`,
+        [row.id, String(WELCOME_COOLDOWN_HOURS)],
+      );
       await client.query("COMMIT");
-      return { id: row.id, number: Number(row.number), welcomeDue: row.due };
+      return { id: row.id, number: Number(row.number), welcomeDue: (claimed.rowCount ?? 0) > 0 };
     } catch (err) {
       await client.query("ROLLBACK");
       throw err;
@@ -101,8 +107,9 @@ export class WaitlistStore {
     }
   }
 
-  async markWelcomed(id: string): Promise<void> {
-    await this.pool.query(`UPDATE waitlist SET welcome_sent_at = now() WHERE id = $1`, [id]);
+  /** The welcome send failed: give the claim back so the next join retries it. */
+  async releaseWelcome(id: string): Promise<void> {
+    await this.pool.query(`UPDATE waitlist SET welcome_sent_at = NULL WHERE id = $1`, [id]);
   }
 
   /** Mint a token for this person. Details tokens expire; remove tokens last
@@ -126,7 +133,9 @@ export class WaitlistStore {
     return r.rows[0]?.waitlist_id ?? null;
   }
 
-  /** Save the optional step-2 answers. False when the token is unknown or expired. */
+  /** Save the optional step-2 answers. False when the token is unknown or expired.
+   *  Only empty fields are filled: anyone who knows an address can get a fresh
+   *  token by joining again, so a later token must not rewrite earlier answers. */
   async saveDetails(
     raw: string,
     d: { jobTitle: string | null; businessType: BusinessType | null; url: string | null },
@@ -134,7 +143,11 @@ export class WaitlistStore {
     const id = await this.resolve(raw, "details");
     if (!id) return false;
     await this.pool.query(
-      `UPDATE waitlist SET job_title = $2, business_type = $3, url = $4 WHERE id = $1`,
+      `UPDATE waitlist
+          SET job_title = COALESCE(job_title, $2),
+              business_type = COALESCE(business_type, $3),
+              url = COALESCE(url, $4)
+        WHERE id = $1`,
       [id, d.jobTitle, d.businessType, d.url],
     );
     return true;

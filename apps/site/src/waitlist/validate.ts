@@ -21,6 +21,11 @@ export const MAX_NAME = 80;
 export const MAX_JOB = 80;
 export const MAX_URL = 200;
 
+/** Letters (any language), combining marks, spaces, apostrophes, periods, hyphens. */
+const NAME = /^[\p{L}\p{M}'’ .-]{1,80}$/u;
+/** A period followed by two or more letters, like ".com" or "bloom.shop". */
+const DOMAIN_LIKE = /\.\p{L}{2,}/u;
+
 export interface FieldError {
   field: string;
   message: string;
@@ -51,9 +56,11 @@ export function checkSignup(body: unknown): Checked<SignupInput> {
   const name = typeof rawName === "string" ? rawName.trim().replace(/\s+/g, " ") : "";
   if (!name) return fail("name", "Tell us what to call you.");
   if (name.length > MAX_NAME) return fail("name", "That name is a bit long. A first name is plenty.");
-  // why: control characters have no business in a name and can corrupt the CSV
-  // or email headers downstream.
-  if (/\p{Cc}/u.test(name)) return fail("name", "That name has odd characters in it.");
+  // The name goes into the welcome email ("Hi Rosa,"), so it may hold only
+  // letters, spaces, and the marks real names use. That keeps links, markup, and
+  // control characters out of a message we send to whatever address was typed.
+  if (!NAME.test(name)) return fail("name", "Use just letters in your name, please.");
+  if (DOMAIN_LIKE.test(name)) return fail("name", "That looks like a web address. Just your name, please.");
   const rawEmail = str(body, "email");
   if (typeof rawEmail !== "string" || !rawEmail.trim()) {
     return fail("email", "We need an email to save your spot.");

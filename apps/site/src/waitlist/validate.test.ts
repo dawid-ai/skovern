@@ -13,7 +13,10 @@ describe("checkSignup", () => {
   it.each([
     [{ email: "a@b.co" }, "name", "Tell us what to call you."],
     [{ name: "x".repeat(81), email: "a@b.co" }, "name", "That name is a bit long. A first name is plenty."],
-    [{ name: "Ro\u0007sa", email: "a@b.co" }, "name", "That name has odd characters in it."],
+    [{ name: "Ro\u0007sa", email: "a@b.co" }, "name", "Use just letters in your name, please."],
+    [{ name: "Rosa <b>hi</b>", email: "a@b.co" }, "name", "Use just letters in your name, please."],
+    [{ name: "Win at https://x.co", email: "a@b.co" }, "name", "Use just letters in your name, please."],
+    [{ name: "Visit bloom.shop now", email: "a@b.co" }, "name", "That looks like a web address. Just your name, please."],
     [{ name: "Rosa" }, "email", "We need an email to save your spot."],
     [{ name: "Rosa", email: "rosa@" }, "email", "That email looks off. Check for a typo?"],
     [{ name: "Rosa", email: `${"a".repeat(250)}@b.co` }, "email", "That email looks off. Check for a typo?"],
@@ -24,6 +27,11 @@ describe("checkSignup", () => {
   it("accepts an 80-character name", () => {
     expect(checkSignup({ name: "x".repeat(80), email: "a@b.co" }).ok).toBe(true);
   });
+
+  it.each(["Zoë O'Brien", "Anne-Marie", "José", "Dr. Ngozi", "Mary J. Blige", "Łukasz", "Aná", "Saoirse O’Neill"])(
+    "accepts the real name %s",
+    (name) => expect(checkSignup({ name, email: "a@b.co" }).ok).toBe(true),
+  );
 
   it("flags a filled honeypot as a bot", () => {
     const r = checkSignup({ name: "Rosa", email: "a@b.co", company_website: "spam.biz" });
