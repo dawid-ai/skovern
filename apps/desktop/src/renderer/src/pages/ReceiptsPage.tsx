@@ -166,10 +166,12 @@ export function ReceiptsPage() {
           ) : (
             <>
               <div className="receipt-scroll">
-                <table className="receipt-list receipt-table">
-                  <thead>
-                    <tr>
-                      <th className="receipt-pick">
+                {/* Explicit roles: the rows are laid out as a CSS grid (two lines each), which can drop
+                    the implicit table semantics in Chromium. These keep it a table for screen readers. */}
+                <table className="receipt-list receipt-table" role="table">
+                  <thead role="rowgroup">
+                    <tr role="row">
+                      <th role="columnheader" className="receipt-pick">
                         <input
                           type="checkbox"
                           checked={allVisibleSelected}
@@ -177,17 +179,17 @@ export function ReceiptsPage() {
                           aria-label="Select all shown"
                         />
                       </th>
-                      <th>What happened</th>
-                      <th>Where</th>
-                      <th>Flow</th>
-                      <th>Detail</th>
-                      <th>When</th>
+                      <th role="columnheader">What happened</th>
+                      <th role="columnheader">Where</th>
+                      <th role="columnheader">Flow</th>
+                      <th role="columnheader">Detail</th>
+                      <th role="columnheader">When</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody role="rowgroup">
                     {page.map(({ r, idx }) => (
-                      <tr key={idx} className="receipt-row">
-                        <td className="receipt-pick">
+                      <tr role="row" key={idx} className="receipt-row">
+                        <td role="cell" className="receipt-pick">
                           <input
                             type="checkbox"
                             checked={selected.has(idx)}
@@ -195,7 +197,7 @@ export function ReceiptsPage() {
                             aria-label={`Select ${who(r)} ${why(r)}`}
                           />
                         </td>
-                        <td className="receipt-what">
+                        <td role="cell" className="receipt-what">
                           <span className="receipt-what-in">
                             <FlowTile r={r} />
                             <span>
@@ -204,16 +206,16 @@ export function ReceiptsPage() {
                             </span>
                           </span>
                         </td>
-                        <td>
+                        <td role="cell">
                           <span className="receipt-where">{where(r)}</span>
                         </td>
-                        <td>
+                        <td role="cell">
                           <FlowTag r={r} />
                         </td>
-                        <td className="receipt-detail">
+                        <td role="cell" className="receipt-detail">
                           <Detail r={r} />
                         </td>
-                        <td className="receipt-time">{fmtTime(r.ts)}</td>
+                        <td role="cell" className="receipt-time">{fmtTime(r.ts)}</td>
                       </tr>
                     ))}
                   </tbody>
