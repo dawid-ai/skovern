@@ -25,6 +25,8 @@ class SlowMailer implements WelcomeMailer {
   failNext = false;
   /** Addresses the "mail service" refuses with a 422, like a bad mailbox. */
   readonly refuse = new Set<string>();
+  /** When set, every send fails with this status (an outage, a bad key, a quota). */
+  failWith: number | undefined = undefined;
   async sendWelcome(to: string, welcome: Welcome): Promise<void> {
     await new Promise((r) => setTimeout(r, 300));
     if (this.failNext) {
@@ -32,6 +34,7 @@ class SlowMailer implements WelcomeMailer {
       throw new MailError(503);
     }
     if (this.refuse.has(to)) throw new MailError(422);
+    if (this.failWith !== undefined) throw new MailError(this.failWith);
     this.sent.push({ to, welcome });
   }
 }
@@ -427,6 +430,53 @@ describe("welcome email budget", () => {
     } finally {
       mailer.refuse.clear();
     }
+  });
+
+  it.each([401, 403, 429])("stops on %i and leaves every row waiting", async (status) => {
+    await reset();
+    const deps = { store, mailer, appUrl: () => "https://api.test" };
+    for (let i = 0; i < 3; i += 1) await waiting(`pending-${status}-${i}@bloom.shop`, 1);
+    const before = mailer.sent.length;
+    mailer.failWith = status;
+    try {
+      expect(await sendWelcomeBacklog(deps)).toBe(0);
+    } finally {
+      mailer.failWith = undefined;
+    }
+    expect(mailer.sent.length).toBe(before);
+    for (let i = 0; i < 3; i += 1) expect(await welcomeOf(`pending-${status}-${i}@bloom.shop`)).toBe("waiting");
+    // Nothing used a budget slot, and the next run sends them all.
+    expect((await pool.query(`SELECT count(*)::int AS n FROM waitlist_welcome_sends`)).rows[0].n).toBe(0);
+    expect(await sendWelcomeBacklog(deps)).toBe(3);
+  });
+
+  it("never marks a live join refused during a 429, and the next sweep sends it", async () => {
+    await reset();
+    const deps = { store, mailer, appUrl: () => "https://api.test" };
+    mailer.failWith = 429;
+    try {
+      expect((await handleJoin(deps, { name: "Rosa", email: "quota@bloom.shop" })).status).toBe(201);
+    } finally {
+      mailer.failWith = undefined;
+    }
+    expect(await welcomeOf("quota@bloom.shop")).toBe("waiting");
+    expect(await sendWelcomeBacklog(deps)).toBe(1);
+    expect(mailer.sent.at(-1)?.to).toBe("quota@bloom.shop");
+  });
+
+  it("keeps a refused address refused for a day, then lets a repeat join retry it", async () => {
+    await reset();
+    const deps = { store, mailer, appUrl: () => "https://api.test" };
+    mailer.refuse.add("typo@bloom.shop");
+    await handleJoin(deps, { name: "Ty", email: "typo@bloom.shop" });
+    mailer.refuse.clear();
+    expect(await welcomeOf("typo@bloom.shop")).toBe("refused");
+    await handleJoin(deps, { name: "Ty", email: "typo@bloom.shop" });
+    expect(await welcomeOf("typo@bloom.shop")).toBe("refused");
+    await pool.query(`UPDATE waitlist SET welcome_skipped_at = now() - interval '25 hours' WHERE email = 'typo@bloom.shop'`);
+    await handleJoin(deps, { name: "Ty", email: "typo@bloom.shop" });
+    expect(await welcomeOf("typo@bloom.shop")).toBe("sent");
+    expect(mailer.sent.at(-1)?.to).toBe("typo@bloom.shop");
   });
 
   it("keeps half the hour for live joins while the backlog is full", async () => {

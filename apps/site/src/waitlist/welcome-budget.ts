@@ -26,6 +26,7 @@ CREATE INDEX IF NOT EXISTS waitlist_welcome_sends_at ON waitlist_welcome_sends (
 -- Why a welcome will never go out: 'expired' (waited over a day in the
 -- backlog) or 'refused' (the mail service rejected the address).
 ALTER TABLE waitlist ADD COLUMN IF NOT EXISTS welcome_skipped text;
+ALTER TABLE waitlist ADD COLUMN IF NOT EXISTS welcome_skipped_at timestamptz;
 `;
 
 /** A repeat signup inside this window gets no second welcome email. */

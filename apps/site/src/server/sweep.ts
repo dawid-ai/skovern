@@ -43,8 +43,8 @@ export function startSweep(pool: pg.Pool, everyMs = 60 * 60_000): () => void {
 /**
  * Mail welcomes waiting in the backlog (over budget at signup, or a failed
  * send): newest first, only under a day old, within the backlog's half of the
- * hourly budget. A refused address (4xx) is skipped and the next one tried; a
- * 5xx or an unreachable mail service stops the run so an outage doesn't spin.
+ * hourly budget. A refused address (400/422) is skipped and the next one tried;
+ * any other failure (401, 403, 429, 5xx, unreachable) stops the run.
  * Returns how many went out.
  */
 export async function sendWelcomeBacklog(deps: WelcomeDeps, max = 50): Promise<number> {

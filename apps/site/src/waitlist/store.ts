@@ -112,9 +112,14 @@ export class WaitlistStore {
     try {
       await client.query("BEGIN");
       await client.query("SELECT pg_advisory_xact_lock(hashtext('waitlist:' || $1))", [email]);
-      const found = await client.query<{ id: string; number: string; due: boolean }>(
+      // Due: never sent (or sent over a day ago) and not skipped; or skipped
+      // (refused, expired) over a day ago, so a person who joins again gets
+      // another try. Within the day, a refused address stays refused.
+      const found = await client.query<{ id: string; number: string; due: boolean; skipped: boolean }>(
         `SELECT id, number,
-                (welcome_sent_at IS NULL OR welcome_sent_at < now() - ($2 || ' hours')::interval) AS due
+                (welcome_skipped IS NULL AND (welcome_sent_at IS NULL OR welcome_sent_at < now() - ($2 || ' hours')::interval))
+                  OR (welcome_skipped IS NOT NULL AND welcome_skipped_at < now() - ($2 || ' hours')::interval) AS due,
+                welcome_skipped IS NOT NULL AS skipped
            FROM waitlist WHERE email = $1`,
         [email, String(WELCOME_COOLDOWN_HOURS)],
       );
@@ -127,15 +132,19 @@ export class WaitlistStore {
         );
         const ins = inserted.rows[0];
         if (!ins) throw new Error("waitlist insert failed");
-        row = { ...ins, due: true };
+        row = { ...ins, due: true, skipped: false };
         created = true;
       }
       // Only a due welcome takes the (global) budget lock; repeats skip it.
       let claim: string | null = null;
       if (row.due) {
         await lockBudget(client);
-        if (await budgetHasRoom(client, this.budget, "live")) claim = await claimRow(client, row.id);
-        else logBudgetSpent(await waitingCount(client));
+        if (await budgetHasRoom(client, this.budget, "live")) {
+          if (row.skipped) {
+            await client.query(`UPDATE waitlist SET welcome_skipped = NULL, welcome_skipped_at = NULL WHERE id = $1`, [row.id]);
+          }
+          claim = await claimRow(client, row.id);
+        } else logBudgetSpent(await waitingCount(client));
       }
       await client.query("COMMIT");
       return { id: row.id, number: Number(row.number), welcomeClaim: claim, created };
@@ -165,7 +174,7 @@ export class WaitlistStore {
       await client.query("BEGIN");
       await lockBudget(client);
       await client.query(
-        `UPDATE waitlist SET welcome_skipped = 'expired'
+        `UPDATE waitlist SET welcome_skipped = 'expired', welcome_skipped_at = now()
           WHERE welcome_sent_at IS NULL AND welcome_skipped IS NULL
             AND created_at < now() - ($1 || ' hours')::interval`,
         [String(BACKLOG_MAX_AGE_HOURS)],
@@ -194,10 +203,11 @@ export class WaitlistStore {
     }
   }
 
-  /** The mail service refused this address (a 4xx): it will never take it, so
-   *  mark the welcome skipped and give the budget slot back. */
+  /** The mail service refused this address (400 or 422): it won't take it, so
+   *  mark the welcome skipped and give the budget slot back. A repeat join over
+   *  a day later gets another try. */
   async skipWelcome(id: string, claim: string): Promise<void> {
-    await this.pool.query(`UPDATE waitlist SET welcome_sent_at = NULL, welcome_skipped = 'refused' WHERE id = $1`, [id]);
+    await this.pool.query(`UPDATE waitlist SET welcome_sent_at = NULL, welcome_skipped = 'refused', welcome_skipped_at = now() WHERE id = $1`, [id]);
     await this.pool.query(`DELETE FROM waitlist_welcome_sends WHERE id = $1`, [claim]);
   }
 
