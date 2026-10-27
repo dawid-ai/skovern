@@ -1,4 +1,5 @@
 import type pg from "pg";
+import { bouncePaused, FEEDBACK_MIGRATION, logWelcomesPaused, welcomeBounceStats } from "./bounce-pause.js";
 
 // A global cap on welcome emails, kept in Postgres so every api instance and
 // restart sees the same count (loop 051 SECURE B2, N1). Resend's free tier
@@ -11,7 +12,8 @@ export interface WelcomeBudget {
   perDay: number;
 }
 
-export const DEFAULT_WELCOME_BUDGET: WelcomeBudget = { perHour: 30, perDay: 90 };
+// 70 welcomes + 25 inbox forwards + 1 summary stay under Resend's 100 a day (loop 052).
+export const DEFAULT_WELCOME_BUDGET: WelcomeBudget = { perHour: 20, perDay: 70 };
 
 /** Who is asking for a slot. The backlog may use at most half of each hour, so
  *  a flood that fills the backlog can't crowd out people joining right now. */
@@ -27,7 +29,7 @@ CREATE INDEX IF NOT EXISTS waitlist_welcome_sends_at ON waitlist_welcome_sends (
 -- backlog) or 'refused' (the mail service rejected the address).
 ALTER TABLE waitlist ADD COLUMN IF NOT EXISTS welcome_skipped text;
 ALTER TABLE waitlist ADD COLUMN IF NOT EXISTS welcome_skipped_at timestamptz;
-`;
+${FEEDBACK_MIGRATION}`;
 
 /** A repeat signup inside this window gets no second welcome email. */
 export const WELCOME_COOLDOWN_HOURS = 24;
@@ -41,8 +43,17 @@ export async function lockBudget(client: pg.PoolClient): Promise<void> {
   await client.query("SELECT pg_advisory_xact_lock(hashtext('waitlist:welcome-budget'))");
 }
 
+/** Why a welcome can't go out now: the budget is spent, or welcomes are
+ *  paused for bounces (bounce-pause.ts). */
+export type Room = "ok" | "spent" | "paused";
+
 /** Under the budget lock: is there a slot for this claimant? */
-export async function budgetHasRoom(client: pg.PoolClient, budget: WelcomeBudget, who: Claimant): Promise<boolean> {
+export async function budgetRoom(client: pg.PoolClient, budget: WelcomeBudget, who: Claimant): Promise<Room> {
+  const stats = await welcomeBounceStats(client);
+  if (bouncePaused(stats)) {
+    logWelcomesPaused(stats);
+    return "paused";
+  }
   const used = await client.query<{ hour: string; day: string }>(
     `SELECT count(*) FILTER (WHERE sent_at > now() - interval '1 hour') AS hour, count(*) AS day
        FROM waitlist_welcome_sends WHERE sent_at > now() - interval '1 day'`,
@@ -50,7 +61,7 @@ export async function budgetHasRoom(client: pg.PoolClient, budget: WelcomeBudget
   const hour = Number(used.rows[0]?.hour ?? 0);
   const day = Number(used.rows[0]?.day ?? 0);
   const hourCap = who === "backlog" ? Math.floor(budget.perHour / 2) : budget.perHour;
-  return hour < hourCap && day < budget.perDay;
+  return hour < hourCap && day < budget.perDay ? "ok" : "spent";
 }
 
 /**

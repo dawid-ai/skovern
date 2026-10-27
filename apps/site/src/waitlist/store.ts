@@ -4,7 +4,7 @@ import { sha256 } from "../auth/tokens.js";
 import type { BusinessType } from "./validate.js";
 import {
   BACKLOG_MAX_AGE_HOURS,
-  budgetHasRoom,
+  budgetRoom,
   claimRow,
   DEFAULT_WELCOME_BUDGET,
   lockBudget,
@@ -139,12 +139,13 @@ export class WaitlistStore {
       let claim: string | null = null;
       if (row.due) {
         await lockBudget(client);
-        if (await budgetHasRoom(client, this.budget, "live")) {
+        const room = await budgetRoom(client, this.budget, "live");
+        if (room === "ok") {
           if (row.skipped) {
             await client.query(`UPDATE waitlist SET welcome_skipped = NULL, welcome_skipped_at = NULL WHERE id = $1`, [row.id]);
           }
           claim = await claimRow(client, row.id);
-        } else logBudgetSpent(await waitingCount(client));
+        } else if (room === "spent") logBudgetSpent(await waitingCount(client));
       }
       await client.query("COMMIT");
       return { id: row.id, number: Number(row.number), welcomeClaim: claim, created };
@@ -179,10 +180,11 @@ export class WaitlistStore {
             AND created_at < now() - ($1 || ' hours')::interval`,
         [String(BACKLOG_MAX_AGE_HOURS)],
       );
-      if (!(await budgetHasRoom(client, this.budget, "backlog"))) {
+      const room = await budgetRoom(client, this.budget, "backlog");
+      if (room !== "ok") {
         const waiting = await waitingCount(client);
         await client.query("COMMIT");
-        if (waiting > 0) logBudgetSpent(waiting);
+        if (waiting > 0 && room === "spent") logBudgetSpent(waiting);
         return null;
       }
       const next = await client.query<{ id: string; email: string; name: string; number: string }>(
