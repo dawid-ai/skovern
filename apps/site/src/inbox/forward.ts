@@ -1,7 +1,7 @@
 import { MailError, resendPost, type ResendEmail } from "../auth/mailer.js";
 import { isOwnDomain } from "../server/config.js";
 import type { ResendQuota } from "../server/resend-usage.js";
-import { buildForward, FORWARD_TAG, INBOX_FROM, senderAddress } from "./message.js";
+import { AUTO_SUBMITTED, buildForward, FORWARD_TAG, isAutoSubmitted, looksSpoofed, senderAddress } from "./message.js";
 import { getAttachmentLinks, getReceivedEmail, type ReceivedEmail, type ResendApi } from "./resend-api.js";
 import type { InboxStore, Lease } from "./store.js";
 
@@ -13,6 +13,8 @@ import type { InboxStore, Lease } from "./store.js";
 
 export interface ForwardDeps {
   api: ResendApi;
+  /** The From line of forwards and the alert (message.ts inboxFrom). */
+  from: string;
   store: InboxStore;
   forwardTo: string;
   maxPerDay: number;
@@ -80,6 +82,20 @@ export async function processOne(deps: ForwardDeps, job: Lease): Promise<Forward
     await deps.store.settle(emailId, "skipped");
     return "loop";
   }
+  // Neither kind takes a forward slot, so a burst of them can't use up the day's
+  // forwards. Both still count against the shared quota (they were received).
+  if (isAutoSubmitted(email)) {
+    await deps.store.settle(emailId, "held_auto");
+    console.warn(`[inbox] email ${emailId} is an automatic reply; it stays in Resend`);
+    return "held";
+  }
+  if (looksSpoofed(email)) {
+    await deps.store.settle(emailId, "held_spam");
+    const a = email.authentication;
+    const checks = a ? `spf ${a.spf}, dkim ${a.dkim}, dmarc ${a.dmarc}` : "no checks";
+    console.warn(`[inbox] email ${emailId} may be spoofed (${checks}); it stays in Resend`);
+    return "held";
+  }
   if (!(await deps.store.claimSlot(`forward/${emailId}`, "forward", deps.quota, deps.maxPerDay))) return hold(deps, emailId);
 
   let links = new Map<string, string>();
@@ -92,7 +108,7 @@ export async function processOne(deps: ForwardDeps, job: Lease): Promise<Forward
     }
   }
   const build = (withAttachments: boolean): ResendEmail =>
-    buildForward(email, { forwardTo: deps.forwardTo, links, withAttachments });
+    buildForward(email, { from: deps.from, forwardTo: deps.forwardTo, links, withAttachments });
 
   let result: Sent = "refused";
   if (!job.namesOnly) {
@@ -119,17 +135,30 @@ export const PAUSED_ALERT = {
     "and isn't forwarded later, so read it there.\n",
 };
 
+/** The UTC day whose skipped alert was already logged (one line a day). */
+let skipLoggedFor = "";
+/** Test seam: let the next skipped-alert line through. */
+export function resetAlertSkipLog(): void {
+  skipLoggedFor = "";
+}
+
 /** Send today's one "forwarding paused" alert, if it hasn't gone out. It counts
- *  against the quota and may use the reserve. Never throws. */
+ *  against the quota and may use the reserve; with the whole quota spent it's
+ *  skipped, with one log line so the stop isn't silent. Never throws. */
 async function sendPausedAlert(deps: ForwardDeps): Promise<void> {
   let day: string | null = null;
   try {
-    day = await deps.store.claimSummary(deps.quota);
-    if (day === null) return;
+    const claim = await deps.store.claimSummary(deps.quota);
+    if (claim.status === "full" && skipLoggedFor !== claim.day) {
+      skipLoggedFor = claim.day;
+      console.warn(`[inbox] forwarding paused, but the alert was skipped: Resend's daily quota is full (${claim.day} UTC)`);
+    }
+    if (claim.status !== "claimed") return;
+    day = claim.day;
     await resendPost(
       deps.api.baseUrl,
       deps.api.apiKey,
-      { from: INBOX_FROM, to: deps.forwardTo, ...PAUSED_ALERT, tags: [{ name: "kind", value: FORWARD_TAG }] },
+      { from: deps.from, to: deps.forwardTo, ...PAUSED_ALERT, headers: { ...AUTO_SUBMITTED }, tags: [{ name: "kind", value: FORWARD_TAG }] },
       { idempotencyKey: `summary/${day}` },
     );
   } catch (err) {

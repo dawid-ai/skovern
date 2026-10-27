@@ -35,7 +35,7 @@ ALTER TABLE inbox_mail ADD COLUMN IF NOT EXISTS next_try timestamptz NOT NULL DE
 ALTER TABLE inbox_mail ADD COLUMN IF NOT EXISTS names_only boolean NOT NULL DEFAULT false;
 ALTER TABLE inbox_mail DROP CONSTRAINT IF EXISTS inbox_mail_outcome_check;
 ALTER TABLE inbox_mail ADD CONSTRAINT inbox_mail_outcome_check
-  CHECK (outcome IN ('pending', 'forwarded', 'held', 'skipped', 'refused', 'gone'));
+  CHECK (outcome IN ('pending', 'forwarded', 'held', 'held_spam', 'held_auto', 'skipped', 'refused', 'gone'));
 CREATE INDEX IF NOT EXISTS inbox_mail_at ON inbox_mail (at);
 CREATE INDEX IF NOT EXISTS inbox_mail_pending ON inbox_mail (next_try) WHERE outcome = 'pending';
 ${USAGE_MIGRATION}`;
@@ -45,7 +45,16 @@ export const HOOK_ID_DAYS = 7;
 /** A pending email older than this is held: Resend's Idempotency-Key lasts 24 hours. */
 export const PENDING_MAX_HOURS = 24;
 
-export type Settled = "forwarded" | "held" | "skipped" | "refused" | "gone";
+/** held: over budget; held_spam: the sender may be forged; held_auto: an
+ *  auto-reply or other machine mail. All stay in Resend, unforwarded. */
+export type Settled = "forwarded" | "held" | "held_spam" | "held_auto" | "skipped" | "refused" | "gone";
+
+/** Today's alert: claimed now (send it), already claimed, or no room even in the reserve. */
+export interface SummaryClaim {
+  status: "claimed" | "already" | "full";
+  /** The UTC day, for the Idempotency-Key and the skip log. */
+  day: string;
+}
 
 export interface Lease {
   emailId: string;
@@ -136,14 +145,15 @@ export class InboxStore {
     });
   }
 
-  /** Claim today's one "forwarding paused" alert. Returns the UTC day (for its
-   *  Idempotency-Key), or null when it was already sent or there's no room even
-   *  in the reserve. */
-  async claimSummary(q: ResendQuota): Promise<string | null> {
+  /** Claim today's one "forwarding paused" alert. */
+  async claimSummary(q: ResendQuota): Promise<SummaryClaim> {
     return this.locked(async (client) => {
       const day = (await client.query<{ day: string }>(`SELECT ${TODAY_UTC}::text AS day`)).rows[0]?.day ?? "";
-      if (!(await sharedRoom(client, q, true))) return null;
-      return (await countUse(client, `summary/${day}`, "summary")) ? day : null;
+      const had = await client.query(`SELECT 1 FROM resend_usage WHERE ref = $1`, [`summary/${day}`]);
+      if (had.rowCount) return { status: "already", day };
+      if (!(await sharedRoom(client, q, true))) return { status: "full", day };
+      await countUse(client, `summary/${day}`, "summary");
+      return { status: "claimed", day };
     });
   }
 
