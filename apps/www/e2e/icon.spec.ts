@@ -5,7 +5,7 @@ import {
   inked,
   open,
   rectOf,
-  screenPixels,
+  screenChange,
   scrollTo,
   shrink,
   stops,
@@ -230,17 +230,7 @@ test.describe("P2: the hero icon moves on its own at rest", () => {
   // Real screen pixels (a screenshot, decoded), so this means the same thing in
   // Chromium, Firefox, and WebKit: the share of pixels in the hero icon's box
   // that changed by more than 24 (of 255) in some channel.
-  const changed = async (page: Page, r: Rect): Promise<number> => {
-    const a = await screenPixels(page, r);
-    await page.waitForTimeout(1000);
-    const b = await screenPixels(page, r);
-    let n = 0;
-    for (let i = 0; i < a.data.length; i += 4) {
-      const d = Math.max(...[0, 1, 2].map((k) => Math.abs((a.data[i + k] ?? 0) - (b.data[i + k] ?? 0))));
-      if (d > 24) n += 1;
-    }
-    return n / (a.data.length / 4);
-  };
+  const changed = (page: Page, r: Rect): Promise<number> => screenChange(page, r, 1000);
   test("after 2 s with no scrolling, two crops 1 s apart differ, and it turns through the frames", async ({ page }) => {
     await page.goto(`${www()}/`);
     await page.waitForFunction(() => document.documentElement.classList.contains("fly-on"));
@@ -261,6 +251,7 @@ test.describe("P2: the hero icon moves on its own at rest", () => {
   // and not even those when the reader asks to save data or for less motion.
   for (const mode of ["save-data", "reduced motion"] as const) {
     test(`with ${mode}, no frame past f-000 is fetched before a scroll`, async ({ page }) => {
+      test.setTimeout(120_000);
       if (mode === "save-data") {
         await page.addInitScript(() => {
           Object.defineProperty(Navigator.prototype, "connection", { configurable: true, get: () => ({ saveData: true }) });

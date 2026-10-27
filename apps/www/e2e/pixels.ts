@@ -258,3 +258,37 @@ export async function measureTile(url: string): Promise<{ top: number; bottom: n
   };
   return { top: across(0.15), bottom: across(0.85) };
 }
+
+/** The share of pixels inside `r` (CSS px) that changed by more than 24 (of
+ *  255) in some channel between two real screenshots `gapMs` apart. Both are
+ *  decoded and compared in the page, so only one number crosses back (big
+ *  pixel arrays made this slow on CI). */
+export async function screenChange(page: Page, r: Rect, gapMs: number): Promise<number> {
+  const clip = { x: r.left, y: r.top, width: r.right - r.left, height: r.bottom - r.top };
+  const a = await page.screenshot({ clip, scale: "css", animations: "allow" });
+  await page.waitForTimeout(gapMs);
+  const b = await page.screenshot({ clip, scale: "css", animations: "allow" });
+  return page.evaluate(
+    async ([a64, b64]) => {
+      const pixels = async (b64s: string): Promise<Uint8ClampedArray> => {
+        const img = new Image();
+        img.src = `data:image/png;base64,${b64s}`;
+        await img.decode();
+        const c = document.createElement("canvas");
+        c.width = img.naturalWidth;
+        c.height = img.naturalHeight;
+        const g = c.getContext("2d", { willReadFrequently: true })!;
+        g.drawImage(img, 0, 0);
+        return g.getImageData(0, 0, c.width, c.height).data;
+      };
+      const [pa, pb] = await Promise.all([pixels(a64), pixels(b64)]);
+      let n = 0;
+      for (let i = 0; i < pa.length; i += 4) {
+        const d = Math.max(Math.abs(pa[i]! - pb[i]!), Math.abs(pa[i + 1]! - pb[i + 1]!), Math.abs(pa[i + 2]! - pb[i + 2]!));
+        if (d > 24) n += 1;
+      }
+      return n / (pa.length / 4);
+    },
+    [a.toString("base64"), b.toString("base64")] as const,
+  );
+}
