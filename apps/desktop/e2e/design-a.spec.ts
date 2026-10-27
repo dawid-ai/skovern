@@ -414,3 +414,151 @@ test("D2 + D3: at 800×520 the update notice fits and clears Send; Chat keeps it
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// P4 (loop 054): every dropdown follows the theme, shut AND open. Electron on Windows draws a
+// plain <select>'s list as a separate OS popup that Playwright can't see, and it came out light
+// grey in dark mode. The selects are customizable (appearance: base-select), so the list is drawn
+// in the page: these checks read its computed styles and then the real window pixels
+// (webContents.capturePage) while it's open. SKOVERN_SHOTS=<dir> also saves those captures.
+interface SelectReport {
+  id: string;
+  scheme: string;
+  appearance: string;
+  field: number;
+  options: { label: string; scheme: string; bgAlpha: number; contrast: number; opacity: number; disabled: boolean }[];
+}
+async function selects(page: Page): Promise<SelectReport[]> {
+  return page.evaluate(() => {
+    type C = [number, number, number, number];
+    const parse = (s: string): C => {
+      const n = (s.match(/[\d.]+/g) ?? []).map(Number);
+      const k = s.startsWith("color(") ? 255 : 1;
+      return [n[0]! * k, n[1]! * k, n[2]! * k, n[3] ?? 1];
+    };
+    const over = (t: C, u: C): C => [t[0] * t[3] + u[0] * (1 - t[3]), t[1] * t[3] + u[1] * (1 - t[3]), t[2] * t[3] + u[2] * (1 - t[3]), 1];
+    const bgOf = (el: Element): C => {
+      const stack: C[] = [];
+      for (let e: Element | null = el; e; e = e.parentElement) {
+        const c = parse(getComputedStyle(e).backgroundColor);
+        if (c[3] > 0) stack.push(c);
+        if (c[3] >= 1) break;
+      }
+      return stack.reverse().reduce<C>((acc, c) => over(c, acc), [255, 255, 255, 1]);
+    };
+    const lum = (c: C): number =>
+      [0.2126, 0.7152, 0.0722].reduce((s, w, i) => {
+        const x = c[i]! / 255;
+        return s + w * (x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4);
+      }, 0);
+    const contrast = (el: Element): number => {
+      const bg = bgOf(el);
+      const [a, b] = [lum(over(parse(getComputedStyle(el).color), bg)), lum(bg)].sort((x, y) => y - x) as [number, number];
+      return (a + 0.05) / (b + 0.05);
+    };
+    return [...document.querySelectorAll("select")].map((s) => ({
+      id: s.id,
+      scheme: getComputedStyle(s).colorScheme,
+      appearance: getComputedStyle(s).appearance,
+      field: contrast(s),
+      options: [...s.options].map((o) => {
+        const cs = getComputedStyle(o);
+        return { label: o.label, scheme: cs.colorScheme, bgAlpha: parse(cs.backgroundColor)[3], contrast: contrast(o), opacity: Number(cs.opacity), disabled: o.disabled };
+      }),
+    }));
+  });
+}
+
+// Mean relative luminance of a window rectangle, from the real rendered pixels.
+async function windowLuminance(app: ElectronApplication, rect: { x: number; y: number; width: number; height: number }, save: string | null): Promise<number> {
+  return app.evaluate(
+    async ({ BrowserWindow }, [r, file]) => {
+      const img = await BrowserWindow.getAllWindows()[0]!.webContents.capturePage({
+        x: Math.round(r.x),
+        y: Math.round(r.y),
+        width: Math.round(r.width),
+        height: Math.round(r.height),
+      });
+      if (file) process.getBuiltinModule("node:fs").writeFileSync(file, img.toPNG());
+      const px = img.toBitmap(); // BGRA
+      const f = (v: number): number => {
+        const x = v / 255;
+        return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+      };
+      let sum = 0;
+      for (let i = 0; i < px.length; i += 4) sum += 0.2126 * f(px[i + 2]!) + 0.7152 * f(px[i + 1]!) + 0.0722 * f(px[i]!);
+      return sum / (px.length / 4);
+    },
+    [rect, save] as const,
+  );
+}
+
+test("P4: every dropdown follows the theme, shut and open, in light and dark", async () => {
+  test.setTimeout(120_000);
+  const dir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
+  const shots = process.env["SKOVERN_SHOTS"] ?? null;
+  const { app, page } = await launch(dir);
+  try {
+    const check = (where: string, list: SelectReport[], scheme: "light" | "dark"): void => {
+      for (const s of list) {
+        const at = `${where} #${s.id}`;
+        expect(s.scheme, `${at}: color-scheme`).toBe(scheme);
+        expect(s.appearance, `${at}: the list is drawn in the page`).toBe("base-select");
+        expect(s.field, `${at}: field text contrast`).toBeGreaterThanOrEqual(4.5);
+        expect(s.options.length, at).toBeGreaterThan(1);
+        for (const o of s.options) {
+          expect(o.scheme, `${at} "${o.label}": color-scheme`).toBe(scheme);
+          expect(o.bgAlpha, `${at} "${o.label}": an opaque, explicit background`).toBe(1);
+          expect(o.disabled, `${at} "${o.label}": not disabled`).toBe(false);
+          expect(o.opacity, `${at} "${o.label}": not faded`).toBe(1);
+          expect(o.contrast, `${at} "${o.label}": text contrast`).toBeGreaterThanOrEqual(4.5);
+        }
+      }
+    };
+    // Onboarding (the sign-in screen) has no dropdowns today; any it gains are checked too.
+    for (const scheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme: scheme });
+      check(`onboarding ${scheme}`, await selects(page), scheme);
+    }
+    await signIn(page);
+    await nav(page, "Settings").click();
+    await expect(page.locator("select#brain")).toBeVisible();
+    for (const scheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.waitForTimeout(150);
+      const list = await selects(page);
+      expect(list.map((s) => s.id)).toContain("brain");
+      check(`Settings ${scheme}`, list, scheme);
+
+      // Open "Pick a brain": the list is really drawn, in the theme's colors.
+      const field = page.locator("select#brain");
+      await field.click();
+      await expect.poll(() => field.evaluate((s) => s.matches(":open"))).toBe(true);
+      const first = (await page.locator("select#brain option").first().boundingBox())!;
+      const last = (await page.locator("select#brain option").last().boundingBox())!;
+      expect(first.height, `${scheme}: the open list is on screen`).toBeGreaterThan(10);
+      await page.waitForTimeout(300); // let the opening fade finish
+      const list0 = { x: first.x, y: first.y, width: first.width, height: last.y + last.height - first.y };
+      const lumList = await windowLuminance(app, list0, shots && path.join(shots, `select-open-${scheme}-list.png`));
+      if (shots) {
+        // The field and its open list (it opens above the field when there's no room below).
+        const box = (await field.boundingBox())!;
+        const top = Math.max(0, Math.min(box.y, first.y) - 24);
+        const bottom = Math.max(box.y + box.height, last.y + last.height) + 24;
+        const left = Math.max(0, Math.min(box.x, first.x) - 24);
+        await windowLuminance(app, { x: left, y: top, width: Math.max(box.width, first.width) + 48, height: bottom - top }, path.join(shots, `select-open-${scheme}.png`));
+      }
+      if (scheme === "dark") expect(lumList, "dark: the open list is dark").toBeLessThan(0.2);
+      else expect(lumList, "light: the open list is light").toBeGreaterThan(0.6);
+
+      // The keyboard still drives it: Escape closes without changing the pick.
+      const before = await field.inputValue();
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("Escape");
+      await expect.poll(() => field.evaluate((s) => s.matches(":open"))).toBe(false);
+      expect(await field.inputValue()).toBe(before);
+    }
+  } finally {
+    await app.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

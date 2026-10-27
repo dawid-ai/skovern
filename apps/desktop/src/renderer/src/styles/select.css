@@ -1,0 +1,102 @@
+/* Dropdowns follow the app theme, shut and open (loop 054).
+   Electron on Windows draws a plain <select>'s list as a separate OS popup. That popup took the
+   field's see-through fill as its background, so in dark mode it came out light grey with
+   washed-out text. A customizable select (appearance: base-select, Chromium 135 and later) draws
+   the list inside the page instead, from the same tokens as everything else. It is still a real
+   <select>: the keyboard, screen readers, and form values work as before. The field itself keeps
+   its look from controls.css. */
+
+/* Explicit, opaque option colors. Without base-select these are what the OS popup paints. */
+option {
+  background-color: var(--surface);
+  color: var(--label);
+}
+
+option:disabled {
+  color: var(--label-3);
+}
+
+@supports (appearance: base-select) {
+  select,
+  ::picker(select) {
+    appearance: base-select;
+  }
+
+  select {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  /* The chevrons are the field's background image (controls.css); hide the built-in arrow. */
+  select::picker-icon {
+    display: none;
+  }
+
+  /* The list: a menu card, like the app's popovers. */
+  ::picker(select) {
+    margin-block: 6px;
+    padding: 5px;
+    border: 0;
+    border-radius: 12px;
+    background: var(--surface);
+    color: var(--label);
+    box-shadow: var(--pop);
+    max-height: min(320px, 60vh);
+    /* Open below the field, and flip above only when it doesn't fit (the default picks the
+       roomier side, so it often opened upward over the page title). */
+    position-try-order: normal;
+    opacity: 1;
+    transform: none;
+    transition:
+      opacity 0.14s ease-out,
+      transform 0.22s var(--spring),
+      overlay 0.14s allow-discrete,
+      display 0.14s allow-discrete;
+  }
+
+  @starting-style {
+    ::picker(select):popover-open {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.98);
+    }
+  }
+
+  option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 32px;
+    padding: 6px 12px 6px 8px;
+    border-radius: 8px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+
+  /* Every row keeps a check-width gap, so the labels line up whether picked or not. */
+  option::checkmark {
+    content: "✓";
+    width: 14px;
+    font-weight: 700;
+    color: var(--tint);
+  }
+
+  option:not(:checked)::checkmark {
+    visibility: hidden;
+  }
+
+  option:checked {
+    font-weight: 600;
+  }
+
+  option:hover,
+  option:focus-visible {
+    background-color: var(--tint);
+    color: var(--on-tint);
+    outline: none;
+  }
+
+  option:hover::checkmark,
+  option:focus-visible::checkmark {
+    color: var(--on-tint);
+  }
+}
