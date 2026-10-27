@@ -8,6 +8,7 @@ import { DmStore } from "../dm/store.js";
 import { pickNotifier } from "../dm/notifier.js";
 import { VisibilityStore } from "../publish/visibility-store.js";
 import { WaitlistStore } from "../waitlist/store.js";
+import { InboxStore } from "../inbox/store.js";
 import { ConfigError, loadConfig, type ServerConfig } from "./config.js";
 import { pickMailers } from "./mailers.js";
 import { RateLimiter } from "./rate-limit.js";
@@ -33,6 +34,7 @@ async function main(): Promise<void> {
   const dm = new DmStore(pool);
   const visibility = new VisibilityStore(pool);
   const waitlist = new WaitlistStore(pool, cfg.welcomeBudget);
+  const inboxStore = new InboxStore(pool);
   try {
     await new AuthStore(pool).migrate();
     await news.migrate();
@@ -40,6 +42,7 @@ async function main(): Promise<void> {
     await dm.migrate();
     await visibility.migrate();
     await waitlist.migrate();
+    await inboxStore.migrate();
   } catch (err) {
     console.error(
       `[auth-server] can't reach the database at ${cfg.databaseUrl.replace(/:[^:@/]*@/, ":***@")}.\n` +
@@ -68,6 +71,23 @@ async function main(): Promise<void> {
     limiter,
     trustProxy: cfg.trustProxy,
     accountRoutes: cfg.accountRoutes,
+    // loadConfig refuses an inbox config without RESEND_API_KEY.
+    ...(cfg.inbox && cfg.resendKey
+      ? {
+          inbox: {
+            key: cfg.inbox.webhookKey,
+            forward: {
+              api: { baseUrl: cfg.resendUrl, apiKey: cfg.resendKey },
+              store: inboxStore,
+              forwardTo: cfg.inbox.forwardTo,
+              maxPerDay: cfg.inbox.maxPerDay,
+            },
+            pool,
+            limiter,
+            trustProxy: cfg.trustProxy,
+          },
+        }
+      : {}),
     waitlist: {
       deps: { store: waitlist, mailer: mailers.welcome, appUrl: () => authConfig.appUrl },
       limiter,
@@ -90,7 +110,13 @@ async function main(): Promise<void> {
       : `[auth-server] admin pages DISABLED — set SKOVERN_ADMIN_TOKEN before starting to enable them`,
   );
 
-  const stopSweep = startSweep(pool);
+  console.log(
+    cfg.inbox
+      ? `[auth-server] inbox webhook ON at /hooks/resend/inbound (up to ${cfg.inbox.maxPerDay} forwards a day)`
+      : "[auth-server] inbox webhook OFF (set RESEND_WEBHOOK_SECRET and FORWARD_TO to turn it on)",
+  );
+
+  const stopSweep = startSweep(pool, undefined, () => inboxStore.prune());
   const stopBacklog = startWelcomeBacklog({ store: waitlist, mailer: mailers.welcome, appUrl: () => authConfig.appUrl });
   const pruneTimer = setInterval(() => limiter.prune(), 5 * 60_000);
   pruneTimer.unref();

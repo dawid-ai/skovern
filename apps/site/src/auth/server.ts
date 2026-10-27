@@ -17,6 +17,7 @@ import type { VisibilityStore } from "../publish/visibility-store.js";
 import { bearer, clientIp, readForm, readJson, send } from "../http.js";
 import { LIMITS, limitFailures, RateLimiter } from "../server/rate-limit.js";
 import { routeWaitlist, type WaitlistRouteContext } from "../waitlist/routes.js";
+import { handleInboxHook, HOOK_PATH, type InboxRouteContext } from "../inbox/hook.js";
 
 export interface RunningServer {
   url: string;
@@ -71,6 +72,9 @@ export function startAuthServer(opts: {
   port?: number;
   /** Bind address. 127.0.0.1 for dev; the container sets 0.0.0.0. */
   host?: string;
+  /** Resend's signed webhook: inbox forwarding and bounce feedback (loop 052).
+   *  Unset = the route isn't mounted (404). */
+  inbox?: InboxRouteContext;
   /** Waitlist API, remove page, and admin view (loop 051). */
   waitlist?: WaitlistRouteContext;
   /** Per-IP limiter for /auth/request; shares the waitlist's proxy rule. */
@@ -96,6 +100,7 @@ export function startAuthServer(opts: {
         if (path === "/healthz") {
           return send(res, { status: 200, body: { ok: true } }, { "cache-control": "no-store" });
         }
+        if (opts.inbox && path === HOOK_PATH) return send(res, await handleInboxHook(opts.inbox, req));
         if (opts.waitlist && (await routeWaitlist(opts.waitlist, req, res, path))) return;
         // Before the beta, production mounts only the waitlist: no sign-in, DM,
         // publish, news, or their admin pages (ACCOUNT_ROUTES, loop 051 SECURE B1).
