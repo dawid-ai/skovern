@@ -181,7 +181,7 @@ try {
   check("S9", og1.headers.get("x-skovern-cache") === "miss" && og2.headers.get("x-skovern-cache") === "hit", "second hit served from cache");
 
   // F1–F7: the signed Resend webhook forwards mail to FORWARD_TO (loop 052).
-  inbox = await inboxClauses(h, check, base);
+  inbox = await inboxClauses(h, check, base, pool);
 
   // S10: SIGTERM drains and exits within 10 s, even with an idle keep-alive socket open.
   const sock = connect(api.port, "127.0.0.1");

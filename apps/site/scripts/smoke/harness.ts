@@ -9,25 +9,16 @@
 // NODE_EXTRA_CA_CERTS, copied in before it starts. Nothing is trusted on the host.
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { createServer, type IncomingMessage } from "node:http";
-import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
+import { FakeResend } from "./fake-resend.ts";
 
 export const IMAGE = process.env["SMOKE_IMAGE"] ?? "skovern-api-smoke";
 const CADDY = "caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d";
 const HOST_GW = ["--add-host", "host.docker.internal:host-gateway"];
 
-export interface SentEmail {
-  from: string;
-  to: string;
-  subject: string;
-  text: string;
-  reply_to?: string;
-  attachments?: { filename: string; path: string }[];
-  auth: string | undefined;
-}
+export type { FakeSend as SentEmail } from "./fake-resend.ts";
 
 export interface Api {
   id: string;
@@ -41,38 +32,10 @@ const envArgs = (env: Record<string, string>): string[] => Object.entries(env).f
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 export async function startHarness(adminToken: string) {
-  const sent: SentEmail[] = [];
-  /** Received emails the fake Receiving API serves, by ID (loop 052). */
-  const inbound = new Map<string, Record<string, unknown>>();
-  /** Every Receiving API path the api fetched. */
-  const fetched: string[] = [];
-  const resend = createServer((req: IncomingMessage, res) => {
-    let raw = "";
-    req.on("data", (c: Buffer) => (raw += c.toString()));
-    req.on("end", () => {
-      const receiving = /^\/emails\/receiving\/([\w-]+)(\/attachments)?(\?.*)?$/.exec(req.url ?? "");
-      if (req.method === "GET" && receiving) {
-        fetched.push(req.url ?? "");
-        const e = inbound.get(receiving[1]!);
-        if (!e) return void res.writeHead(404).end("{}");
-        const files = (e["attachments"] ?? []) as { id: string }[];
-        const body = receiving[2]
-          ? { object: "list", has_more: false, data: files.map((a) => ({ ...a, download_url: `https://inbound-cdn.test/${a.id}` })) }
-          : e;
-        return void res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(body));
-      }
-      if (req.method === "POST" && req.url === "/emails") {
-        const body = JSON.parse(raw) as Omit<SentEmail, "auth">;
-        // Answer slowly, like a real mail API, so concurrent joins overlap the send.
-        setTimeout(() => {
-          sent.push({ ...body, auth: req.headers.authorization });
-          res.writeHead(200, { "content-type": "application/json" }).end('{"id":"fake"}');
-        }, 400);
-      } else res.writeHead(404).end();
-    });
-  });
-  await new Promise<void>((r) => resend.listen(0, "0.0.0.0", () => r()));
-  const resendPort = (resend.address() as AddressInfo).port;
+  const resend = new FakeResend();
+  // Answer slowly, like a real mail API, so concurrent joins overlap the send.
+  resend.delayMs = 400;
+  const { port: resendPort } = await resend.listen("0.0.0.0");
 
   console.log("Starting Postgres and the TLS front for the fake Resend…");
   const db: StartedPostgreSqlContainer = await new PostgreSqlContainer("postgres:17-alpine").start();
@@ -139,5 +102,5 @@ export async function startHarness(adminToken: string) {
     resend.close();
   };
 
-  return { sent, inbound, fetched, db, baseEnv, runOnce, startApi, close };
+  return { resend, sent: resend.sent, inbound: resend.inbound, fetched: resend.fetched, db, baseEnv, runOnce, startApi, close };
 }

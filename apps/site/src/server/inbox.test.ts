@@ -1,37 +1,29 @@
 import { createHmac } from "node:crypto";
-import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
 import pg from "pg";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthService, AuthStore, ConsoleMailer } from "../auth/service.js";
 import { startAuthServer, type RunningServer } from "../auth/server.js";
-import { HOOK_PATH, type InboxRouteContext } from "../inbox/hook.js";
+import type { ForwardDeps } from "../inbox/forward.js";
+import { HOOK_PATH } from "../inbox/hook.js";
 import { InboxStore } from "../inbox/store.js";
-import { WaitlistStore } from "../waitlist/store.js";
-import { RateLimiter } from "./rate-limit.js";
+import { InboxWorker } from "../inbox/worker.js";
+import { FakeResend } from "../../scripts/smoke/fake-resend.js";
 
-// Loop 052 F1–F7: the signed Resend webhook in-process, against a real Postgres
-// and a fake Resend that serves the Receiving API and records sends.
+// Loop 052 F1–F7 (and checker B2): the signed Resend webhook in-process, against
+// a real Postgres and a fake Resend that serves the Receiving API.
 
 const KEY = Buffer.from("c2tvdmVybi1pbmJveC10ZXN0LWtleS0wMTIz", "base64");
 const FORWARD_TO = "dawid@inbox.test";
 const ID = "4ef9a417-02e9-4d39-ad75-9611e0fcc33c";
 
-interface Sent { from: string; to: string; subject: string; text: string; reply_to?: string; attachments?: { path: string }[] }
-
 let container: StartedPostgreSqlContainer;
 let pool: pg.Pool;
-let fake: Server;
-let resendUrl: string;
 let on: RunningServer;
 let off: RunningServer;
-let ctx: InboxRouteContext;
-const sent: Sent[] = [];
-const fetched: string[] = [];
-const emails = new Map<string, Record<string, unknown>>();
-/** Make the fake answer 422 to every send, or to sends with attachments. */
-let refuseSends: "none" | "all" | "attachments" = "none";
+let deps: ForwardDeps;
+let worker: InboxWorker;
+const fake = new FakeResend();
 
 const received = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   object: "email", id: ID, from: "Rosa <rosa@bloom.test>", to: ["hi@skovern.com"], cc: [], bcc: [], reply_to: [],
@@ -40,69 +32,36 @@ const received = (over: Record<string, unknown> = {}): Record<string, unknown> =
 });
 
 beforeAll(async () => {
-  fake = createServer((req, res) => {
-    let raw = "";
-    req.on("data", (c: Buffer) => (raw += c.toString()));
-    req.on("end", () => {
-      const url = req.url ?? "";
-      const m = /^\/emails\/receiving\/([\w-]+)(\/attachments)?(\?.*)?$/.exec(url);
-      if (req.method === "GET" && m) {
-        fetched.push(url);
-        const e = emails.get(m[1]!);
-        if (!e) return void res.writeHead(404).end("{}");
-        const body = m[2]
-          ? { object: "list", has_more: false, data: (e["attachments"] as { id: string }[]).map((a) => ({ ...a, download_url: `https://cdn.test/${a.id}` })) }
-          : e;
-        return void res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(body));
-      }
-      if (req.method === "POST" && url === "/emails") {
-        const mail = JSON.parse(raw) as Sent;
-        if (refuseSends === "all" || (refuseSends === "attachments" && mail.attachments)) return void res.writeHead(422).end("{}");
-        sent.push(mail);
-        return void res.writeHead(200, { "content-type": "application/json" }).end('{"id":"fake"}');
-      }
-      res.writeHead(404).end();
-    });
-  });
-  await new Promise<void>((r) => fake.listen(0, "127.0.0.1", () => r()));
-  resendUrl = `http://127.0.0.1:${(fake.address() as AddressInfo).port}`;
-
+  const { url } = await fake.listen();
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   pool = new pg.Pool({ connectionString: container.getConnectionUri() });
   pool.on("error", (err: Error & { code?: string }) => {
     if (err.code !== "57P01") throw err;
   });
   await new AuthStore(pool).migrate();
-  await new WaitlistStore(pool).migrate();
   const store = new InboxStore(pool);
   await store.migrate();
+  deps = { api: { baseUrl: url, apiKey: "re_test" }, store, forwardTo: FORWARD_TO, maxPerDay: 25, quota: { quota: 100, reserve: 15 } };
+  worker = new InboxWorker(deps);
   const auth = new AuthService(new AuthStore(pool), new ConsoleMailer(), { appUrl: "http://x" });
-  ctx = {
-    key: KEY,
-    forward: { api: { baseUrl: resendUrl, apiKey: "re_test" }, store, forwardTo: FORWARD_TO, maxPerDay: 25 },
-    pool,
-    limiter: new RateLimiter(),
-    trustProxy: true,
-  };
-  on = await startAuthServer({ service: auth, inbox: ctx, accountRoutes: false });
+  on = await startAuthServer({ service: auth, inbox: { key: KEY, store, worker, pool }, accountRoutes: false, trustProxy: true });
   off = await startAuthServer({ service: auth, accountRoutes: false });
 });
 
 afterAll(async () => {
+  await worker?.drain();
   await on?.close();
   await off?.close();
   await pool?.end();
   await container?.stop();
-  fake?.close();
+  fake.close();
 });
 
 beforeEach(async () => {
-  sent.length = 0;
-  fetched.length = 0;
-  emails.clear();
-  ctx.forward.maxPerDay = 25;
-  refuseSends = "none";
-  await pool.query("TRUNCATE resend_hook_ids, inbox_mail, inbox_summaries");
+  fake.reset();
+  deps.maxPerDay = 25;
+  deps.forwardTo = FORWARD_TO;
+  await pool.query("TRUNCATE resend_hook_ids, inbox_mail, resend_usage");
 });
 
 let hookSeq = 0;
@@ -115,39 +74,61 @@ function signed(body: string, o: { id?: string; at?: number; key?: Buffer } = {}
 }
 const event = (emailId: string, extra: Record<string, unknown> = {}): string =>
   JSON.stringify({ type: "email.received", created_at: "2026-10-27T10:00:00Z", data: { email_id: emailId, ...extra } });
-function hook(body: string, headers: Record<string, string>, base = on.url): Promise<Response> {
-  return fetch(`${base}${HOOK_PATH}`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body });
+/** Post to the webhook, then let the worker finish what it queued. */
+async function hook(body: string, headers: Record<string, string>, base = on.url): Promise<Response> {
+  const r = await fetch(`${base}${HOOK_PATH}`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body });
+  worker.kick();
+  await worker.drain();
+  return r;
 }
+const send = (emailId: string): Promise<Response> => hook(event(emailId), signed(event(emailId)));
+const outcome = async (emailId: string): Promise<string | undefined> =>
+  (await pool.query<{ outcome: string }>(`SELECT outcome FROM inbox_mail WHERE email_id = $1`, [emailId])).rows[0]?.outcome;
 
 describe("POST /hooks/resend/inbound", () => {
   it("F1: forwards a validly signed email.received to FORWARD_TO, replying to the sender", async () => {
-    emails.set(ID, received());
-    const body = event(ID);
-    const r = await hook(body, signed(body));
+    fake.inbound.set(ID, received());
+    const r = await send(ID);
     expect(r.status).toBe(200);
-    expect(sent).toHaveLength(1);
-    expect(sent[0]).toMatchObject({
+    expect(fake.sent).toHaveLength(1);
+    expect(fake.sent[0]).toMatchObject({
       from: "Skovern inbox <inbox@skovern.com>",
       to: FORWARD_TO,
       reply_to: "rosa@bloom.test",
       subject: "[skovern.com] Do you do weddings?",
+      key: `forward/${ID}`,
     });
-    expect(sent[0]!.text).toContain("To: hi@skovern.com\n\nHi! June 14, about 80 people.");
+    expect(fake.sent[0]!.text).toContain("To: hi@skovern.com\n\nHi! June 14, about 80 people.");
+    expect(await outcome(ID)).toBe("forwarded");
   });
 
   it("F1: keeps attachments and flags failed SPF with [spam?]", async () => {
-    emails.set(ID, received({
+    fake.inbound.set(ID, received({
       authentication: { spf: "fail", dkim: "pass", dmarc: "fail" },
       attachments: [{ id: "a1", filename: "quote.pdf", content_type: "application/pdf", content_id: null, size: 1200 }],
     }));
-    const body = event(ID);
-    expect((await hook(body, signed(body))).status).toBe(200);
-    expect(sent[0]?.subject).toBe("[spam?] [skovern.com] Do you do weddings?");
-    expect(sent[0]?.attachments).toEqual([{ filename: "quote.pdf", path: "https://cdn.test/a1", content_type: "application/pdf" }]);
+    expect((await send(ID)).status).toBe(200);
+    expect(fake.sent[0]?.subject).toBe("[spam?] [skovern.com] Do you do weddings?");
+    expect(fake.sent[0]?.attachments).toEqual([{ filename: "quote.pdf", path: "https://inbound-cdn.test/a1", content_type: "application/pdf" }]);
+  });
+
+  it("uses the message's own Reply-To when it's one plain outside address, else the sender", async () => {
+    const cases: [unknown[], string][] = [
+      [["Orders <orders@bloom.test>"], "orders@bloom.test"],
+      [["a@bloom.test", "b@bloom.test"], "rosa@bloom.test"],
+      [["hi@skovern.com"], "rosa@bloom.test"],
+      [["not an address"], "rosa@bloom.test"],
+    ];
+    for (const [i, [replyTo, want]] of cases.entries()) {
+      const id = `33333333-0000-4000-8000-00000000000${i}`;
+      fake.inbound.set(id, received({ id, reply_to: replyTo }));
+      await send(id);
+      expect(fake.sent.at(-1)?.reply_to, JSON.stringify(replyTo)).toBe(want);
+    }
   });
 
   it("F2: refuses a bad signature, a missing header, a stale timestamp, or a tampered body with 401", async () => {
-    emails.set(ID, received());
+    fake.inbound.set(ID, received());
     const body = event(ID);
     const good = signed(body);
     const cases: [string, Record<string, string>, string][] = [
@@ -157,16 +138,25 @@ describe("POST /hooks/resend/inbound", () => {
       ["6 minutes stale", signed(body, { at: Date.now() - 6 * 60_000 }), body],
       ["tampered body", good, body.replace(ID, ID.replace("4", "5"))],
     ];
-    for (const [label, headers, b] of cases) {
-      const r = await hook(b, headers);
-      expect(r.status, label).toBe(401);
+    for (const [label, headers, b] of cases) expect((await hook(b, headers)).status, label).toBe(401);
+    expect(fake.sent).toHaveLength(0);
+    expect(fake.fetched).toHaveLength(0);
+    expect(Number((await pool.query(`SELECT count(*) AS n FROM inbox_mail`)).rows[0].n)).toBe(0);
+  });
+
+  it("B2: 25 badly signed requests from one address don't lock out a valid one from it", async () => {
+    fake.inbound.set(ID, received());
+    const body = event(ID);
+    const from = { "x-forwarded-for": "203.0.113.9" };
+    for (let i = 0; i < 25; i += 1) {
+      expect((await hook(body, { ...signed(body, { key: Buffer.from("wrong") }), ...from })).status).toBe(401);
     }
-    expect(sent).toHaveLength(0);
-    expect(fetched).toHaveLength(0);
+    expect((await hook(body, { ...signed(body), ...from })).status).toBe(200);
+    expect(fake.sent).toHaveLength(1);
   });
 
   it("F3: a replayed svix-id gets 200 and no second forward", async () => {
-    emails.set(ID, received());
+    fake.inbound.set(ID, received());
     const body = event(ID);
     const headers = signed(body);
     expect((await hook(body, headers)).status).toBe(200);
@@ -175,23 +165,26 @@ describe("POST /hooks/resend/inbound", () => {
     expect(await again.json()).toMatchObject({ duplicate: true });
     // The same email under a new delivery ID (a manual resend) isn't forwarded twice either.
     expect((await hook(body, signed(body))).status).toBe(200);
-    expect(sent).toHaveLength(1);
+    expect(fake.sent).toHaveLength(1);
   });
 
-  it("F4: past the cap, holds mail, logs one line each, and sends one summary a day", async () => {
-    ctx.forward.maxPerDay = 2;
+  it("F4: past the cap, holds mail, logs one line each, and sends one alert a day", async () => {
+    deps.maxPerDay = 2;
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const ids = ["11111111-0000-4000-8000-000000000001", "11111111-0000-4000-8000-000000000002", "11111111-0000-4000-8000-000000000003", "11111111-0000-4000-8000-000000000004"];
+    const ids = [1, 2, 3, 4].map((n) => `11111111-0000-4000-8000-00000000000${n}`);
     for (const id of ids) {
-      emails.set(id, received({ id }));
-      const body = event(id);
-      expect((await hook(body, signed(body))).status).toBe(200);
+      fake.inbound.set(id, received({ id }));
+      expect((await send(id)).status).toBe(200);
     }
-    const forwards = sent.filter((s) => s.subject.startsWith("[skovern.com] Do you"));
-    const summaries = sent.filter((s) => s.subject.includes("waiting in Resend"));
-    expect(forwards).toHaveLength(2);
-    expect(summaries).toHaveLength(1);
-    expect(summaries[0]).toMatchObject({ to: FORWARD_TO, subject: "[skovern.com] 1 email waiting in Resend" });
+    const alerts = fake.sent.filter((s) => s.subject === "[skovern.com] Forwarding paused for today");
+    expect(fake.sent.filter((s) => s.subject.startsWith("[skovern.com] Do you"))).toHaveLength(2);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({ to: FORWARD_TO, key: expect.stringMatching(/^summary\/\d{4}-\d{2}-\d{2}$/) });
+    expect(alerts[0]!.text).toContain("New mail is waiting in Resend → Emails → Receiving.");
+    expect(await outcome(ids[3]!)).toBe("held");
+    // Two holds, one alert claimed: the second never reaches Resend at all.
+    const claimed = await pool.query(`SELECT count(*) AS n FROM resend_usage WHERE kind = 'summary'`);
+    expect(Number(claimed.rows[0].n)).toBe(1);
     const lines = warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes("forward budget spent"));
     expect(lines).toHaveLength(2);
     expect(lines.join("\n")).not.toMatch(/@/);
@@ -199,93 +192,59 @@ describe("POST /hooks/resend/inbound", () => {
   });
 
   it("F5: never forwards mail from a @skovern.com sender", async () => {
-    for (const from of ["hi@skovern.com", "Skovern inbox <inbox@skovern.com>", "x@mail.SKOVERN.com"]) {
-      emails.clear();
-      emails.set(ID, received({ from }));
-      await pool.query("TRUNCATE inbox_mail");
-      const body = event(ID);
-      expect((await hook(body, signed(body))).status).toBe(200);
+    for (const [i, from] of ["hi@skovern.com", "Skovern inbox <inbox@skovern.com>", "x@mail.SKOVERN.com"].entries()) {
+      const id = `44444444-0000-4000-8000-00000000000${i}`;
+      fake.inbound.set(id, received({ id, from }));
+      expect((await send(id)).status).toBe(200);
+      expect(await outcome(id)).toBe("skipped");
     }
-    expect(sent).toHaveLength(0);
+    expect(fake.sent).toHaveLength(0);
   });
 
   it("F6: without RESEND_WEBHOOK_SECRET the route is a 404", async () => {
-    const body = event(ID);
-    expect((await hook(body, signed(body), off.url)).status).toBe(404);
+    expect((await hook(event(ID), signed(event(ID)), off.url)).status).toBe(404);
   });
 
   it("F7: content and recipient come from the Receiving API, never the webhook body", async () => {
-    emails.set(ID, received({ subject: "From the API" }));
+    fake.inbound.set(ID, received({ subject: "From the API" }));
     const body = event(ID, { to: ["evil@attacker.test"], from: "boss@bank.test", subject: "From the webhook", forward_to: "evil@attacker.test", text: "pwned" });
     expect((await hook(body, signed(body))).status).toBe(200);
-    expect(fetched[0]).toBe(`/emails/receiving/${ID}?html_format=cid`);
-    expect(sent).toHaveLength(1);
-    expect(sent[0]).toMatchObject({ to: FORWARD_TO, subject: "[skovern.com] From the API", reply_to: "rosa@bloom.test" });
-    expect(JSON.stringify(sent[0])).not.toMatch(/attacker|pwned|bank\.test/);
+    expect(fake.fetched[0]).toBe(`/emails/receiving/${ID}?html_format=cid`);
+    expect(fake.sent).toHaveLength(1);
+    expect(fake.sent[0]).toMatchObject({ to: FORWARD_TO, subject: "[skovern.com] From the API", reply_to: "rosa@bloom.test" });
+    expect(JSON.stringify(fake.sent[0])).not.toMatch(/attacker|pwned|bank\.test/);
   });
 
   it("never sends to our own domain, even with the config check bypassed", async () => {
-    emails.set(ID, received());
-    ctx.forward.forwardTo = "hi@skovern.com";
-    try {
-      const body = event(ID);
-      const r = await hook(body, signed(body));
-      expect(await r.json()).toMatchObject({ outcome: "loop" });
-      expect(sent).toHaveLength(0);
-    } finally {
-      ctx.forward.forwardTo = FORWARD_TO;
-    }
-  });
-
-  it("limits badly signed requests per address, never a valid one from elsewhere", async () => {
-    const body = event(ID);
-    const statuses: number[] = [];
-    for (let i = 0; i < 21; i += 1) {
-      statuses.push((await hook(body, { ...signed(body, { key: Buffer.from("wrong") }), "x-forwarded-for": "203.0.113.9" })).status);
-    }
-    expect(statuses.slice(0, 20).every((s) => s === 401)).toBe(true);
-    expect(statuses[20]).toBe(429);
-    emails.set(ID, received());
-    expect((await hook(body, { ...signed(body), "x-forwarded-for": "203.0.113.10" })).status).toBe(200);
+    fake.inbound.set(ID, received());
+    deps.forwardTo = "hi@skovern.com";
+    await send(ID);
+    expect(fake.sent).toHaveLength(0);
+    expect(await outcome(ID)).toBe("skipped");
   });
 
   it("resends without attachments, listed by name, when Resend refuses them; gives up on a refused message", async () => {
-    emails.set(ID, received({ attachments: [{ id: "a1", filename: "menu.pdf", content_type: "application/pdf", content_id: null, size: 1200 }] }));
-    refuseSends = "attachments";
-    const body = event(ID);
-    expect((await hook(body, signed(body))).status).toBe(200);
-    expect(sent).toHaveLength(1);
-    expect(sent[0]?.attachments).toBeUndefined();
-    expect(sent[0]?.text).toContain("- menu.pdf (0.1 MB)");
+    fake.inbound.set(ID, received({ attachments: [{ id: "a1", filename: "menu.pdf", content_type: "application/pdf", content_id: null, size: 1200 }] }));
+    fake.refuseAttachments = true;
+    await send(ID);
+    expect(fake.sent).toHaveLength(1);
+    expect(fake.sent[0]).toMatchObject({ key: `forward/${ID}/names` });
+    expect(fake.sent[0]?.attachments).toBeUndefined();
+    expect(fake.sent[0]?.text).toContain("- menu.pdf (0.1 MB)");
 
     const other = "22222222-0000-4000-8000-000000000001";
-    emails.set(other, received({ id: other }));
-    refuseSends = "all";
-    const body2 = event(other);
-    const r = await hook(body2, signed(body2));
-    expect(r.status).toBe(200);
-    expect(await r.json()).toMatchObject({ outcome: "refused" });
-    expect((await pool.query(`SELECT outcome FROM inbox_mail WHERE email_id = $1`, [other])).rows[0]).toEqual({ outcome: "refused" });
+    fake.inbound.set(other, received({ id: other }));
+    fake.sendFaults = [422];
+    await send(other);
+    expect(await outcome(other)).toBe("refused");
   });
 
-  it("answers 500 and forgets the delivery when Resend is down, so the retry forwards", async () => {
-    const body = event(ID);
-    const headers = signed(body);
-    const realUrl = ctx.forward.api.baseUrl;
-    ctx.forward.api.baseUrl = "http://127.0.0.1:1";
-    expect((await hook(body, headers)).status).toBe(500);
-    ctx.forward.api.baseUrl = realUrl;
-    emails.set(ID, received());
-    expect((await hook(body, headers)).status).toBe(200);
-    expect(sent).toHaveLength(1);
-  });
-
-  it("acknowledges a signed event it doesn't handle, and an email Resend doesn't have", async () => {
+  it("acknowledges a signed event it doesn't handle, and settles an email Resend doesn't have", async () => {
     const other = JSON.stringify({ type: "email.delivered", data: { email_id: ID } });
     expect((await hook(other, signed(other))).status).toBe(200);
-    const gone = event("99999999-0000-4000-8000-000000000000");
-    const r = await hook(gone, signed(gone));
-    expect(await r.json()).toMatchObject({ outcome: "gone" });
-    expect(sent).toHaveLength(0);
+    const gone = "99999999-0000-4000-8000-000000000000";
+    expect((await send(gone)).status).toBe(200);
+    expect(await outcome(gone)).toBe("gone");
+    expect(fake.sent).toHaveLength(0);
   });
 });

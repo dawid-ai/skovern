@@ -2,6 +2,7 @@
 // fake Resend (over TLS) serving the Receiving API. Signs webhooks the way Svix
 // does, independently of the code under test.
 import { createHmac } from "node:crypto";
+import type pg from "pg";
 import type { Api, startHarness } from "./harness.ts";
 
 type Harness = Awaited<ReturnType<typeof startHarness>>;
@@ -20,16 +21,23 @@ function signed(body: string, o: { svixId?: string; at?: number; key?: Buffer } 
   return { "svix-id": svixId, "svix-timestamp": ts, "svix-signature": `v1,${sig}` };
 }
 const event = (emailId: string, extra: Record<string, unknown> = {}): string =>
-  JSON.stringify({ type: "email.received", created_at: new Date().toISOString(), data: { email_id: emailId, ...extra } });
+  JSON.stringify({ type: "email.received", created_at: "2026-10-27T10:00:00.000Z", data: { email_id: emailId, ...extra } });
 const received = (emailId: string, over: Record<string, unknown> = {}): Record<string, unknown> => ({
   object: "email", id: emailId, from: "Rosa <rosa@bloom.test>", to: ["hi@skovern.com"], cc: [], bcc: [], reply_to: [],
   subject: "Do you do weddings?", text: "June 14, about 80 people.", html: "<p>June 14, about 80 people.</p>",
   headers: {}, authentication: { spf: "pass", dkim: "pass", dmarc: "pass" }, attachments: [], ...over,
 });
 
-export async function inboxClauses(h: Harness, check: Check, baseWithoutSecret: string): Promise<Api> {
-  const post = (base: string, body: string, headers: Record<string, string>): Promise<Response> =>
-    fetch(`${base}${HOOK}`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body });
+export async function inboxClauses(h: Harness, check: Check, baseWithoutSecret: string, pool: pg.Pool): Promise<Api> {
+  /** Post to the webhook, then wait (up to 15 s) until the email it names is settled. */
+  const post = async (base: string, body: string, headers: Record<string, string>): Promise<Response> => {
+    const r = await fetch(`${base}${HOOK}`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body });
+    const emailId = (JSON.parse(body) as { data: { email_id: string } }).data.email_id;
+    for (let i = 0; i < 60 && r.status === 200 && (await outcome(emailId)) === "pending"; i += 1) await new Promise((w) => setTimeout(w, 250));
+    return r;
+  };
+  const outcome = async (emailId: string): Promise<string | undefined> =>
+    (await pool.query<{ outcome: string }>(`SELECT outcome FROM inbox_mail WHERE email_id = $1`, [emailId])).rows[0]?.outcome;
 
   // F6: the image without RESEND_WEBHOOK_SECRET doesn't mount the route.
   const unmounted = await post(baseWithoutSecret, event(id(1)), signed(event(id(1))));
@@ -38,7 +46,7 @@ export async function inboxClauses(h: Harness, check: Check, baseWithoutSecret: 
   const api = await h.startApi({
     RESEND_WEBHOOK_SECRET: `whsec_${KEY.toString("base64")}`,
     FORWARD_TO,
-    FORWARD_MAX_PER_DAY: "2",
+    FORWARD_MAX_PER_DAY: "3",
   });
   const sentBefore = h.sent.length;
   const forwards = (): typeof h.sent => h.sent.slice(sentBefore);
@@ -66,8 +74,16 @@ export async function inboxClauses(h: Harness, check: Check, baseWithoutSecret: 
   const fwd = forwards()[0];
   check("F1", f1.status === 200 && forwards().length === 1, `signed → ${f1.status}, sends ${forwards().length}`);
   check("F1", fwd?.to === FORWARD_TO && fwd.from === "Skovern inbox <inbox@skovern.com>" && fwd.auth === "Bearer re_smoke_key", "to FORWARD_TO from the inbox address");
+  check("F1", fwd?.key === `forward/${id(1)}` && (await outcome(id(1))) === "forwarded", `Idempotency-Key ${fwd?.key}`);
   check("F1", fwd?.reply_to === "rosa@bloom.test" && fwd.subject === "[skovern.com] Do you do weddings?", `Reply-To ${fwd?.reply_to}, subject "${fwd?.subject}"`);
   check("F1", fwd?.attachments?.[0]?.path === "https://inbound-cdn.test/a1" && fwd.text.includes("To: hi@skovern.com"), "attachment kept, original To at the top");
+
+  // B2: a flood of badly signed requests from one address doesn't lock it out.
+  const flood = { "x-forwarded-for": "198.51.100.200" };
+  let bad = 0;
+  for (let i = 0; i < 25; i += 1) bad += (await post(api.base, body1, { ...signed(body1, { key: Buffer.from("x") }), ...flood })).status === 401 ? 1 : 0;
+  const after = await post(api.base, body1, { ...signed(body1), ...flood });
+  check("B2", bad === 25 && after.status === 200 && forwards().length === 1, `25 bad → 401 x${bad}, then a valid one → ${after.status}`);
 
   // F3: the same delivery again is a 200 and no second forward.
   const replay = await post(api.base, body1, good);
@@ -87,16 +103,37 @@ export async function inboxClauses(h: Harness, check: Check, baseWithoutSecret: 
   check("F7", f7.status === 200 && h.fetched.includes(`/emails/receiving/${id(3)}?html_format=cid`), "fetched by ID from the Receiving API");
   check("F7", third?.to === FORWARD_TO && third.subject === "[spam?] [skovern.com] From the API" && !/attacker|pwned|bank\.test/.test(JSON.stringify(third)), `subject "${third?.subject}"`);
 
-  // F4: the budget (2) is spent: two more are held, one summary, one log line each.
+  // N1: a failed fetch leaves the email pending, and the next run forwards it once.
+  h.resend.getFaults = [503];
+  h.inbound.set(id(6), received(id(6), { subject: "Retry me" }));
+  const r6 = await fetch(`${api.base}${HOOK}`, { method: "POST", headers: { "content-type": "application/json", ...signed(event(id(6))) }, body: event(id(6)) });
+  // Settled for a retry: tried once, and waiting the one-minute retry delay
+  // (shorter than the two-minute lease taken while trying).
+  const waiting = async (): Promise<boolean> =>
+    (await pool.query(
+      `SELECT 1 FROM inbox_mail WHERE email_id = $1 AND attempts >= 1 AND next_try < now() + interval '90 seconds'`,
+      [id(6)],
+    )).rowCount === 1;
+  for (let i = 0; i < 60 && !(await waiting()); i += 1) await new Promise((w) => setTimeout(w, 250));
+  const firstTry = await outcome(id(6));
+  await pool.query(`UPDATE inbox_mail SET next_try = now() WHERE email_id = $1`, [id(6)]);
+  await post(api.base, event(id(6)), signed(event(id(6)))); // a new delivery ID kicks the worker
+  const retried = forwards().filter((m) => m.subject === "[skovern.com] Retry me").length;
+  check("N1", r6.status === 200 && firstTry === "pending" && (await outcome(id(6))) === "forwarded" && retried === 1, `first try ${firstTry}, then ${await outcome(id(6))}, sent ${retried}`);
+
+  // F4: the budget (3) is spent: two more are held, one alert, one log line each.
   for (const n of [4, 5]) {
     h.inbound.set(id(n), received(id(n)));
     const r = await post(api.base, event(id(n)), signed(event(id(n))));
-    check("F4", r.status === 200, `over budget → ${r.status}`);
+    check("F4", r.status === 200 && (await outcome(id(n))) === "held", `over budget → ${r.status}, ${await outcome(id(n))}`);
   }
-  const summaries = forwards().filter((m) => m.subject.includes("waiting in Resend"));
-  const held = forwards().length - summaries.length;
-  check("F4", held === 2 && summaries.length === 1 && summaries[0]?.to === FORWARD_TO, `forwards ${held}, summaries ${summaries.length}`);
-  check("F4", summaries[0]?.text.startsWith("1 email waiting in Resend.") === true, `summary "${summaries[0]?.subject}"`);
+  const alerts = forwards().filter((m) => m.subject === "[skovern.com] Forwarding paused for today");
+  const sentOn = forwards().length - alerts.length;
+  check("F4", sentOn === 3 && alerts.length === 1 && alerts[0]?.to === FORWARD_TO, `forwards ${sentOn}, alerts ${alerts.length}`);
+  check("F4", alerts[0]?.text.startsWith("Forwarding paused for today. New mail is waiting in Resend") === true && /^summary\/\d{4}-\d\d-\d\d$/.test(alerts[0]?.key ?? ""), `alert key ${alerts[0]?.key}`);
+  const used = await pool.query<{ kind: string; n: string }>(`SELECT kind, count(*) AS n FROM resend_usage WHERE kind <> 'welcome' GROUP BY kind ORDER BY kind`);
+  const tally = used.rows.map((r) => `${r.kind}=${r.n}`).join(",");
+  check("F4", tally === "forward=3,received=6,summary=1", `shared quota counts ${tally}`);
   const logs = api.logs();
   const spent = logs.split("\n").filter((l) => l.includes("forward budget spent")).length;
   check("F4", spent === 2, `${spent} budget-spent log lines`);
