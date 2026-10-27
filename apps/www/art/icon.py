@@ -17,12 +17,13 @@ Then convert the PNGs to WebP (and flatten the OG card onto #f5f5f7) with
 `node apps/www/art/encode.mjs <render dir>`, which shells out to ffmpeg (libwebp).
 
 The page scrubs f-000..f-071 on scroll: frame 0 is the resting three-quarter pose, the
-last frame has turned to the other side. GPU: HIP (AMD) when available, else CPU with the
+last frame has turned to the other side. The yaw is linear in the frame number, and at rest
+the page sways through the first frames. GPU: HIP (AMD) when available, else CPU with the
 OpenImageDenoise denoiser (pass --cpu to force it; CPU defaults to 48 samples).
 
-Last run: Blender 5.2.3 portable (blender-5.2.3-windows-x64.zip from download.blender.org,
-no installer needed), HIP on a Radeon RX 7900 XTX, 128 samples a frame, 72 frames in about
-9 minutes. Encoded: 72 x 1200 px WebP frames, 3.3 MB in total.
+Last run (loop 054, camera above the tile): Blender 5.2.3 portable (blender-5.2.3-windows-x64.zip
+from download.blender.org, no installer needed), HIP on a Radeon RX 7900 XTX, 128 samples a
+frame, 72 frames in about 9 minutes. Encoded: 72 x 1200 px WebP frames, 3.6 MB in total.
 """
 
 import argparse
@@ -265,8 +266,9 @@ def area(name, loc, size, size_y, energy, color=(1, 1, 1), target=(0, 0, 0), sha
 
 
 def studio(dark):
-    # large soft key, upper left front
-    area("key", (-3.2, -2.2, 3.6), 3.2, 3.2, 1100 if not dark else 900, (1.0, 0.97, 0.93))
+    # large soft key, upper left, high: the tile leans back toward it, and a lower
+    # key would mirror in the face as a glare band across the S
+    area("key", (-3.0, -0.9, 4.6), 3.0, 3.0, 1100 if not dark else 900, (1.0, 0.97, 0.93))
     # rim strips: tall and thin, behind left and right, to draw the glass edges
     area("rimL", (-2.4, 1.8, 0.4), 0.25, 4.0, 520, (1.0, 0.95, 0.9), shadow=False)
     area("rimR", (2.5, 1.6, 0.6), 0.25, 4.0, 620, (0.92, 0.95, 1.0), shadow=False)
@@ -333,14 +335,24 @@ def setup_render(res_x, res_y, samples, device):
     print(f"[icon] device={device} samples={samples} res={res_x}x{res_y}")
 
 
-# resting hero pose and where the scrub ends
+# Resting hero pose and where the scrub ends. The camera sits above the tile and
+# looks down (CAM_FRAMES), the way product stills are shot. The tile leans back
+# a little MORE than the camera looks down (pitch < 0 tips the top away), so its
+# bottom edge is nearer the lens and the S's bottom bowl renders at least as big
+# as the top one at every frame. Tipping the top toward the camera, as loop 053
+# did, made the top bowl bigger and the S read upside down.
 YAW0, YAW1 = -26.0, 32.0
-PITCH0, PITCH1 = 6.0, -3.0
+PITCH0, PITCH1 = -26.0, -24.0
+CAM_FRAMES = ((0, -5.0, 1.75), (0, 0, -0.06))
 
 
 def pose(pivot, t):
-    e = 0.5 - 0.5 * math.cos(math.pi * t)  # ease in-out, so the scrub starts and ends softly
-    pivot.rotation_euler = (math.radians(PITCH0 + (PITCH1 - PITCH0) * e), 0, math.radians(YAW0 + (YAW1 - YAW0) * e))
+    # Linear in t: the page eases the scroll itself, and its idle sway steps
+    # through the first frames at an even angle per frame.
+    # ZXY: turn on the vertical axis first, then lean back toward the camera's
+    # horizon, so the turned tile's sides stay upright on screen instead of rolling.
+    pivot.rotation_mode = "ZXY"
+    pivot.rotation_euler = (math.radians(PITCH0 + (PITCH1 - PITCH0) * t), 0, math.radians(YAW0 + (YAW1 - YAW0) * t))
 
 
 def render_to(path):
@@ -364,7 +376,7 @@ def main():
 
     if a.mode in ("frames", "still"):
         floor()
-        camera(85, (0, -5.0, 0.75), (0, 0, -0.06))
+        camera(85, *CAM_FRAMES)
         setup_render(a.res, a.res, a.samples or (256 if a.mode == "still" else 128) if gpu else (a.samples or 48), device)
         if a.mode == "still":
             pose(pivot, 0)
@@ -375,13 +387,15 @@ def main():
                 render_to(os.path.join(a.out, f"f-{i:03d}.png"))
     elif a.mode in ("front", "front-dark"):
         camera(85, (0, -2.75, 0.0), (0, 0, 0))
-        pivot.rotation_euler = (math.radians(4), 0, math.radians(-6))
+        # nearly square on, leaning back a touch so the bottom bowl stays the heavier one
+        pivot.rotation_mode = "ZXY"
+        pivot.rotation_euler = (math.radians(-5), 0, math.radians(-6))
         setup_render(512, 512, a.samples or (256 if gpu else 64), device)
         render_to(os.path.join(a.out, "front-dark.png" if dark else "front.png"))
     elif a.mode == "og":
         floor()
         # a 1200x630 frame has a much shorter vertical field, so the camera sits further back
-        camera(85, (0, -8.6, 1.3), (0, 0, -0.1))
+        camera(85, (0, -8.4, 2.95), (0, 0, -0.1))
         pose(pivot, 0)
         setup_render(1200, 630, a.samples or (256 if gpu else 64), device)
         render_to(os.path.join(a.out, "og.png"))
