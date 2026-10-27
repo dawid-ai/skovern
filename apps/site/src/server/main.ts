@@ -12,6 +12,7 @@ import { InboxStore } from "../inbox/store.js";
 import { InboxWorker } from "../inbox/worker.js";
 import { ConfigError, loadConfig, type ServerConfig } from "./config.js";
 import { pickMailers } from "./mailers.js";
+import { SigninMeter } from "./resend-usage.js";
 import { RateLimiter } from "./rate-limit.js";
 import { startSweep, startWelcomeBacklog } from "./sweep.js";
 
@@ -54,7 +55,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const mailers = pickMailers(cfg);
+  const mailers = pickMailers(cfg, new SigninMeter(pool, cfg.resendQuota));
   // loadConfig refuses an inbox config without RESEND_API_KEY.
   const inboxWorker =
     cfg.inbox && cfg.resendKey

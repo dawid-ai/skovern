@@ -210,13 +210,16 @@ Resend counts every email sent **and every email received** against one daily
 quota per UTC day: 100 on the free plan. The api keeps one shared count of both in
 Postgres:
 - Each received email counts 1, whether it's forwarded, held, or skipped.
-- Each send counts 1: a welcome, a forward, a names-only resend, the daily alert.
+- Each send counts 1: a welcome, a forward, a names-only resend, the daily alert, and
+  (once `ACCOUNT_ROUTES` is on) a sign-in link.
 
 So a forwarded email costs 2. Before a welcome or a forward goes out, its own cap
 must have room and the shared count must be under `RESEND_DAILY_QUOTA` minus
 `RESEND_RESERVE` (100 − 15 = 85 by default). The reserve covers your own replies
-from Gmail as `hi@skovern.com`, which the api can't see. Only the daily alert may
-use the reserve, since it matters most when the budget is gone.
+from Gmail as `hi@skovern.com`, which the api can't see. Only the daily alert and
+sign-in links may use the reserve: the alert matters most when the budget is gone,
+and a sign-in link is what lets someone in. Past the whole quota, no sign-in link
+goes out.
 
 With the defaults, a day of 50 welcomes and 15 forwarded emails uses 50 + 30 = 80,
 plus 1 for the alert. Every extra received email uses 1 more, even when it's held.

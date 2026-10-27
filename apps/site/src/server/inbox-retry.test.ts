@@ -8,6 +8,8 @@ import type { ForwardDeps } from "../inbox/forward.js";
 import { HOOK_PATH } from "../inbox/hook.js";
 import { InboxStore } from "../inbox/store.js";
 import { InboxWorker } from "../inbox/worker.js";
+import { ResendMailer } from "../auth/mailer.js";
+import { SigninMeter } from "./resend-usage.js";
 import { FakeResend } from "../../scripts/smoke/fake-resend.js";
 
 // Loop 052, checker round 1: a received email is never lost (pending, retried,
@@ -122,6 +124,7 @@ describe("never losing a forward", () => {
 
   it("counts a 409 for a reused key (re-signed attachment links) as already sent", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     fake.inbound.set(ID, received(ID, { attachments: [{ id: "a1", filename: "a.pdf", content_type: null, content_id: null, size: 10 }] }));
     fake.rotateLinks = true;
     fake.sendFaults = ["lose"];
@@ -130,6 +133,9 @@ describe("never losing a forward", () => {
     await settle();
     expect(await outcome(ID)).toBe("forwarded");
     expect(fake.sent).toHaveLength(1);
+    expect(errors(warn)).toContain(
+      `Resend reports forward/${ID} as already used, so the forward of email ${ID} is assumed delivered. If it didn't arrive, read it in Resend's Receiving tab.`,
+    );
     vi.restoreAllMocks();
   });
 
@@ -147,6 +153,21 @@ describe("never losing a forward", () => {
 });
 
 describe("the shared Resend quota", () => {
+  it("counts sign-in links, lets them use the reserve, and stops them at the whole quota", async () => {
+    deps.quota = { quota: 10, reserve: 2 };
+    const mailer = new ResendMailer("re_test", "Skovern <hi@skovern.com>", deps.api.baseUrl, new SigninMeter(pool, deps.quota));
+    await pool.query(`INSERT INTO resend_usage (ref, kind) SELECT 'filler/' || g, 'welcome' FROM generate_series(1, 8) g`);
+    await mailer.send("a@bloom.test", "https://api.test/auth?token=x"); // 8 = quota - reserve: still sent (9)
+    await mailer.send("b@bloom.test", "https://api.test/auth?token=y"); // 10
+    await expect(mailer.send("c@bloom.test", "https://api.test/auth?token=z")).rejects.toMatchObject({ status: 429 });
+    expect(fake.sent).toHaveLength(2);
+    expect((await usage())["signin"]).toBe(2);
+    fake.sendFaults = [422];
+    await pool.query(`DELETE FROM resend_usage WHERE ref = 'filler/1'`);
+    await expect(mailer.send("d@bloom.test", "https://api.test/auth?token=w")).rejects.toMatchObject({ status: 422 });
+    expect((await usage())["signin"]).toBe(2); // a refused send hands its count back
+  });
+
   it("counts a forward as 2: the received email and the send", async () => {
     fake.inbound.set(ID, received(ID));
     await deliver(ID);

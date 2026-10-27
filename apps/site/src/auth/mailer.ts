@@ -118,15 +118,36 @@ export async function resendPost(
   }
 }
 
-/** Prod mailer — Resend HTTP API. */
+/** Counts a send against the shared Resend quota (server/resend-usage.ts).
+ *  `take` returns the use's ref, or null when the quota is spent. */
+export interface SendMeter {
+  take(): Promise<string | null>;
+  give(ref: string): Promise<void>;
+}
+
+/** Prod mailer — Resend HTTP API. With a meter, each sign-in link counts
+ *  against the shared quota, and none goes out once Resend's quota is spent. */
 export class ResendMailer implements Mailer {
   constructor(
     private readonly apiKey: string,
     private readonly from: string,
     private readonly baseUrl: string = "https://api.resend.com",
+    private readonly meter?: SendMeter,
   ) {}
 
   async send(to: string, url: string): Promise<void> {
+    const ref = this.meter ? await this.meter.take() : null;
+    if (this.meter && !ref) throw new MailError(429, "daily_quota_exceeded");
+    try {
+      await this.post(to, url);
+    } catch (err) {
+      // Not sent, so not counted. An unknown outcome (no answer) stays counted.
+      if (ref && err instanceof MailError && err.status !== null) await this.meter?.give(ref).catch(() => {});
+      throw err;
+    }
+  }
+
+  private async post(to: string, url: string): Promise<void> {
     await resendPost(this.baseUrl, this.apiKey, {
       from: this.from,
       to,

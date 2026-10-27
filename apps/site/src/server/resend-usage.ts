@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import type pg from "pg";
+import type { SendMeter } from "../auth/mailer.js";
 
 // One count of everything that uses Resend's daily quota (loop 052 B1). Resend
 // counts each email sent AND each email received, per UTC day; the free plan
@@ -8,6 +10,7 @@ import type pg from "pg";
 //   welcome/<claim>      a waitlist welcome
 //   forward/<emailId>    a forward, and forward/<emailId>/names its names-only resend
 //   summary/<day>        the day's one "forwarding paused" alert
+//   signin/<uuid>        a sign-in link (account routes, after the beta opens)
 // Senders check their own cap AND `used < quota - reserve` under one lock. The
 // reserve is left for Dawid's own replies from Gmail and for slack.
 
@@ -20,7 +23,7 @@ export interface ResendQuota {
 
 export const DEFAULT_QUOTA: ResendQuota = { quota: 100, reserve: 15 };
 
-export type UsageKind = "received" | "welcome" | "forward" | "names" | "summary";
+export type UsageKind = "received" | "welcome" | "forward" | "names" | "summary" | "signin";
 
 export const USAGE_MIGRATION = `
 CREATE TABLE IF NOT EXISTS resend_usage (
@@ -70,4 +73,34 @@ export async function uncountUse(db: Db, ref: string): Promise<void> {
 
 export async function pruneUsage(db: Db): Promise<void> {
   await db.query(`DELETE FROM resend_usage WHERE day < ${TODAY_UTC} - 7`);
+}
+
+/** Counts sign-in links. A sign-in link is what lets someone in, so it may use
+ *  the reserve; past Resend's whole quota it isn't sent (Resend would refuse it). */
+export class SigninMeter implements SendMeter {
+  constructor(
+    private readonly pool: pg.Pool,
+    private readonly quota: ResendQuota,
+  ) {}
+
+  async take(): Promise<string | null> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await lockMailBudget(client);
+      const ref = `signin/${randomUUID()}`;
+      const ok = (await sharedRoom(client, this.quota, true)) && (await countUse(client, ref, "signin"));
+      await client.query("COMMIT");
+      return ok ? ref : null;
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  give(ref: string): Promise<void> {
+    return uncountUse(this.pool, ref);
+  }
 }
