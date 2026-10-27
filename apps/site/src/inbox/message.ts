@@ -5,7 +5,17 @@ import type { ReceivedEmail } from "./resend-api.js";
 // Builds the forward of one received email (pure, no I/O). The recipient is
 // the configured FORWARD_TO, never anything in the email or the webhook.
 
-export const INBOX_FROM = "Skovern inbox <inbox@skovern.com>";
+/** The From line of forwards and the daily alert. The domain is a subdomain
+ *  (INBOX_FROM_DOMAIN), so forwarded junk can't hurt skovern.com's sending name. */
+export const inboxFrom = (domain: string): string => `Skovern inbox <inbox@${domain}>`;
+
+/** RFC 3834: marks forwards as machine-sent, so auto-responders don't answer them. */
+export const AUTO_SUBMITTED = { "Auto-Submitted": "auto-generated" } as const;
+
+/** An attachment's type is `type/subtype` in token characters, or it's dropped. */
+const CONTENT_TYPE = /^[a-z0-9][a-z0-9!#$&^_.+-]{0,62}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,62}$/i;
+/** An inline image's ID is a plain token (no spaces, quotes, or angle brackets), or it's dropped. */
+const CONTENT_ID = /^[A-Za-z0-9._@$%+=-]{1,128}$/;
 export const FORWARD_TAG = "forward";
 
 /** Resend takes up to 40 MB of attachments per email after base64, which grows
@@ -31,10 +41,18 @@ export function replyAddress(e: ReceivedEmail): string | null {
   return senderAddress(e.from);
 }
 
-/** SPF or DKIM failed (DMARC too): forwarded anyway, but flagged. */
+/** The sender may be forged: neither SPF nor DKIM passed, DMARC failed, or
+ *  Resend reported no checks at all. Only a pass counts; softfail, none, and
+ *  errors don't. */
 export function looksSpoofed(e: ReceivedEmail): boolean {
   const a = e.authentication;
-  return a !== null && (a.spf === "fail" || a.dkim === "fail" || a.dmarc === "fail");
+  return !(a !== null && (a.spf === "pass" || a.dkim === "pass") && a.dmarc !== "fail");
+}
+
+/** Sent by a machine (an auto-reply, a bounce, a vacation notice): RFC 3834
+ *  `Auto-Submitted` with any value but `no`. */
+export function isAutoSubmitted(e: ReceivedEmail): boolean {
+  return e.autoSubmitted !== null && /^\s*auto-/i.test(e.autoSubmitted);
 }
 
 const oneLine = (s: string): string => s.replace(/[\r\n\t]+/g, " ").trim();
@@ -52,6 +70,8 @@ function megabytes(bytes: number): string {
 }
 
 export interface ForwardOptions {
+  /** The From line, from inboxFrom(). */
+  from: string;
   forwardTo: string;
   /** Attachment ID → signed download link, from the Receiving API. */
   links: Map<string, string>;
@@ -69,11 +89,12 @@ function pickAttachments(e: ReceivedEmail, o: ForwardOptions): ResendAttachment[
   for (const a of e.attachments) {
     const path = o.links.get(a.id);
     if (!path) return null;
+    const contentId = a.contentId?.replace(/^<|>$/g, "") ?? "";
     out.push({
       filename: oneLine(a.filename) || "attachment",
       path,
-      ...(a.contentType ? { content_type: a.contentType } : {}),
-      ...(a.contentId ? { content_id: a.contentId.replace(/^<|>$/g, "") } : {}),
+      ...(a.contentType && CONTENT_TYPE.test(a.contentType) ? { content_type: a.contentType } : {}),
+      ...(CONTENT_ID.test(contentId) ? { content_id: contentId } : {}),
     });
   }
   return out;
@@ -81,8 +102,12 @@ function pickAttachments(e: ReceivedEmail, o: ForwardOptions): ResendAttachment[
 
 export function buildForward(e: ReceivedEmail, o: ForwardOptions): ResendEmail {
   const attachments = pickAttachments(e, o);
+  const reply = replyAddress(e);
+  // Reply goes somewhere other than the sender: say so where Dawid can see it.
+  const replyDiffers = reply !== null && reply.toLowerCase() !== senderAddress(e.from)?.toLowerCase();
   const header = [
     `From: ${oneLine(e.from)}`,
+    ...(replyDiffers ? [`Reply-To: ${reply}`] : []),
     `To: ${e.to.map(oneLine).join(", ")}`,
     ...(e.cc.length ? [`Cc: ${e.cc.map(oneLine).join(", ")}`] : []),
   ];
@@ -97,18 +122,18 @@ export function buildForward(e: ReceivedEmail, o: ForwardOptions): ResendEmail {
   if (e.html !== null && html === null) notes.push("The formatted version was too big to forward; this is the plain text.");
   const footer = notes.length ? `\n\n--\n${notes.join("\n")}` : "";
   const body = e.text?.slice(0, MAX_TEXT_CHARS) ?? (html ? "(This email has only a formatted version.)" : "(This email is empty.)");
-  const reply = replyAddress(e);
   const banner = (lines: string[]): string =>
     `<div style="font:13px sans-serif;color:#555;border-bottom:1px solid #ddd;padding-bottom:8px;margin-bottom:12px">` +
     `${lines.map(escapeHtml).join("<br>")}</div>`;
   return {
-    from: INBOX_FROM,
+    from: o.from,
     to: o.forwardTo,
     subject: forwardSubject(e),
     text: `${header.join("\n")}\n\n${body}${footer}`,
     ...(html !== null ? { html: `${banner(header)}${html}${notes.length ? banner(notes) : ""}` } : {}),
     ...(reply ? { reply_to: reply } : {}),
     ...(attachments ? { attachments } : {}),
+    headers: { ...AUTO_SUBMITTED },
     tags: [{ name: "kind", value: FORWARD_TAG }],
   };
 }

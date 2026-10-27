@@ -38,6 +38,8 @@ export interface ReceivedEmail {
    *  message's own headers, so the sender can't forge them. */
   authentication: { spf: string | null; dkim: string | null; dmarc: string | null } | null;
   attachments: ReceivedAttachment[];
+  /** The message's Auto-Submitted header (RFC 3834), if any. */
+  autoSubmitted: string | null;
 }
 
 /** Resend email IDs are UUIDs; anything else never reaches a URL. */
@@ -65,6 +67,17 @@ async function getJson(api: ResendApi, path: string): Promise<Record<string, unk
     // Falls through to the same error as a non-object body.
   }
   throw new MailError(502);
+}
+
+/** One header from the API's `headers` object, matched without regard to case. */
+function headerValue(headers: unknown, name: string): string | null {
+  if (!headers || typeof headers !== "object") return null;
+  for (const [k, v] of Object.entries(headers as Record<string, unknown>)) {
+    if (k.toLowerCase() !== name) continue;
+    if (typeof v === "string") return v;
+    if (Array.isArray(v) && typeof v[0] === "string") return v[0];
+  }
+  return null;
 }
 
 function attachment(raw: unknown): ReceivedAttachment | null {
@@ -96,6 +109,7 @@ export async function getReceivedEmail(api: ResendApi, id: string): Promise<Rece
     text: str(e["text"]),
     html: str(e["html"]),
     authentication: a ? { spf: str(a["spf"]), dkim: str(a["dkim"]), dmarc: str(a["dmarc"]) } : null,
+    autoSubmitted: headerValue(e["headers"], "auto-submitted"),
     attachments: (Array.isArray(e["attachments"]) ? e["attachments"] : [])
       .map(attachment)
       .filter((x): x is ReceivedAttachment => x !== null),

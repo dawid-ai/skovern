@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { buildForward, INBOX_FROM, MAX_ATTACHMENT_BYTES, MAX_HTML_CHARS, senderAddress } from "./message.js";
+import {
+  buildForward,
+  inboxFrom,
+  isAutoSubmitted,
+  looksSpoofed,
+  MAX_ATTACHMENT_BYTES,
+  MAX_HTML_CHARS,
+  senderAddress,
+} from "./message.js";
 import type { ReceivedEmail } from "./resend-api.js";
 
 const email = (over: Partial<ReceivedEmail> = {}): ReceivedEmail => ({
@@ -13,14 +21,18 @@ const email = (over: Partial<ReceivedEmail> = {}): ReceivedEmail => ({
   html: null,
   authentication: { spf: "pass", dkim: "pass", dmarc: "pass" },
   attachments: [],
+  autoSubmitted: null,
   ...over,
 });
-const opts = { forwardTo: "dawid@inbox.test", links: new Map<string, string>(), withAttachments: true };
+const FROM = inboxFrom("in.skovern.com");
+const opts = { from: FROM, forwardTo: "dawid@inbox.test", links: new Map<string, string>(), withAttachments: true };
 
 describe("buildForward", () => {
-  it("sends from the inbox address to FORWARD_TO, replying to the sender", () => {
+  it("sends from the inbox subdomain to FORWARD_TO, replying to the sender, marked machine-sent", () => {
     const m = buildForward(email(), opts);
-    expect(m).toMatchObject({ from: INBOX_FROM, to: "dawid@inbox.test", reply_to: "rosa@bloom.test", subject: "[skovern.com] Hello there" });
+    expect(FROM).toBe("Skovern inbox <inbox@in.skovern.com>");
+    expect(m.headers).toEqual({ "Auto-Submitted": "auto-generated" });
+    expect(m).toMatchObject({ from: FROM, to: "dawid@inbox.test", reply_to: "rosa@bloom.test", subject: "[skovern.com] Hello there" });
     expect(m.text).toBe("From: Rosa <rosa@bloom.test>\nTo: hi@skovern.com\n\nDo you do weddings?");
     expect(m.tags).toEqual([{ name: "kind", value: "forward" }]);
   });
@@ -32,12 +44,49 @@ describe("buildForward", () => {
     expect(m.html?.endsWith("<p>Hi</p>")).toBe(true);
   });
 
-  it("flags a failed SPF, DKIM, or DMARC check with [spam?], and still forwards", () => {
-    for (const k of ["spf", "dkim", "dmarc"] as const) {
-      const auth = { spf: "pass", dkim: "pass", dmarc: "pass", [k]: "fail" };
-      expect(buildForward(email({ authentication: auth }), opts).subject).toBe("[spam?] [skovern.com] Hello there");
+  it("S1: trusts the sender only when SPF or DKIM passed and DMARC didn't fail", () => {
+    const auth = (spf: string | null, dkim: string | null, dmarc: string | null): ReceivedEmail =>
+      email({ authentication: { spf, dkim, dmarc } });
+    const cases: [string, ReceivedEmail, boolean][] = [
+      ["all pass", auth("pass", "pass", "pass"), false],
+      ["SPF pass only, no DMARC policy", auth("pass", "gray", "gray"), false],
+      ["DKIM pass only", auth("fail", "pass", null), false],
+      ["softfail and unsigned (gray)", auth("gray", "gray", "gray"), true],
+      ["none at all (null results)", auth(null, null, null), true],
+      ["SPF pass but DMARC fail", auth("pass", "gray", "fail"), true],
+      ["checks errored", auth("processing_failed", "unknown", "unknown"), true],
+      ["no authentication reported", email({ authentication: null }), true],
+    ];
+    for (const [label, e, spoofed] of cases) {
+      expect(looksSpoofed(e), label).toBe(spoofed);
+      expect(buildForward(e, opts).subject.startsWith("[spam?] "), label).toBe(spoofed);
     }
-    expect(buildForward(email({ authentication: { spf: "gray", dkim: "gray", dmarc: null } }), opts).subject).toBe("[skovern.com] Hello there");
+  });
+
+  it("S1: shows Reply-To in the banner when it differs from the sender", () => {
+    const m = buildForward(email({ replyTo: ["Orders <orders@bloom.test>"], html: "<p>x</p>" }), opts);
+    expect(m.text.split("\n").slice(0, 3)).toEqual(["From: Rosa <rosa@bloom.test>", "Reply-To: orders@bloom.test", "To: hi@skovern.com"]);
+    expect(m.html).toContain("Reply-To: orders@bloom.test");
+    expect(buildForward(email({ replyTo: ["ROSA@bloom.test"] }), opts).text).not.toContain("Reply-To:");
+  });
+
+  it("S4: spots Auto-Submitted mail, except Auto-Submitted: no", () => {
+    expect(isAutoSubmitted(email({ autoSubmitted: "auto-replied" }))).toBe(true);
+    expect(isAutoSubmitted(email({ autoSubmitted: " Auto-Generated; foo" }))).toBe(true);
+    expect(isAutoSubmitted(email({ autoSubmitted: "no" }))).toBe(false);
+    expect(isAutoSubmitted(email())).toBe(false);
+  });
+
+  it("S4: keeps a valid attachment type and inline ID, and drops invalid ones", () => {
+    const links = new Map([["a1", "https://cdn.test/a1"], ["a2", "https://cdn.test/a2"]]);
+    const attachments = [
+      { id: "a1", filename: "x.png", contentType: "image/png", contentId: "<img.001@bloom>", size: 1 },
+      { id: "a2", filename: "y.bin", contentType: "text/html\r\nX-Evil: 1", contentId: "a b\"<c>", size: 1 },
+    ];
+    expect(buildForward(email({ attachments }), { ...opts, links }).attachments).toEqual([
+      { filename: "x.png", path: "https://cdn.test/a1", content_type: "image/png", content_id: "img.001@bloom" },
+      { filename: "y.bin", path: "https://cdn.test/a2" },
+    ]);
   });
 
   it("keeps a subject to one line and names an empty one", () => {
