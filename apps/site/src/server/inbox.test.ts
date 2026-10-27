@@ -41,7 +41,7 @@ beforeAll(async () => {
   await new AuthStore(pool).migrate();
   const store = new InboxStore(pool);
   await store.migrate();
-  deps = { api: { baseUrl: url, apiKey: "re_test" }, store, forwardTo: FORWARD_TO, maxPerDay: 25, quota: { quota: 100, reserve: 15 } };
+  deps = { api: { baseUrl: url, apiKey: "re_test" }, store, from: "Skovern inbox <inbox@in.skovern.com>", forwardTo: FORWARD_TO, maxPerDay: 25, flaggedPerDay: 5, quota: { quota: 100, reserve: 15 } };
   worker = new InboxWorker(deps);
   const auth = new AuthService(new AuthStore(pool), new ConsoleMailer(), { appUrl: "http://x" });
   on = await startAuthServer({ service: auth, inbox: { key: KEY, store, worker, pool }, accountRoutes: false, trustProxy: true });
@@ -92,7 +92,7 @@ describe("POST /hooks/resend/inbound", () => {
     expect(r.status).toBe(200);
     expect(fake.sent).toHaveLength(1);
     expect(fake.sent[0]).toMatchObject({
-      from: "Skovern inbox <inbox@skovern.com>",
+      from: "Skovern inbox <inbox@in.skovern.com>",
       to: FORWARD_TO,
       reply_to: "rosa@bloom.test",
       subject: "[skovern.com] Do you do weddings?",
@@ -102,13 +102,12 @@ describe("POST /hooks/resend/inbound", () => {
     expect(await outcome(ID)).toBe("forwarded");
   });
 
-  it("F1: keeps attachments and flags failed SPF with [spam?]", async () => {
+  it("F1: keeps attachments", async () => {
     fake.inbound.set(ID, received({
-      authentication: { spf: "fail", dkim: "pass", dmarc: "fail" },
       attachments: [{ id: "a1", filename: "quote.pdf", content_type: "application/pdf", content_id: null, size: 1200 }],
     }));
     expect((await send(ID)).status).toBe(200);
-    expect(fake.sent[0]?.subject).toBe("[spam?] [skovern.com] Do you do weddings?");
+    expect(fake.sent[0]?.subject).toBe("[skovern.com] Do you do weddings?");
     expect(fake.sent[0]?.attachments).toEqual([{ filename: "quote.pdf", path: "https://inbound-cdn.test/a1", content_type: "application/pdf" }]);
   });
 

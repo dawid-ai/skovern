@@ -44,12 +44,28 @@ export interface InboxConfig {
   /** The one address every forward goes to. No request can change it. */
   forwardTo: string;
   maxPerDay: number;
+  /** Forwards of possibly spoofed mail (`[spam?]`) a day, on their own cap. */
+  flaggedPerDay: number;
+  /** Where forwards and the daily alert come from: a subdomain of skovern.com,
+   *  so forwarded junk can't hurt the domain welcomes go out from. */
+  fromDomain: string;
+  /** INBOX_FROM_FALLBACK=1: send from skovern.com until the subdomain is
+   *  verified in Resend. Logged as a warning at startup. */
+  fromFallback: boolean;
+  /** The subdomain to verify, named in the fallback warning. */
+  wantedFromDomain: string;
+  /** INBOX_AUTH_MISSING_OK=1: mail with no authentication results is forwarded
+   *  unflagged (an API-shape problem, not a spoof). Off: it's flagged. Logged
+   *  as a warning at startup. */
+  authMissingOk: boolean;
 }
 
 export class ConfigError extends Error {}
 
 /** Our own mail domain. A forward never goes to it (a loop) and mail from it is never forwarded. */
 export const OWN_DOMAIN = "skovern.com";
+
+export const DEFAULT_INBOX_FROM_DOMAIN = "in.skovern.com";
 
 /** True when the address is at skovern.com or one of its subdomains. */
 export function isOwnDomain(address: string): boolean {
@@ -63,6 +79,7 @@ export const PLAIN_ADDRESS = /^[^\s@<>,;"'()]+@[^\s@<>,;"'()]+\.[^\s@<>,;"'()]+$
 function inboxConfig(env: NodeJS.ProcessEnv, resendKey: string | null): InboxConfig | null {
   const secret = env["RESEND_WEBHOOK_SECRET"]?.trim();
   const maxPerDay = positiveInt(env, "FORWARD_MAX_PER_DAY", 15);
+  const flaggedPerDay = positiveInt(env, "FLAGGED_MAX_PER_DAY", 2, 0);
   if (!secret) return null;
   const match = /^whsec_([A-Za-z0-9+/]+={0,2})$/.exec(secret);
   const webhookKey = match?.[1] ? Buffer.from(match[1], "base64") : Buffer.alloc(0);
@@ -77,7 +94,21 @@ function inboxConfig(env: NodeJS.ProcessEnv, resendKey: string | null): InboxCon
     throw new ConfigError(`FORWARD_TO can't be at ${OWN_DOMAIN}: every forward would come straight back.`);
   }
   if (!resendKey) throw new ConfigError("RESEND_API_KEY is required when RESEND_WEBHOOK_SECRET is set.");
-  return { webhookKey, forwardTo, maxPerDay };
+  const fromDomain = (env["INBOX_FROM_DOMAIN"]?.trim() || DEFAULT_INBOX_FROM_DOMAIN).toLowerCase();
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(fromDomain) || !fromDomain.endsWith(`.${OWN_DOMAIN}`)) {
+    throw new ConfigError(`INBOX_FROM_DOMAIN must be a subdomain of ${OWN_DOMAIN}, like ${DEFAULT_INBOX_FROM_DOMAIN}.`);
+  }
+  const fromFallback = onOff(env, "INBOX_FROM_FALLBACK");
+  return {
+    webhookKey,
+    forwardTo,
+    maxPerDay,
+    flaggedPerDay,
+    fromDomain: fromFallback ? OWN_DOMAIN : fromDomain,
+    fromFallback,
+    wantedFromDomain: fromDomain,
+    authMissingOk: onOff(env, "INBOX_AUTH_MISSING_OK"),
+  };
 }
 
 function list(raw: string | undefined): string[] | null {
@@ -94,6 +125,15 @@ function positiveInt(env: NodeJS.ProcessEnv, key: string, fallback: number, min 
   const n = Number(raw);
   if (!Number.isInteger(n) || n < min) throw new ConfigError(`${key} must be a whole number of ${min} or more.`);
   return n;
+}
+
+/** A safety switch: unset or `0` is off, `1` is on, anything else (`true`,
+ *  `yes`, a typo) refuses to boot rather than guess. */
+function onOff(env: NodeJS.ProcessEnv, key: string): boolean {
+  const raw = env[key]?.trim() ?? "";
+  if (raw === "" || raw === "0") return false;
+  if (raw === "1") return true;
+  throw new ConfigError(`${key} must be 1, 0, or unset.`);
 }
 
 function resendQuota(env: NodeJS.ProcessEnv): ResendQuota {

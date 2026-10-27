@@ -73,7 +73,8 @@ export async function inboxClauses(h: Harness, check: Check, baseWithoutSecret: 
   const f1 = await post(api.base, body1, good);
   const fwd = forwards()[0];
   check("F1", f1.status === 200 && forwards().length === 1, `signed → ${f1.status}, sends ${forwards().length}`);
-  check("F1", fwd?.to === FORWARD_TO && fwd.from === "Skovern inbox <inbox@skovern.com>" && fwd.auth === "Bearer re_smoke_key", "to FORWARD_TO from the inbox address");
+  check("F1", fwd?.to === FORWARD_TO && fwd.from === "Skovern inbox <inbox@in.skovern.com>" && fwd.auth === "Bearer re_smoke_key", "to FORWARD_TO from inbox@in.skovern.com");
+  check("055-S4", fwd?.headers?.["Auto-Submitted"] === "auto-generated", `forward marked Auto-Submitted: ${fwd?.headers?.["Auto-Submitted"]}`);
   check("F1", fwd?.key === `forward/${id(1)}` && (await outcome(id(1))) === "forwarded", `Idempotency-Key ${fwd?.key}`);
   check("F1", fwd?.reply_to === "rosa@bloom.test" && fwd.subject === "[skovern.com] Do you do weddings?", `Reply-To ${fwd?.reply_to}, subject "${fwd?.subject}"`);
   check("F1", fwd?.attachments?.[0]?.path === "https://inbound-cdn.test/a1" && fwd.text.includes("To: hi@skovern.com"), "attachment kept, original To at the top");
@@ -96,12 +97,19 @@ export async function inboxClauses(h: Harness, check: Check, baseWithoutSecret: 
   check("F5", own.status === 200 && forwards().length === 1, `from @skovern.com → ${own.status}, sends ${forwards().length}`);
 
   // F7: the webhook body's sender, subject, and recipients are ignored.
-  h.inbound.set(id(3), received(id(3), { subject: "From the API", authentication: { spf: "fail", dkim: "pass", dmarc: "pass" } }));
+  h.inbound.set(id(3), received(id(3), { subject: "From the API" }));
   const body3 = event(id(3), { from: "boss@bank.test", to: ["evil@attacker.test"], subject: "From the webhook", text: "pwned" });
   const f7 = await post(api.base, body3, signed(body3));
   const third = forwards()[1];
   check("F7", f7.status === 200 && h.fetched.includes(`/emails/receiving/${id(3)}?html_format=cid`), "fetched by ID from the Receiving API");
-  check("F7", third?.to === FORWARD_TO && third.subject === "[spam?] [skovern.com] From the API" && !/attacker|pwned|bank\.test/.test(JSON.stringify(third)), `subject "${third?.subject}"`);
+  check("F7", third?.to === FORWARD_TO && third.subject === "[skovern.com] From the API" && !/attacker|pwned|bank\.test/.test(JSON.stringify(third)), `subject "${third?.subject}"`);
+
+  // S3: possibly spoofed mail (no SPF or DKIM pass) is forwarded flagged [spam?],
+  // on its own cap, not a main forward slot.
+  h.inbound.set(id(7), received(id(7), { subject: "Pay this", authentication: { spf: "gray", dkim: "fail", dmarc: "gray" } }));
+  const spam = await post(api.base, event(id(7)), signed(event(id(7))));
+  const flaggedSent = forwards().filter((m) => m.subject === "[spam?] [skovern.com] Pay this").length;
+  check("055-S3", spam.status === 200 && (await outcome(id(7))) === "forwarded" && flaggedSent === 1, `spoofed → ${await outcome(id(7))}, flagged sends ${flaggedSent}`);
 
   // N1: a failed fetch leaves the email pending, and the next run forwards it once.
   h.resend.getFaults = [503];
@@ -128,12 +136,12 @@ export async function inboxClauses(h: Harness, check: Check, baseWithoutSecret: 
     check("F4", r.status === 200 && (await outcome(id(n))) === "held", `over budget → ${r.status}, ${await outcome(id(n))}`);
   }
   const alerts = forwards().filter((m) => m.subject === "[skovern.com] Forwarding paused for today");
-  const sentOn = forwards().length - alerts.length;
+  const sentOn = forwards().filter((m) => !m.subject.startsWith("[spam?] ")).length - alerts.length;
   check("F4", sentOn === 3 && alerts.length === 1 && alerts[0]?.to === FORWARD_TO, `forwards ${sentOn}, alerts ${alerts.length}`);
   check("F4", alerts[0]?.text.startsWith("Forwarding paused for today. New mail is waiting in Resend") === true && /^summary\/\d{4}-\d\d-\d\d$/.test(alerts[0]?.key ?? ""), `alert key ${alerts[0]?.key}`);
   const used = await pool.query<{ kind: string; n: string }>(`SELECT kind, count(*) AS n FROM resend_usage WHERE kind NOT IN ('welcome', 'signin') GROUP BY kind ORDER BY kind`);
   const tally = used.rows.map((r) => `${r.kind}=${r.n}`).join(",");
-  check("F4", tally === "forward=3,received=6,summary=1", `shared quota counts ${tally}`);
+  check("F4", tally === "flagged=1,forward=3,received=7,summary=1", `shared quota counts ${tally}`);
   // P1 (bounce pause): every welcome sent earlier kept Resend's ID, and a signed
   // bounce for one is matched to it.
   const ids = await pool.query<{ total: string; named: string; one: string | null }>(
@@ -147,6 +155,27 @@ export async function inboxClauses(h: Harness, check: Check, baseWithoutSecret: 
   );
   check("P1", Number(w.total) > 0 && w.named === w.total && br.status === 200 && matched.rows[0]?.n === "1",
     `welcomes with Resend IDs ${w.named}/${w.total}, bounce → ${br.status}, matched ${matched.rows[0]?.n}`);
+
+  // S2 and H1: with INBOX_FROM_FALLBACK=1 and INBOX_AUTH_MISSING_OK=1 the api warns
+  // at every start; with a bad flag value (H4) it refuses to boot.
+  const flagEnv = { ...h.baseEnv, RESEND_WEBHOOK_SECRET: `whsec_${KEY.toString("base64")}`, FORWARD_TO };
+  const badFlag = h.runOnce({ ...flagEnv, INBOX_AUTH_MISSING_OK: "true" });
+  check("055-H4", badFlag.status !== 0 && badFlag.out.includes("INBOX_AUTH_MISSING_OK must be 1, 0, or unset."), `INBOX_AUTH_MISSING_OK=true exits ${badFlag.status}`);
+  const fallback = await h.startApi({
+    RESEND_WEBHOOK_SECRET: `whsec_${KEY.toString("base64")}`,
+    FORWARD_TO,
+    INBOX_FROM_FALLBACK: "1",
+    INBOX_AUTH_MISSING_OK: "1",
+  });
+  let fbLogs = fallback.logs();
+  for (let i = 0; i < 20 && !fbLogs.includes("INBOX_AUTH_MISSING_OK=1"); i += 1) {
+    await new Promise((w) => setTimeout(w, 250));
+    fbLogs = fallback.logs();
+  }
+  check("055-S2", fbLogs.includes("WARNING: inbox forwards go out from inbox@skovern.com (INBOX_FROM_FALLBACK=1)"), "fallback warns at startup");
+  check("055-S2", fbLogs.includes("Verify in.skovern.com in Resend"), "the warning names the subdomain to verify");
+  check("055-H1", fbLogs.includes("WARNING: mail with no authentication results is forwarded unflagged (INBOX_AUTH_MISSING_OK=1)"), "INBOX_AUTH_MISSING_OK warns at startup");
+  check("055-S2", !/INBOX_FROM_FALLBACK=1|INBOX_AUTH_MISSING_OK=1/.test(api.logs()), "no warnings without the flags");
 
   const logs = api.logs();
   const spent = logs.split("\n").filter((l) => l.includes("forward budget spent")).length;

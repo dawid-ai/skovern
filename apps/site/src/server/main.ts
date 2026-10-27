@@ -10,6 +10,7 @@ import { VisibilityStore } from "../publish/visibility-store.js";
 import { WaitlistStore } from "../waitlist/store.js";
 import { InboxStore } from "../inbox/store.js";
 import { InboxWorker } from "../inbox/worker.js";
+import { inboxFrom } from "../inbox/message.js";
 import { ConfigError, loadConfig, type ServerConfig } from "./config.js";
 import { pickMailers } from "./mailers.js";
 import { SigninMeter } from "./resend-usage.js";
@@ -62,8 +63,11 @@ async function main(): Promise<void> {
       ? new InboxWorker({
           api: { baseUrl: cfg.resendUrl, apiKey: cfg.resendKey },
           store: inboxStore,
+          from: inboxFrom(cfg.inbox.fromDomain),
           forwardTo: cfg.inbox.forwardTo,
           maxPerDay: cfg.inbox.maxPerDay,
+          flaggedPerDay: cfg.inbox.flaggedPerDay,
+          authMissingOk: cfg.inbox.authMissingOk,
           quota: cfg.resendQuota,
         })
       : null;
@@ -114,6 +118,18 @@ async function main(): Promise<void> {
       ? `[auth-server] inbox webhook ON at /hooks/resend/inbound (up to ${cfg.inbox.maxPerDay} forwards a day)`
       : "[auth-server] inbox webhook OFF (set RESEND_WEBHOOK_SECRET and FORWARD_TO to turn it on)",
   );
+  if (cfg.inbox?.fromFallback) {
+    console.warn(
+      `[auth-server] WARNING: inbox forwards go out from inbox@skovern.com (INBOX_FROM_FALLBACK=1). ` +
+        `Verify ${cfg.inbox.wantedFromDomain} in Resend, then remove INBOX_FROM_FALLBACK.`,
+    );
+  }
+  if (cfg.inbox?.authMissingOk) {
+    console.warn(
+      "[auth-server] WARNING: mail with no authentication results is forwarded unflagged (INBOX_AUTH_MISSING_OK=1). " +
+        "Remove it once Resend's results are confirmed on real mail.",
+    );
+  }
 
   const stopSweep = startSweep(pool, undefined, () => inboxStore.prune());
   const stopInbox = inboxWorker ? inboxWorker.start() : () => {};

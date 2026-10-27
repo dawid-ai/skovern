@@ -11,6 +11,7 @@ export interface FakeSend {
   text: string;
   html?: string;
   reply_to?: string;
+  headers?: Record<string, string>;
   attachments?: { filename: string; path: string; content_type?: string; content_id?: string }[];
   tags?: { name: string; value: string }[];
   auth: string | undefined;

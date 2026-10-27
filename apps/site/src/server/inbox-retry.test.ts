@@ -28,7 +28,8 @@ const fake = new FakeResend();
 
 const received = (id: string, over: Record<string, unknown> = {}): Record<string, unknown> => ({
   object: "email", id, from: "Rosa <rosa@bloom.test>", to: ["hi@skovern.com"], cc: [], reply_to: [],
-  subject: "Order", text: "Two dozen roses.", html: null, authentication: null, attachments: [], ...over,
+  subject: "Order", text: "Two dozen roses.", html: null,
+  authentication: { spf: "pass", dkim: "pass", dmarc: "pass" }, attachments: [], ...over,
 });
 
 beforeAll(async () => {
@@ -41,7 +42,7 @@ beforeAll(async () => {
   await new AuthStore(pool).migrate();
   const store = new InboxStore(pool);
   await store.migrate();
-  deps = { api: { baseUrl: url, apiKey: "re_test" }, store, forwardTo: "dawid@inbox.test", maxPerDay: 25, quota: { quota: 100, reserve: 15 } };
+  deps = { api: { baseUrl: url, apiKey: "re_test" }, store, from: "Skovern inbox <inbox@in.skovern.com>", forwardTo: "dawid@inbox.test", maxPerDay: 25, flaggedPerDay: 5, quota: { quota: 100, reserve: 15 } };
   worker = new InboxWorker(deps);
   const auth = new AuthService(new AuthStore(pool), new ConsoleMailer(), { appUrl: "http://x" });
   server = await startAuthServer({ service: auth, inbox: { key: KEY, store, worker, pool }, accountRoutes: false });

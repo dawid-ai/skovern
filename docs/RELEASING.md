@@ -141,7 +141,10 @@ port the custom domains target.
    - Optional: `RESEND_DAILY_QUOTA` (default 100, Resend's free plan) and `RESEND_RESERVE`
      (default 15).
    - Inbox forwarding (optional, see [Inbox forwarding](#inbox-forwarding)):
-     `RESEND_WEBHOOK_SECRET` (secret), `FORWARD_TO`, and `FORWARD_MAX_PER_DAY` (default 15).
+     `RESEND_WEBHOOK_SECRET` (secret), `FORWARD_TO`, `FORWARD_MAX_PER_DAY` (default 15),
+     `FLAGGED_MAX_PER_DAY` (default 2), `INBOX_FROM_DOMAIN` (default `in.skovern.com`),
+     `INBOX_FROM_FALLBACK`, and `INBOX_AUTH_MISSING_OK`. The two switches take only `1`, `0`, or
+     unset; anything else (`true`, `yes`) stops the boot.
    - Leave `ACCOUNT_ROUTES` unset until the beta. In production it defaults to off, so the api
      serves only `/healthz`, the waitlist, the remove page, and the waitlist admin view.
 4. Variables on `www`: `PORT=8080`. The api origin is baked in at build time
@@ -152,16 +155,17 @@ The api refuses to boot in production without `RESEND_API_KEY`, `APP_URL`, or
 `RESEND_API_URL`, and says which setting is wrong in the deploy log. With
 `RESEND_WEBHOOK_SECRET` set, it also refuses a secret that isn't `whsec_...`, a
 missing `FORWARD_TO`, a `FORWARD_TO` that isn't one plain address, or one at
-`skovern.com`. It refuses a `RESEND_RESERVE` that isn't smaller than
-`RESEND_DAILY_QUOTA`.
+`skovern.com`, or an `INBOX_FROM_DOMAIN` that isn't a subdomain of `skovern.com`.
+It refuses a `RESEND_RESERVE` that isn't smaller than `RESEND_DAILY_QUOTA`.
 
 ### Inbox forwarding
 
 Mail to any `@skovern.com` address arrives at Resend (MX `@` →
 `receive.forge.rmta.net`, priority 10, with receiving turned on for the domain).
 Resend posts a signed webhook to the api, and the api forwards each email to
-`FORWARD_TO` from `Skovern inbox <inbox@skovern.com>`, with `[skovern.com]` before
-the subject. **Reply** goes to the message's own Reply-To when it's one plain
+`FORWARD_TO` from `Skovern inbox <inbox@in.skovern.com>`, with `[skovern.com]`
+before the subject. Forwards use their own sending subdomain, so forwarded junk
+can't hurt the reputation of `skovern.com`, which welcomes and sign-in links use. **Reply** goes to the message's own Reply-To when it's one plain
 address outside `skovern.com`, and to the sender otherwise. The same webhook
 carries bounce, complaint, and suppression events. They pause welcome emails when
 more than 5% of the welcomes sent in the last 24 hours (with at least 20 sent)
@@ -176,7 +180,12 @@ bounced, were marked as spam, or were suppressed.
    `railway variables --service api --set-from-stdin RESEND_WEBHOOK_SECRET`
 3. Set `FORWARD_TO` on `api` to the one inbox that gets the mail. It can't be at
    `skovern.com`. Optionally set `FORWARD_MAX_PER_DAY` (default 15).
-4. Redeploy `api`. The deploy log says `inbox webhook ON at /hooks/resend/inbound`.
+4. Add the sending domain `in.skovern.com` (or your `INBOX_FROM_DOMAIN`) in Resend and its
+   DNS records. Until Resend shows it **Verified**, set `INBOX_FROM_FALLBACK=1`: forwards
+   then go out from `inbox@skovern.com`, and the deploy log warns about it at every start.
+   After it's verified, remove `INBOX_FROM_FALLBACK` and redeploy. Without the flag and
+   without a verified subdomain, Resend refuses every forward.
+5. Redeploy `api`. The deploy log says `inbox webhook ON at /hooks/resend/inbound`.
    Without `RESEND_WEBHOOK_SECRET` the route doesn't exist (404).
 
 How it behaves:
@@ -196,13 +205,45 @@ How it behaves:
   from the webhook body. Attachments go along by their signed download links; over
   25 MB together, or if Resend refuses them, the email goes again with the files
   listed by name.
-- `[spam?]` goes before the subject when Resend's SPF, DKIM, or DMARC check failed.
+- A sender is trusted only when SPF or DKIM passed and DMARC didn't fail (results are
+  read in any letter case). Softfail, none, and errors count as possibly forged. Such
+  mail is still forwarded, with `[spam?]` before the subject (a small shop with weak SPF
+  shouldn't lose its mail), but on its own cap, `FLAGGED_MAX_PER_DAY` (default 2), not a
+  main forward slot. Each one still costs 2 of the shared budget. Past that cap, or with
+  the shared budget spent, the rest of the day's flagged mail stays in Resend as
+  `held_spam`, and the log says `may be spoofed` with the reason. Treat `[spam?]` as a
+  spoof warning: check the sender before paying or clicking.
+- Mail that isn't flagged but didn't pass DMARC gets a banner line, `Sender not verified
+  for <domain>`. No subject prefix, and it takes a main forward slot.
+- If Resend sends no authentication results at all for an email, it's flagged like
+  possibly forged mail, and the log says `no authentication data on <id>`. With
+  `INBOX_AUTH_MISSING_OK=1` it's forwarded unflagged instead, and the api warns about
+  the switch at every start. Use the switch only until real mail confirms Resend's
+  results come through; missing results point to an API change, so look into it.
+- Auto-replies (`Auto-Submitted: auto-replied`, like out-of-office mail) are held as
+  `held_auto`. Other automatic mail (`auto-generated`, `auto-notified`: receipts,
+  notices) is forwarded on the flagged cap with an `[auto]` banner line and no subject
+  prefix; past the cap it's held as `held_auto`. Forwards carry `Auto-Submitted:
+  auto-generated` so auto-responders don't answer them.
+- Neither flagged nor automatic mail uses a main forward slot, but each still counts
+  against the shared Resend budget, because Resend counts every received email. Logged
+  authentication results are plain words only (`pass`, `fail`, `gray`); anything else
+  is logged as `other`.
 - Mail from `@skovern.com` senders is never forwarded.
-- Over `FORWARD_MAX_PER_DAY` forwards in the UTC day, or over the shared budget, mail
-  stays in Resend's **Receiving** tab and isn't forwarded later. The log says `forward
-  budget spent` once per held email, and the first held email of the day sends one
-  alert: "Forwarding paused for today. New mail is waiting in Resend → Emails →
-  Receiving."
+- After 15 forwarded emails (`FORWARD_MAX_PER_DAY`), forwarding stops for the rest of
+  the UTC day; it also stops when the shared budget is spent. Mail after that stays in
+  Resend's **Receiving** tab and isn't forwarded later. The log says `forward budget
+  spent` once per held email, and the first held email of the day sends one alert:
+  "Forwarding paused for today. New mail is waiting in Resend → Emails → Receiving."
+  Flagged mail has its own cap, so after this alert up to `FLAGGED_MAX_PER_DAY` more
+  `[spam?]` emails can still arrive that day.
+- When Resend's whole daily quota is used, even the reserve, the alert is skipped too.
+  The log then says `forwarding paused, but the alert was skipped` once a day, so check
+  the logs or Resend if forwards stop arriving.
+- Refused webhooks are logged as one line a minute with counts per reason, never one
+  line per request: `bad-signature`, `stale`, `missing`, `too-large` (a body over
+  256 KB gets 413), and `read-failed` (an aborted upload gets 400). The line names the
+  last `svix-id` per reason, with only letters, digits, `_`, and `-` kept.
 
 ### The Resend budget
 
@@ -210,8 +251,8 @@ Resend counts every email sent **and every email received** against one daily
 quota per UTC day: 100 on the free plan. The api keeps one shared count of both in
 Postgres:
 - Each received email counts 1, whether it's forwarded, held, or skipped.
-- Each send counts 1: a welcome, a forward, a names-only resend, the daily alert, and
-  (once `ACCOUNT_ROUTES` is on) a sign-in link.
+- Each send counts 1: a welcome, a forward, a flagged (`[spam?]`) forward, a
+  names-only resend, the daily alert, and (once `ACCOUNT_ROUTES` is on) a sign-in link.
 
 So a forwarded email costs 2. Before a welcome or a forward goes out, its own cap
 must have room and the shared count must be under `RESEND_DAILY_QUOTA` minus
@@ -221,8 +262,10 @@ sign-in links may use the reserve: the alert matters most when the budget is gon
 and a sign-in link is what lets someone in. Past the whole quota, no sign-in link
 goes out.
 
-With the defaults, a day of 50 welcomes and 15 forwarded emails uses 50 + 30 = 80,
-plus 1 for the alert. Every extra received email uses 1 more, even when it's held.
+With the defaults, a full day fits the 85 exactly: 50 welcomes, 15 forwarded emails
+(15 × 2 = 30), 2 flagged forwards (2 × 2 = 4), and 1 alert: 50 + 30 + 4 + 1 = 85. Every
+extra received email uses 1 more, even when it's held, so on a busy day welcomes and
+forwards stop before their own caps. Raising `FLAGGED_MAX_PER_DAY` costs 2 per step.
 
 Received mail can't be capped. A burst of spam to `@skovern.com` uses up the quota
 by itself: forwards and welcomes stop for the rest of the UTC day, and Resend may

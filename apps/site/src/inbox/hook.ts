@@ -1,10 +1,11 @@
 import type { IncomingMessage } from "node:http";
 import type pg from "pg";
 import type { HttpResult } from "../auth/handlers.js";
-import { readRawBody } from "../http.js";
+import { BodyTooLargeError, readRawBuffer } from "../http.js";
 import { recordFeedback, type FeedbackKind } from "../waitlist/bounce-pause.js";
 import { EMAIL_ID } from "./resend-api.js";
 import type { InboxStore } from "./store.js";
+import { RefusalLog } from "./refusals.js";
 import { verifySvix } from "./svix.js";
 import type { InboxWorker } from "./worker.js";
 
@@ -31,7 +32,11 @@ export interface InboxRouteContext {
   /** For the bounce and complaint records. */
   pool: pg.Pool;
   now?: () => number;
+  /** Where refused signatures are counted (one log line a minute). */
+  refusals?: RefusalLog;
 }
+
+const sharedRefusals = new RefusalLog();
 
 const FEEDBACK: Record<string, FeedbackKind> = {
   "email.bounced": "bounced",
@@ -77,13 +82,22 @@ async function handleEvent(ctx: InboxRouteContext, event: { type?: unknown; data
 }
 
 async function attempt(ctx: InboxRouteContext, req: IncomingMessage): Promise<HttpResult> {
-  let raw: string;
+  const id = header(req, "svix-id");
+  let raw: Buffer;
   try {
-    raw = await readRawBody(req, MAX_HOOK_BODY);
-  } catch {
+    raw = await readRawBuffer(req, MAX_HOOK_BODY);
+  } catch (err) {
+    // Counted in the once-a-minute refusal line, never logged per request.
+    const refusals = ctx.refusals ?? sharedRefusals;
+    if (!(err instanceof BodyTooLargeError)) {
+      // An aborted or broken upload: not a size problem, so not a 413.
+      refusals.note("read-failed", id);
+      return { status: 400, body: { ok: false, message: "Bad request." } };
+    }
+    // Real events are a few KB; the svix-id finds it in Resend.
+    refusals.note("too-large", id);
     return { status: 413, body: { ok: false, message: "Too big." } };
   }
-  const id = header(req, "svix-id");
   const verdict = verifySvix(
     ctx.key,
     { id, timestamp: header(req, "svix-timestamp"), signature: header(req, "svix-signature") },
@@ -91,12 +105,12 @@ async function attempt(ctx: InboxRouteContext, req: IncomingMessage): Promise<Ht
     (ctx.now ?? Date.now)(),
   );
   if (verdict !== "ok" || !id) {
-    console.warn(`[inbox] webhook refused: ${verdict}`);
+    (ctx.refusals ?? sharedRefusals).note(verdict);
     return UNSIGNED;
   }
   let event: { type?: unknown; data?: unknown };
   try {
-    event = JSON.parse(raw) as { type?: unknown; data?: unknown };
+    event = JSON.parse(raw.toString("utf8")) as { type?: unknown; data?: unknown };
   } catch {
     return { status: 400, body: { ok: false, message: "Bad request." } };
   }

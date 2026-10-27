@@ -95,6 +95,37 @@ describe("loadConfig inbox", () => {
     expect(inbox?.maxPerDay).toBe(15);
     expect(inbox?.webhookKey.toString()).toBe("0123456789abcdef0123");
     expect(loadConfig({ ...INBOX, FORWARD_MAX_PER_DAY: "5" }).inbox?.maxPerDay).toBe(5);
+    expect(inbox?.flaggedPerDay).toBe(2);
+    expect(loadConfig({ ...INBOX, FLAGGED_MAX_PER_DAY: "0" }).inbox?.flaggedPerDay).toBe(0);
+  });
+
+  it("S2: sends from in.skovern.com by default, any skovern.com subdomain on request, skovern.com only with the fallback flag", () => {
+    expect(loadConfig(INBOX).inbox).toMatchObject({ fromDomain: "in.skovern.com", fromFallback: false });
+    expect(loadConfig({ ...INBOX, INBOX_FROM_DOMAIN: "Mail.Skovern.com" }).inbox?.fromDomain).toBe("mail.skovern.com");
+    expect(loadConfig({ ...INBOX, INBOX_FROM_FALLBACK: "1" }).inbox).toMatchObject({
+      fromDomain: "skovern.com",
+      fromFallback: true,
+      wantedFromDomain: "in.skovern.com",
+    });
+    expect(loadConfig({ ...INBOX, INBOX_FROM_FALLBACK: "0" }).inbox).toMatchObject({ fromDomain: "in.skovern.com", fromFallback: false });
+    for (const bad of ["skovern.com", "evil.com", "skovern.com.evil.com", "in.notskovern.com", "a..skovern.com", "-x.skovern.com"]) {
+      expect(() => loadConfig({ ...INBOX, INBOX_FROM_DOMAIN: bad }), bad).toThrow("INBOX_FROM_DOMAIN must be a subdomain of skovern.com");
+    }
+  });
+
+  it("H1: INBOX_AUTH_MISSING_OK is off unless 1, and refuses anything else", () => {
+    expect(loadConfig(INBOX).inbox?.authMissingOk).toBe(false);
+    expect(loadConfig({ ...INBOX, INBOX_AUTH_MISSING_OK: "1" }).inbox?.authMissingOk).toBe(true);
+    expect(loadConfig({ ...INBOX, INBOX_AUTH_MISSING_OK: "0" }).inbox?.authMissingOk).toBe(false);
+    expect(() => loadConfig({ ...INBOX, INBOX_AUTH_MISSING_OK: "true" })).toThrow("INBOX_AUTH_MISSING_OK must be 1, 0, or unset.");
+  });
+
+  it.each(["true", "yes", "on", "2", "1 ", "01"])("H4: refuses INBOX_FROM_FALLBACK=%j", (v) => {
+    if (v === "1 ") {
+      expect(loadConfig({ ...INBOX, INBOX_FROM_FALLBACK: v }).inbox?.fromFallback).toBe(true); // trimmed
+      return;
+    }
+    expect(() => loadConfig({ ...INBOX, INBOX_FROM_FALLBACK: v })).toThrow("INBOX_FROM_FALLBACK must be 1, 0, or unset.");
   });
 
   it.each([
