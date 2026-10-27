@@ -141,7 +141,8 @@ port the custom domains target.
    - Optional: `RESEND_DAILY_QUOTA` (default 100, Resend's free plan) and `RESEND_RESERVE`
      (default 15).
    - Inbox forwarding (optional, see [Inbox forwarding](#inbox-forwarding)):
-     `RESEND_WEBHOOK_SECRET` (secret), `FORWARD_TO`, and `FORWARD_MAX_PER_DAY` (default 15).
+     `RESEND_WEBHOOK_SECRET` (secret), `FORWARD_TO`, `FORWARD_MAX_PER_DAY` (default 15),
+     `INBOX_FROM_DOMAIN` (default `in.skovern.com`), and `INBOX_FROM_FALLBACK`.
    - Leave `ACCOUNT_ROUTES` unset until the beta. In production it defaults to off, so the api
      serves only `/healthz`, the waitlist, the remove page, and the waitlist admin view.
 4. Variables on `www`: `PORT=8080`. The api origin is baked in at build time
@@ -152,16 +153,17 @@ The api refuses to boot in production without `RESEND_API_KEY`, `APP_URL`, or
 `RESEND_API_URL`, and says which setting is wrong in the deploy log. With
 `RESEND_WEBHOOK_SECRET` set, it also refuses a secret that isn't `whsec_...`, a
 missing `FORWARD_TO`, a `FORWARD_TO` that isn't one plain address, or one at
-`skovern.com`. It refuses a `RESEND_RESERVE` that isn't smaller than
-`RESEND_DAILY_QUOTA`.
+`skovern.com`, or an `INBOX_FROM_DOMAIN` that isn't a subdomain of `skovern.com`.
+It refuses a `RESEND_RESERVE` that isn't smaller than `RESEND_DAILY_QUOTA`.
 
 ### Inbox forwarding
 
 Mail to any `@skovern.com` address arrives at Resend (MX `@` →
 `receive.forge.rmta.net`, priority 10, with receiving turned on for the domain).
 Resend posts a signed webhook to the api, and the api forwards each email to
-`FORWARD_TO` from `Skovern inbox <inbox@skovern.com>`, with `[skovern.com]` before
-the subject. **Reply** goes to the message's own Reply-To when it's one plain
+`FORWARD_TO` from `Skovern inbox <inbox@in.skovern.com>`, with `[skovern.com]`
+before the subject. Forwards use their own sending subdomain, so forwarded junk
+can't hurt the reputation of `skovern.com`, which welcomes and sign-in links use. **Reply** goes to the message's own Reply-To when it's one plain
 address outside `skovern.com`, and to the sender otherwise. The same webhook
 carries bounce, complaint, and suppression events. They pause welcome emails when
 more than 5% of the welcomes sent in the last 24 hours (with at least 20 sent)
@@ -176,7 +178,12 @@ bounced, were marked as spam, or were suppressed.
    `railway variables --service api --set-from-stdin RESEND_WEBHOOK_SECRET`
 3. Set `FORWARD_TO` on `api` to the one inbox that gets the mail. It can't be at
    `skovern.com`. Optionally set `FORWARD_MAX_PER_DAY` (default 15).
-4. Redeploy `api`. The deploy log says `inbox webhook ON at /hooks/resend/inbound`.
+4. Add the sending domain `in.skovern.com` (or your `INBOX_FROM_DOMAIN`) in Resend and its
+   DNS records. Until Resend shows it **Verified**, set `INBOX_FROM_FALLBACK=1`: forwards
+   then go out from `inbox@skovern.com`, and the deploy log warns about it at every start.
+   After it's verified, remove `INBOX_FROM_FALLBACK` and redeploy. Without the flag and
+   without a verified subdomain, Resend refuses every forward.
+5. Redeploy `api`. The deploy log says `inbox webhook ON at /hooks/resend/inbound`.
    Without `RESEND_WEBHOOK_SECRET` the route doesn't exist (404).
 
 How it behaves:
@@ -196,13 +203,26 @@ How it behaves:
   from the webhook body. Attachments go along by their signed download links; over
   25 MB together, or if Resend refuses them, the email goes again with the files
   listed by name.
-- `[spam?]` goes before the subject when Resend's SPF, DKIM, or DMARC check failed.
+- Mail whose sender may be forged is held in Resend as `held_spam`, not forwarded: a
+  sender is trusted only when SPF or DKIM passed and DMARC didn't fail. Softfail, no
+  checks, and errors all count as possibly forged. The log says `may be spoofed`.
+  (`[spam?]` before the subject marks the same rule, if such mail is ever forwarded.)
+- Automatic mail (`Auto-Submitted: auto-...`, like out-of-office replies) is held as
+  `held_auto`. Forwards carry `Auto-Submitted: auto-generated` so auto-responders
+  don't answer them.
+- Neither held kind uses a forward slot, but each still counts against the shared
+  Resend budget, because Resend counts every received email.
 - Mail from `@skovern.com` senders is never forwarded.
-- Over `FORWARD_MAX_PER_DAY` forwards in the UTC day, or over the shared budget, mail
-  stays in Resend's **Receiving** tab and isn't forwarded later. The log says `forward
-  budget spent` once per held email, and the first held email of the day sends one
-  alert: "Forwarding paused for today. New mail is waiting in Resend → Emails →
-  Receiving."
+- After 15 forwarded emails (`FORWARD_MAX_PER_DAY`), forwarding stops for the rest of
+  the UTC day; it also stops when the shared budget is spent. Mail after that stays in
+  Resend's **Receiving** tab and isn't forwarded later. The log says `forward budget
+  spent` once per held email, and the first held email of the day sends one alert:
+  "Forwarding paused for today. New mail is waiting in Resend → Emails → Receiving."
+- When Resend's whole daily quota is used, even the reserve, the alert is skipped too.
+  The log then says `forwarding paused, but the alert was skipped` once a day, so check
+  the logs or Resend if forwards stop arriving.
+- Refused webhook signatures are logged as one line a minute with counts. A body over
+  256 KB gets 413 and a `webhook body over limit` line with its `svix-id`.
 
 ### The Resend budget
 
