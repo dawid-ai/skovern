@@ -36,7 +36,10 @@ async function send(deps: ForwardDeps, emailId: string, mail: ResendEmail, key: 
     // The key went out with an earlier attempt whose answer we lost. The body
     // differs only by freshly signed attachment links, so it was delivered.
     if (err instanceof MailError && err.status === 409 && err.code === "invalid_idempotent_request") {
-      console.warn(`[inbox] forward of email ${emailId} was already sent under ${key}`);
+      console.warn(
+        `[inbox] Resend reports ${key} as already used, so the forward of email ${emailId} is assumed delivered. ` +
+          "If it didn't arrive, read it in Resend's Receiving tab.",
+      );
       return "sent";
     }
     console.error(`[inbox] sending the forward of email ${emailId} failed (${why(err)})`);
