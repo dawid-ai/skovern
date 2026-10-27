@@ -219,6 +219,31 @@ describe("POST /hooks/resend/inbound", () => {
     expect(JSON.stringify(sent[0])).not.toMatch(/attacker|pwned|bank\.test/);
   });
 
+  it("never sends to our own domain, even with the config check bypassed", async () => {
+    emails.set(ID, received());
+    ctx.forward.forwardTo = "hi@skovern.com";
+    try {
+      const body = event(ID);
+      const r = await hook(body, signed(body));
+      expect(await r.json()).toMatchObject({ outcome: "loop" });
+      expect(sent).toHaveLength(0);
+    } finally {
+      ctx.forward.forwardTo = FORWARD_TO;
+    }
+  });
+
+  it("limits badly signed requests per address, never a valid one from elsewhere", async () => {
+    const body = event(ID);
+    const statuses: number[] = [];
+    for (let i = 0; i < 21; i += 1) {
+      statuses.push((await hook(body, { ...signed(body, { key: Buffer.from("wrong") }), "x-forwarded-for": "203.0.113.9" })).status);
+    }
+    expect(statuses.slice(0, 20).every((s) => s === 401)).toBe(true);
+    expect(statuses[20]).toBe(429);
+    emails.set(ID, received());
+    expect((await hook(body, { ...signed(body), "x-forwarded-for": "203.0.113.10" })).status).toBe(200);
+  });
+
   it("answers 500 and forgets the delivery when Resend is down, so the retry forwards", async () => {
     const body = event(ID);
     const headers = signed(body);

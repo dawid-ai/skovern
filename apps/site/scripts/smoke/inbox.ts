@@ -71,7 +71,8 @@ export async function inboxClauses(h: Harness, check: Check, baseWithoutSecret: 
 
   // F3: the same delivery again is a 200 and no second forward.
   const replay = await post(api.base, body1, good);
-  check("F3", replay.status === 200 && forwards().length === 1, `replay → ${replay.status}, sends ${forwards().length}`);
+  const flagged = ((await replay.json()) as { duplicate?: boolean }).duplicate === true;
+  check("F3", replay.status === 200 && flagged && forwards().length === 1, `replay → ${replay.status}, duplicate ${flagged}, sends ${forwards().length}`);
 
   // F5: mail from our own domain is never forwarded.
   h.inbound.set(id(2), received(id(2), { from: "Skovern <hi@skovern.com>" }));
