@@ -135,8 +135,9 @@ select:focus-visible {
   box-shadow: 0 0 0 3px var(--tint-soft), 0 0 0 1px var(--tint);
 }
 
+/* A select's `appearance` lives only in select.css, so the order the two files load in can't
+   turn the themed list back into the OS popup (select-css.test.ts). */
 select {
-  appearance: none;
   padding-right: 32px;
   cursor: pointer;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238e8e93' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 9.5l4-4 4 4M8 14.5l4 4 4-4'/%3E%3C/svg%3E");

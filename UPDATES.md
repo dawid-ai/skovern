@@ -3,6 +3,11 @@
 Each release lists what changed, in plain words. The app shows the newest entry when it offers
 an update. The release workflow refuses a version with no entry here.
 
+## v0.1.2 — 2026-10-27
+
+- Drop-down menus match your theme now. In dark mode, the list under Pick a brain is dark too, with easy-to-read words, instead of a pale grey box.
+- Those menus open as a neat little card below the box, with a check next to the one you picked.
+
 ## v0.1.1 — 2026-10-26
 
 - Skovern has a fresh new look: a clean sidebar with icons, rounded lists, and chat bubbles that feel like your phone.

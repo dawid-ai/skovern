@@ -106,14 +106,19 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .pcard { display: flex; flex-direction: column; border-radius: 24px; overflow: hidden; background: var(--bg-2); color: var(--ink); transition: transform .4s var(--ease) }
 .pcard:hover { text-decoration: none; transform: translateY(-4px) }
 .pcard[hidden] { display: none }
-.cover { position: relative; aspect-ratio: 16/10; overflow: hidden; display: grid; place-items: center }
+.cover { position: relative; aspect-ratio: 16/10; overflow: hidden; display: grid; place-items: center; container-type: inline-size }
 .cv-icon { background: var(--cv-warm) }
 .cv-grey { background: var(--cv-grey) }
 .cv-ink { background: var(--cv-ink) }
 .cover .obj { width: 46%; filter: drop-shadow(0 24px 30px rgba(120, 50, 10, .25)) }
 .cv-ink .obj { width: 34% }
-.cover .shot { position: absolute; left: 12%; top: 14%; width: 118%; max-width: none; border-radius: 10px; box-shadow: var(--shot-shadow) }
-.cover .shot img { width: 100%; height: auto; border-radius: inherit }
+.cover .shot { position: absolute; left: 12%; top: 14%; width: 118%; max-width: none; border-radius: clamp(12px, 1.9cqw, 18px); box-shadow: var(--shot-shadow) }
+
+/* An app screenshot's window frame (Shot.astro): design A's rounded window
+   corners, 18 px at full size and never under 12, and the frame clips the
+   image, so the screenshot's square corners never show. */
+.frame { display: block; overflow: hidden; border-radius: clamp(12px, 1.64vw, 18px) }
+.frame img { display: block; width: 100%; height: auto; border-radius: inherit }
 .pbody { padding: 20px 22px 24px; display: flex; flex-direction: column; gap: 8px; flex: 1 }
 .cat { font-size: 13px; font-weight: 600; color: var(--accent-t) }
 .pbody h3 { font-size: 21px; line-height: 1.22; font-weight: 700; letter-spacing: -.02em }

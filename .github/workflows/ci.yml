@@ -42,9 +42,10 @@ jobs:
       # seam in the main process, selects gnome-libsecret over it.
       - name: Install a keychain for safeStorage
         run: sudo apt-get update -q && sudo apt-get install -y -q gnome-keyring dbus
-      # The www e2e (W2) drives a real Chromium against astro preview and a local api.
-      - name: Install Chromium for the www e2e
-        run: pnpm --filter @skovern/www exec playwright install --with-deps chromium
+      # The www e2e (W2) drives a real Chromium against astro preview and a local api;
+      # P2 and P3 (loop 054) also run in Firefox and WebKit.
+      - name: Install Chromium, Firefox, and WebKit for the www e2e
+        run: pnpm --filter @skovern/www exec playwright install --with-deps chromium firefox webkit
       - name: Test (unit + E2E under xvfb)
         env:
           SKOVERN_PASSWORD_STORE: gnome-libsecret

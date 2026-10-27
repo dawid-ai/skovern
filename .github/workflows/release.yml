@@ -67,6 +67,11 @@ jobs:
         run: pnpm typecheck
       - name: Lint
         run: pnpm lint
+      # pnpm test includes the www e2e: Chromium, plus Firefox and WebKit for P2 and P3
+      # (loop 054). The browser builds are the ones the lockfile's exact @playwright/test
+      # (apps/www) pins; no new action. Same step as ci.yml.
+      - name: Install Chromium, Firefox, and WebKit for the www e2e
+        run: pnpm --filter @skovern/www exec playwright install --with-deps chromium firefox webkit
       - name: Install a keychain for safeStorage
         run: sudo apt-get update -q && sudo apt-get install -y -q gnome-keyring dbus
       - name: Test (unit + E2E under xvfb)
