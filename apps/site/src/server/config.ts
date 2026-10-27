@@ -44,12 +44,20 @@ export interface InboxConfig {
   /** The one address every forward goes to. No request can change it. */
   forwardTo: string;
   maxPerDay: number;
+  /** Where forwards and the daily alert come from: a subdomain of skovern.com,
+   *  so forwarded junk can't hurt the domain welcomes go out from. */
+  fromDomain: string;
+  /** INBOX_FROM_FALLBACK=1: send from skovern.com until the subdomain is
+   *  verified in Resend. Logged as a warning at startup. */
+  fromFallback: boolean;
 }
 
 export class ConfigError extends Error {}
 
 /** Our own mail domain. A forward never goes to it (a loop) and mail from it is never forwarded. */
 export const OWN_DOMAIN = "skovern.com";
+
+export const DEFAULT_INBOX_FROM_DOMAIN = "in.skovern.com";
 
 /** True when the address is at skovern.com or one of its subdomains. */
 export function isOwnDomain(address: string): boolean {
@@ -77,7 +85,12 @@ function inboxConfig(env: NodeJS.ProcessEnv, resendKey: string | null): InboxCon
     throw new ConfigError(`FORWARD_TO can't be at ${OWN_DOMAIN}: every forward would come straight back.`);
   }
   if (!resendKey) throw new ConfigError("RESEND_API_KEY is required when RESEND_WEBHOOK_SECRET is set.");
-  return { webhookKey, forwardTo, maxPerDay };
+  const fromDomain = (env["INBOX_FROM_DOMAIN"]?.trim() || DEFAULT_INBOX_FROM_DOMAIN).toLowerCase();
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(fromDomain) || !fromDomain.endsWith(`.${OWN_DOMAIN}`)) {
+    throw new ConfigError(`INBOX_FROM_DOMAIN must be a subdomain of ${OWN_DOMAIN}, like ${DEFAULT_INBOX_FROM_DOMAIN}.`);
+  }
+  const fromFallback = env["INBOX_FROM_FALLBACK"] === "1";
+  return { webhookKey, forwardTo, maxPerDay, fromDomain: fromFallback ? OWN_DOMAIN : fromDomain, fromFallback };
 }
 
 function list(raw: string | undefined): string[] | null {

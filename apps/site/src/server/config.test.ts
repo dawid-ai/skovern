@@ -97,6 +97,15 @@ describe("loadConfig inbox", () => {
     expect(loadConfig({ ...INBOX, FORWARD_MAX_PER_DAY: "5" }).inbox?.maxPerDay).toBe(5);
   });
 
+  it("S2: sends from in.skovern.com by default, any skovern.com subdomain on request, skovern.com only with the fallback flag", () => {
+    expect(loadConfig(INBOX).inbox).toMatchObject({ fromDomain: "in.skovern.com", fromFallback: false });
+    expect(loadConfig({ ...INBOX, INBOX_FROM_DOMAIN: "Mail.Skovern.com" }).inbox?.fromDomain).toBe("mail.skovern.com");
+    expect(loadConfig({ ...INBOX, INBOX_FROM_FALLBACK: "1" }).inbox).toMatchObject({ fromDomain: "skovern.com", fromFallback: true });
+    for (const bad of ["skovern.com", "evil.com", "skovern.com.evil.com", "in.notskovern.com", "a..skovern.com", "-x.skovern.com"]) {
+      expect(() => loadConfig({ ...INBOX, INBOX_FROM_DOMAIN: bad }), bad).toThrow("INBOX_FROM_DOMAIN must be a subdomain of skovern.com");
+    }
+  });
+
   it.each([
     ["no whsec_ prefix", { RESEND_WEBHOOK_SECRET: SECRET.slice("whsec_".length) }, /RESEND_WEBHOOK_SECRET/],
     ["a short key", { RESEND_WEBHOOK_SECRET: "whsec_YWJj" }, /RESEND_WEBHOOK_SECRET/],
