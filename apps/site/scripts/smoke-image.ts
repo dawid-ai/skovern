@@ -1,7 +1,7 @@
 // Loop 051 metric: run the PRODUCTION api image (NODE_ENV=production) against a
 // Testcontainers Postgres and a fake Resend over TLS, and assert S1–S13 (S13:
 // the image's file permissions). The stage (containers, TLS front) is in
-// smoke/harness.ts.
+// smoke/harness.ts. Loop 052 adds F1–F7, the inbox webhook (smoke/inbox.ts).
 //
 //   docker build -f apps/site/Dockerfile -t skovern-api-smoke .
 //   node apps/site/scripts/smoke-image.ts
@@ -11,6 +11,7 @@
 import { connect } from "node:net";
 import pg from "pg";
 import { docker, IMAGE, startHarness, type Api } from "./smoke/harness.ts";
+import { inboxClauses } from "./smoke/inbox.ts";
 
 const ADMIN = "smoke-admin-token-0123456789abcdef";
 const SITE = "https://skovern.com";
@@ -24,6 +25,7 @@ const h = await startHarness(ADMIN);
 const { sent } = h;
 let api: Api | undefined;
 let accounts: Api | undefined;
+let inbox: Api | undefined;
 const pool = new pg.Pool({ connectionString: h.db.getConnectionUri() });
 pool.on("error", () => {});
 try {
@@ -178,6 +180,9 @@ try {
   check("S9", og1.status === 200 && png.subarray(1, 4).toString() === "PNG" && png.length > 5000, `og.png ${og1.status}, ${png.length} bytes`);
   check("S9", og1.headers.get("x-skovern-cache") === "miss" && og2.headers.get("x-skovern-cache") === "hit", "second hit served from cache");
 
+  // F1–F7: the signed Resend webhook forwards mail to FORWARD_TO (loop 052).
+  inbox = await inboxClauses(h, check, base);
+
   // S10: SIGTERM drains and exits within 10 s, even with an idle keep-alive socket open.
   const sock = connect(api.port, "127.0.0.1");
   await new Promise<void>((r) => sock.once("connect", () => r()));
@@ -191,7 +196,7 @@ try {
   check("S10", took < 10 && code === "0", `stopped in ${took.toFixed(1)} s, exit ${code}`);
   console.log("\nAll smoke clauses passed.");
 } catch (err) {
-  for (const c of [api, accounts]) if (c) console.error(c.logs());
+  for (const c of [api, accounts, inbox]) if (c) console.error(c.logs());
   console.error((err as Error).message);
   process.exitCode = 1;
 } finally {
