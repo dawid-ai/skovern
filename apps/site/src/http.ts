@@ -7,6 +7,13 @@ import type { HttpResult } from "./auth/handlers.js";
 // Every request body here is a few hundred bytes; cap hard so a flood can't buffer.
 const MAX_BODY = 4096;
 
+/** The body went over the read limit (other read failures are plain errors). */
+export class BodyTooLargeError extends Error {
+  constructor() {
+    super("body too large");
+  }
+}
+
 /** Read the whole body as bytes, refusing anything over `max` bytes. */
 export async function readRawBuffer(req: IncomingMessage, max: number = MAX_BODY): Promise<Buffer> {
   const chunks: Buffer[] = [];
@@ -14,7 +21,7 @@ export async function readRawBuffer(req: IncomingMessage, max: number = MAX_BODY
   for await (const chunk of req) {
     const buf = chunk as Buffer;
     size += buf.length;
-    if (size > max) throw new Error("body too large");
+    if (size > max) throw new BodyTooLargeError();
     chunks.push(buf);
   }
   return Buffer.concat(chunks);

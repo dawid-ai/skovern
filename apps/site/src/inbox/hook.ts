@@ -1,7 +1,7 @@
 import type { IncomingMessage } from "node:http";
 import type pg from "pg";
 import type { HttpResult } from "../auth/handlers.js";
-import { readRawBuffer } from "../http.js";
+import { BodyTooLargeError, readRawBuffer } from "../http.js";
 import { recordFeedback, type FeedbackKind } from "../waitlist/bounce-pause.js";
 import { EMAIL_ID } from "./resend-api.js";
 import type { InboxStore } from "./store.js";
@@ -86,9 +86,15 @@ async function attempt(ctx: InboxRouteContext, req: IncomingMessage): Promise<Ht
   let raw: Buffer;
   try {
     raw = await readRawBuffer(req, MAX_HOOK_BODY);
-  } catch {
+  } catch (err) {
+    const svixId = (id ?? "none").slice(0, 64);
+    if (!(err instanceof BodyTooLargeError)) {
+      // An aborted or broken upload: not a size problem, so not a 413.
+      console.warn(`[inbox] webhook body read failed (${(err as Error).message}), svix-id ${svixId}`);
+      return { status: 400, body: { ok: false, message: "Bad request." } };
+    }
     // Real events are a few KB; this is worth a look, with the ID to find it in Resend.
-    console.warn(`[inbox] webhook body over limit (${MAX_HOOK_BODY} bytes), svix-id ${(id ?? "none").slice(0, 64)}`);
+    console.warn(`[inbox] webhook body over limit (${MAX_HOOK_BODY} bytes), svix-id ${svixId}`);
     return { status: 413, body: { ok: false, message: "Too big." } };
   }
   const verdict = verifySvix(
