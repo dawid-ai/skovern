@@ -1,7 +1,8 @@
 // The hero icon's journey down the home page (round-3 demo, loop 053), drawn
 // from the Cycles renders on one fixed canvas over the page:
 //   1. hero: the 72-frame turntable scrubs with scroll while the icon drifts at
-//      about half speed, so you watch it turn; it floats gently when idle;
+//      about half speed, so you watch it turn; at rest it sways slowly back
+//      and forth through the first frames (the demo's idle rotY) and bobs;
 //   2. "It stays home": it flies into the app window's brain chip and docks;
 //   3. receipts: it sits in the centre of the orbiting cards, rocking with them;
 //   4. waitlist: it settles above the form, floating again.
@@ -10,12 +11,26 @@
 // load, no JavaScript) and hide only once every image it needs has decoded.
 // Tests read the canvas's data-* attributes AND its pixels.
 
-const FRAME_FILL = 0.45; // the tile spans ~45% of a turntable frame's width
+const FRAME_FILL = 0.43; // the tile spans ~43% of a turntable frame's width
 const STILL_FILL = 0.88; // ... and ~88% of a front still's width
 /** Where the tile sits inside a turntable frame, across all 72 (fractions of
- *  the frame): the floor shadow lies outside it, below and to the right. */
-const TILE_IN_FRAME = { left: 0.24, top: 0.2, right: 0.77, bottom: 0.735 };
+ *  the frame): the floor shadow lies outside it, below. */
+const TILE_IN_FRAME = { left: 0.25, top: 0.21, right: 0.75, bottom: 0.715 };
+/** The lowest ink in any frame (the floor shadow), per px of tile, below the
+ *  tile's centre: 0.33 of a frame, plus the idle bob. */
+const INK_BELOW = 0.33 / FRAME_FILL + 0.03;
 const NAV = 48;
+/** More frames than this is a mistake in the build, not a smoother turn. */
+const MAX_FRAMES = 240;
+/** The idle sway: from the resting pose out through SWAY frames (about 11
+ *  degrees of turn) and back, once every SWAY_S seconds. It runs only while
+ *  the page is at rest; any scroll pauses it where it is, so the scrub never
+ *  jumps. Those frames load up front, with frame 0. */
+const SWAY = 14;
+const SWAY_S = 9;
+const BOB_S = 5.5;
+/** A scroll this recent (ms) means the page isn't at rest. */
+const REST_MS = 500;
 
 const clamp = (v: number, a = 0, b = 1): number => Math.min(b, Math.max(a, v));
 const mix = (a: number, b: number, t: number): number => a + (b - a) * t;
@@ -57,7 +72,7 @@ export function startIconFlight(): void {
   const pin = document.querySelector<HTMLElement>("#rc-pin");
   const wl = document.querySelector<HTMLElement>("#a-wl");
   const wlSec = document.querySelector<HTMLElement>("#waitlist");
-  const count = Number(hero?.dataset["frames"] ?? 0);
+  const count = Math.min(MAX_FRAMES, Number(hero?.dataset["frames"] ?? 0));
   if (!canvas || !hero || !heroCopy || !socket || !chip || !win || !rc || !pin || !wl || !wlSec || count < 2) return;
   if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
   const ctx = canvas.getContext("2d");
@@ -73,6 +88,10 @@ export function startIconFlight(): void {
   let floating = false;
   let cssW = 1;
   let cssH = 1;
+  // The idle clock: seconds the page has spent at rest, which drive the sway and bob.
+  let idle = 0;
+  let lastNow = 0;
+  let lastScroll = -Infinity;
 
   // The canvas is position:fixed with inset:0, so its own box is the visible
   // viewport (mobile toolbars included); size the buffer from that box.
@@ -144,14 +163,18 @@ export function startIconFlight(): void {
     // stays 16 px above the hero copy. Near the copy the icon shrinks (down to
     // half size, as if moving away) instead of overlapping; past that it
     // scrolls with the page.
-    const inkBelow = 0.32 / FRAME_FILL + 0.02; // lowest ink, per px of tile, below the centre
+    const inkBelow = INK_BELOW;
     const limit = heroCopy.getBoundingClientRect().top - 16;
     const drifted = heroB.y + scrollY * 0.45;
     heroB.tile = clamp((limit - drifted) / inkBelow, heroB.tile * 0.5, heroB.tile);
     heroB.y = Math.min(drifted, limit - inkBelow * heroB.tile);
     const spin = clamp(scrollY / Math.max(1, (heroRect.top + scrollY + heroRect.height * 0.45) / 0.55));
-    const heroIdx = Math.round(spin * (count - 1));
-    const bob = Math.sin((now / 1000) * ((Math.PI * 2) / 5.5));
+    if (now - lastScroll > REST_MS) idle += Math.min(0.1, Math.max(0, (now - lastNow) / 1000));
+    lastNow = now;
+    // 0 at rest pose .. 1 at the far end of the sway; it fades out as the scroll turns the icon.
+    const sway = (0.5 - 0.5 * Math.cos((idle / SWAY_S) * Math.PI * 2)) * Math.min(SWAY, count - 1);
+    const heroIdx = Math.round(clamp(spin * (count - 1) + sway * (1 - spin), 0, count - 1));
+    const bob = Math.sin(idle * ((Math.PI * 2) / BOB_S));
     // Phase progress, as in the demo.
     const wr = win.getBoundingClientRect();
     const s0 = H * (narrow ? 0.8 : 0.95);
@@ -172,7 +195,7 @@ export function startIconFlight(): void {
     if (t4 > 0 && leave <= 0) {
       phase = "waitlist";
       const k = mix(0.72, 1, ease(t4));
-      shown = { x: wlB.x, y: wlB.y + bob * wlB.tile * 0.02, tile: wlB.tile * k };
+      shown = { x: wlB.x, y: wlB.y + bob * wlB.tile * 0.03, tile: wlB.tile * k };
       put(front, shown.x, shown.y, shown.tile, STILL_FILL, ease(t4));
       floating = true;
     } else if (t2 > 0) {
@@ -203,7 +226,7 @@ export function startIconFlight(): void {
       put(front, shown.x, shown.y, shown.tile, STILL_FILL, settle);
     } else {
       phase = "hero";
-      shown = { x: heroB.x, y: heroB.y + bob * heroB.tile * 0.02, tile: heroB.tile };
+      shown = { x: heroB.x, y: heroB.y + bob * heroB.tile * 0.03, tile: heroB.tile };
       frameIdx = heroIdx;
       putFrame(nearest(heroIdx), shown.x, shown.y, shown.tile, 1, 0);
       floating = shown.y + shown.tile > 0;
@@ -226,20 +249,26 @@ export function startIconFlight(): void {
     requestAnimationFrame(draw);
   }
 
-  // Frame 0 and the stills load first; the turn's other 71 frames wait until
-  // the person scrolls or the hero leaves view, so a phone that never scrolls
-  // never downloads them.
+  // Frame 0 and the stills load first, then the sway's frames (1..SWAY), in
+  // order. The turn's other frames wait until the person scrolls or the hero
+  // leaves view, so a phone that never scrolls never downloads them.
+  const requested = new Set<number>();
+  const load = async (i: number): Promise<void> => {
+    if (requested.has(i)) return;
+    requested.add(i);
+    frames[i] = await loadImage(`/hero/f-${pad(i)}.webp`);
+    schedule();
+  };
+  const loadSway = async (): Promise<void> => {
+    for (let i = 1; i <= Math.min(SWAY, count - 1); i += 1) await load(i);
+  };
   let restStarted = false;
   const loadRest = (): void => {
     if (restStarted) return;
     restStarted = true;
     let next = 1;
     const worker = async (): Promise<void> => {
-      while (next < count) {
-        const i = next++;
-        frames[i] = await loadImage(`/hero/f-${pad(i)}.webp`);
-        schedule();
-      }
+      while (next < count) await load(next++);
     };
     void Promise.all([worker(), worker(), worker(), worker()]);
   };
@@ -254,6 +283,7 @@ export function startIconFlight(): void {
     started = true;
     document.documentElement.classList.add("fly-on");
     schedule();
+    void loadSway();
     if (scrollY > 0) loadRest();
     const io = new IntersectionObserver((entries) => {
       if (entries.some((e) => !e.isIntersecting)) {
@@ -267,6 +297,7 @@ export function startIconFlight(): void {
   addEventListener(
     "scroll",
     () => {
+      lastScroll = performance.now();
       if (!started) return;
       loadRest();
       schedule();

@@ -1,10 +1,11 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import {
   diff,
   expectDrawnAt,
   inked,
   open,
   rectOf,
+  screenPixels,
   scrollTo,
   shrink,
   stops,
@@ -15,8 +16,9 @@ import {
   type Rect,
 } from "./pixels";
 
-// H1 (the shipped renders' S), H2 (the journey at 1440), H3 (degraded states),
-// H4 (no frame past 0 before a scroll). The flying icon is one canvas
+// H1 + P1 (the shipped renders' S), H2 (the journey at 1440), H3 (degraded
+// states), H4 (only the sway's frames before a scroll), P2 (idle motion, in
+// Chromium, Firefox, and WebKit: see playwright.config.ts). The flying icon is one canvas
 // (#icon-fly). It reports where it drew in data-*, but every check here reads
 // the canvas PIXELS (helpers in ./pixels): drawn inside the reported box, empty
 // well outside it.
@@ -173,23 +175,31 @@ test.describe("H3: the hero icon never sits on the headline", () => {
   });
 });
 
+// The idle sway steps through frames 1..14 (SWAY in icon-flight.ts).
+const SWAY = 14;
+
 test.describe("H4: frames wait for a scroll", () => {
-  test("loads frame 0 and the stills up front, and no other frame until the person scrolls", async ({ page }) => {
+  test("loads frame 0, the stills, and the sway's frames up front, and no other frame until the person scrolls", async ({ page }) => {
     await page.goto(`${www()}/`);
     await page.waitForFunction(() => document.documentElement.classList.contains("fly-on"));
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(3000);
     const frameNames = (): Promise<string[]> =>
       page.evaluate(() => performance.getEntriesByType("resource").map((e) => e.name).filter((n) => /\/hero\/f-\d{3}\.webp/.test(n)));
-    expect((await frameNames()).map((n) => n.slice(-10))).toEqual(["f-000.webp"]);
+    const want = Array.from({ length: SWAY + 1 }, (_, i) => `f-${String(i).padStart(3, "0")}.webp`);
+    expect((await frameNames()).map((n) => n.slice(-10)).sort()).toEqual(want);
     await scrollTo(page, 40);
     await expect.poll(async () => (await frameNames()).length, { timeout: 30_000 }).toBe(72);
   });
 });
 
-test.describe("H1: the shipped renders' S", () => {
+test.describe("H1 + P1: the shipped renders' S", () => {
   // Each image is decoded by the browser (the shipped WebP), drawn to a canvas,
-  // and the S is found as the near-white ink inside the tile.
-  for (const src of ["/img/icon-front.webp", "/img/icon-front-dark.webp", "/hero/f-000.webp", "/hero/f-035.webp"]) {
+  // and the S is found as the near-white ink inside the tile. P1: the camera
+  // looks down on a tile that leans back, so at every turntable frame the
+  // bottom bowl renders at least as wide as the top (perspective used to make
+  // the top one bigger, and the S read upside down).
+  const turn = ["000", "018", "035", "053", "071"].map((f) => `/hero/f-${f}.webp`);
+  for (const src of ["/img/icon-front.webp", "/img/icon-front-dark.webp", "/img/icon-still.webp", ...turn]) {
     test(`${src}: the bottom bowl is wider than the top, and it isn't mirrored`, async ({ page }, info) => {
       test.skip(info.project.name !== "desktop-1440", "image checks run once");
       await page.goto(`${www()}/404`);
@@ -201,4 +211,45 @@ test.describe("H1: the shipped renders' S", () => {
       expect(mirrored.slope, "a mirrored S runs the other way").toBeLessThan(0);
     });
   }
+});
+
+test.describe("P2: the hero icon moves on its own at rest", () => {
+  // Real screen pixels (a screenshot, decoded), so this means the same thing in
+  // Chromium, Firefox, and WebKit: the share of pixels in the hero icon's box
+  // that changed by more than 24 (of 255) in some channel.
+  const changed = async (page: Page, r: Rect): Promise<number> => {
+    const a = await screenPixels(page, r);
+    await page.waitForTimeout(1000);
+    const b = await screenPixels(page, r);
+    let n = 0;
+    for (let i = 0; i < a.data.length; i += 4) {
+      const d = Math.max(...[0, 1, 2].map((k) => Math.abs((a.data[i + k] ?? 0) - (b.data[i + k] ?? 0))));
+      if (d > 24) n += 1;
+    }
+    return n / (a.data.length / 4);
+  };
+  test("after 2 s with no scrolling, two crops 1 s apart differ, and it turns through the frames", async ({ page }) => {
+    await page.goto(`${www()}/`);
+    await page.waitForFunction(() => document.documentElement.classList.contains("fly-on"));
+    await page.waitForTimeout(2000);
+    const moved = await changed(page, await rectOf(page, "#a-hero"));
+    expect(moved, "share of the hero icon's pixels that changed in 1 s at rest").toBeGreaterThan(0.005);
+    // The sway: over 4 s at rest the drawn frame changes, without a scroll.
+    const seen = new Set<number>();
+    for (let i = 0; i < 8; i += 1) {
+      seen.add(await page.evaluate(() => Number((document.querySelector("#icon-fly") as HTMLCanvasElement).dataset["frame"])));
+      await page.waitForTimeout(500);
+    }
+    expect(seen.size, `frames seen at rest: ${[...seen].join(", ")}`).toBeGreaterThanOrEqual(3);
+    expect(Math.max(...seen)).toBeLessThanOrEqual(SWAY);
+  });
+
+  test("under reduced motion, two crops 1 s apart are identical", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto(`${www()}/`);
+    const still = page.locator("#a-hero .still");
+    await expect.poll(() => still.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0)).toBe(true);
+    await page.waitForTimeout(2000);
+    expect(await changed(page, await rectOf(page, "#a-hero"))).toBe(0);
+  });
 });

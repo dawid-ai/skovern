@@ -211,3 +211,44 @@ export async function measureGlyph(url: string): Promise<{ shipped: GlyphMeasure
   };
   return { shipped: measure(false), mirrored: measure(true) };
 }
+
+/** The page's real composited pixels inside `r` (CSS px), from a screenshot
+ *  decoded in the page: works the same in every engine, canvas or not. */
+export async function screenPixels(page: Page, r: Rect): Promise<{ w: number; h: number; data: number[] }> {
+  const png = await page.screenshot({
+    clip: { x: r.left, y: r.top, width: r.right - r.left, height: r.bottom - r.top },
+    scale: "css",
+    animations: "allow",
+  });
+  return page.evaluate(async (b64) => {
+    const img = new Image();
+    img.src = `data:image/png;base64,${b64}`;
+    await img.decode();
+    const c = document.createElement("canvas");
+    c.width = img.naturalWidth;
+    c.height = img.naturalHeight;
+    const g = c.getContext("2d", { willReadFrequently: true })!;
+    g.drawImage(img, 0, 0);
+    return { w: c.width, h: c.height, data: [...g.getImageData(0, 0, c.width, c.height).data] };
+  }, png.toString("base64"));
+}
+
+/** A 24x24 grey thumbnail of the real screen inside `r`, for comparing moments. */
+export async function screenThumb(page: Page, r: Rect): Promise<number[]> {
+  const { w, h, data } = await screenPixels(page, r);
+  const out: number[] = [];
+  for (let ty = 0; ty < 24; ty += 1) {
+    for (let tx = 0; tx < 24; tx += 1) {
+      let s = 0, n = 0;
+      for (let y = Math.floor((ty * h) / 24); y < Math.floor(((ty + 1) * h) / 24); y += 1) {
+        for (let x = Math.floor((tx * w) / 24); x < Math.floor(((tx + 1) * w) / 24); x += 1) {
+          const o = (y * w + x) * 4;
+          s += ((data[o] ?? 0) + (data[o + 1] ?? 0) + (data[o + 2] ?? 0)) / 3;
+          n += 1;
+        }
+      }
+      out.push(n ? s / n : 0);
+    }
+  }
+  return out;
+}
