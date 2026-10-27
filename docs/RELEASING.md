@@ -142,8 +142,9 @@ port the custom domains target.
      (default 15).
    - Inbox forwarding (optional, see [Inbox forwarding](#inbox-forwarding)):
      `RESEND_WEBHOOK_SECRET` (secret), `FORWARD_TO`, `FORWARD_MAX_PER_DAY` (default 15),
-     `FLAGGED_MAX_PER_DAY` (default 2), `INBOX_FROM_DOMAIN` (default `in.skovern.com`), and
-     `INBOX_FROM_FALLBACK`.
+     `FLAGGED_MAX_PER_DAY` (default 2), `INBOX_FROM_DOMAIN` (default `in.skovern.com`),
+     `INBOX_FROM_FALLBACK`, and `INBOX_AUTH_MISSING_OK`. The two switches take only `1`, `0`, or
+     unset; anything else (`true`, `yes`) stops the boot.
    - Leave `ACCOUNT_ROUTES` unset until the beta. In production it defaults to off, so the api
      serves only `/healthz`, the waitlist, the remove page, and the waitlist admin view.
 4. Variables on `www`: `PORT=8080`. The api origin is baked in at build time
@@ -212,14 +213,22 @@ How it behaves:
   the shared budget spent, the rest of the day's flagged mail stays in Resend as
   `held_spam`, and the log says `may be spoofed` with the reason. Treat `[spam?]` as a
   spoof warning: check the sender before paying or clicking.
-- If Resend sends no authentication results at all for an email, it's forwarded
-  unflagged and the log says `no authentication data on <id>`. That points to a change
-  in Resend's API rather than a spoof, so look into it.
-- Automatic mail (`Auto-Submitted: auto-...`, like out-of-office replies) is held as
-  `held_auto`. Forwards carry `Auto-Submitted: auto-generated` so auto-responders
-  don't answer them.
+- Mail that isn't flagged but didn't pass DMARC gets a banner line, `Sender not verified
+  for <domain>`. No subject prefix, and it takes a main forward slot.
+- If Resend sends no authentication results at all for an email, it's flagged like
+  possibly forged mail, and the log says `no authentication data on <id>`. With
+  `INBOX_AUTH_MISSING_OK=1` it's forwarded unflagged instead, and the api warns about
+  the switch at every start. Use the switch only until real mail confirms Resend's
+  results come through; missing results point to an API change, so look into it.
+- Auto-replies (`Auto-Submitted: auto-replied`, like out-of-office mail) are held as
+  `held_auto`. Other automatic mail (`auto-generated`, `auto-notified`: receipts,
+  notices) is forwarded on the flagged cap with an `[auto]` banner line and no subject
+  prefix; past the cap it's held as `held_auto`. Forwards carry `Auto-Submitted:
+  auto-generated` so auto-responders don't answer them.
 - Neither flagged nor automatic mail uses a main forward slot, but each still counts
-  against the shared Resend budget, because Resend counts every received email.
+  against the shared Resend budget, because Resend counts every received email. Logged
+  authentication results are plain words only (`pass`, `fail`, `gray`); anything else
+  is logged as `other`.
 - Mail from `@skovern.com` senders is never forwarded.
 - After 15 forwarded emails (`FORWARD_MAX_PER_DAY`), forwarding stops for the rest of
   the UTC day; it also stops when the shared budget is spent. Mail after that stays in
@@ -231,9 +240,10 @@ How it behaves:
 - When Resend's whole daily quota is used, even the reserve, the alert is skipped too.
   The log then says `forwarding paused, but the alert was skipped` once a day, so check
   the logs or Resend if forwards stop arriving.
-- Refused webhook signatures are logged as one line a minute with counts. A body over
-  256 KB gets 413 and a `webhook body over limit` line with its `svix-id`. A body that
-  couldn't be read (an aborted upload) gets 400 and a `webhook body read failed` line.
+- Refused webhooks are logged as one line a minute with counts per reason, never one
+  line per request: `bad-signature`, `stale`, `missing`, `too-large` (a body over
+  256 KB gets 413), and `read-failed` (an aborted upload gets 400). The line names the
+  last `svix-id` per reason, with only letters, digits, `_`, and `-` kept.
 
 ### The Resend budget
 
