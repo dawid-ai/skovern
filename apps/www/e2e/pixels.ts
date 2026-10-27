@@ -252,3 +252,29 @@ export async function screenThumb(page: Page, r: Rect): Promise<number[]> {
   }
   return out;
 }
+
+/** Runs IN THE PAGE: the tile's width (alpha > 200) at 15% and at 85% of its
+ *  height in a shipped image. A camera below the tile's middle (or a tile
+ *  tipped toward it) draws the top edge wider: the whole icon, S included,
+ *  reads top-heavy. Self-contained, so page.evaluate can serialise it. */
+export async function measureTile(url: string): Promise<{ top: number; bottom: number }> {
+  const img = new Image();
+  img.src = url;
+  await img.decode();
+  const c = document.createElement("canvas");
+  c.width = img.naturalWidth;
+  c.height = img.naturalHeight;
+  const g = c.getContext("2d", { willReadFrequently: true })!;
+  g.drawImage(img, 0, 0);
+  const { data, width, height } = g.getImageData(0, 0, c.width, c.height);
+  const solid = (x: number, y: number): boolean => (data[(y * width + x) * 4 + 3] ?? 0) > 200;
+  let tt = height, tb = 0;
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 2) if (solid(x, y)) { tt = Math.min(tt, y); tb = Math.max(tb, y); break; }
+  const across = (f: number): number => {
+    const y = Math.round(tt + (tb - tt) * f);
+    let lo = -1, hi = -1;
+    for (let x = 0; x < width; x += 1) if (solid(x, y)) { if (lo < 0) lo = x; hi = x; }
+    return hi - lo;
+  };
+  return { top: across(0.15), bottom: across(0.85) };
+}

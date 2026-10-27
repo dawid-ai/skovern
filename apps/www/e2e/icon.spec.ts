@@ -13,6 +13,7 @@ import {
   thumb,
   www,
   measureGlyph,
+  measureTile,
   type Rect,
 } from "./pixels";
 
@@ -209,6 +210,18 @@ test.describe("H1 + P1: the shipped renders' S", () => {
       expect(shipped.bottomBowl, `bowls ${shipped.topBowl} / ${shipped.bottomBowl}`).toBeGreaterThan(shipped.topBowl);
       expect(shipped.slope, "the spine runs upper left to lower right").toBeGreaterThan(0);
       expect(mirrored.slope, "a mirrored S runs the other way").toBeLessThan(0);
+    });
+  }
+  // The bowls alone didn't catch loop 053's renders (bottom 3% wider, yet the
+  // icon read upside down): the whole tile was drawn wider at the top. Seen
+  // from above, the tile's bottom edge is at least as wide as its top.
+  for (const src of turn) {
+    test(`${src}: the camera looks down, so the tile is no wider at the top than at the bottom`, async ({ page }, info) => {
+      test.skip(info.project.name !== "desktop-1440", "image checks run once");
+      await page.goto(`${www()}/404`);
+      const t = await page.evaluate(measureTile, src);
+      expect(t.top).toBeGreaterThan(100);
+      expect(t.bottom, `tile ${t.top} at the top, ${t.bottom} at the bottom`).toBeGreaterThanOrEqual(t.top);
     });
   }
 });
