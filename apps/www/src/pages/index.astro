@@ -38,8 +38,11 @@ const ld = {
     </div>
   </section>
   <HomeBlog posts={posts} />
+  <canvas id="icon-fly" aria-hidden="true"></canvas>
 </Base>
 <script>
   import { startHome } from "../scripts/home";
+  import { startIconFlight } from "../scripts/icon-flight";
   startHome();
+  startIconFlight();
 </script>

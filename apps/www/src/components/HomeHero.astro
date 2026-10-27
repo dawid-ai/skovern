@@ -2,9 +2,10 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
-// The hero: a Blender render of the glass app icon (apps/www/art/icon.py),
-// scrubbed frame by frame as you scroll. The still is the first frame, shown
-// until the frames load, and for good when motion is reduced.
+// The hero: a Blender render of the glass app icon (apps/www/art/icon.py). The
+// still is the first turntable frame; scripts/icon-flight.ts replaces it with
+// the moving icon (spin, then the flight down the page) once frames load. With
+// reduced motion or no JavaScript the still stays.
 let frames = 0;
 try {
   frames = readdirSync(join(process.cwd(), "public", "hero")).filter((f) => /^f-\d{3}\.webp$/.test(f)).length;
@@ -14,9 +15,8 @@ try {
 ---
 <section class="hero" aria-labelledby="h-hero">
   <div class="stage">
-    <div class="anchor" id="a-hero" data-frames={frames} data-dark-scrub="1">
+    <div class="anchor" id="a-hero" data-frames={frames}>
       <img class="still" src="/img/icon-still.webp" alt="The Skovern app icon: an orange glass tile with a glowing white S inside" width="1200" height="1200" fetchpriority="high" decoding="async">
-      <canvas aria-hidden="true"></canvas>
     </div>
   </div>
   <div class="copy">
@@ -31,7 +31,3 @@ try {
     </div>
   </div>
 </section>
-<script>
-  import { startHeroScrub } from "../scripts/hero-scrub";
-  startHeroScrub();
-</script>
