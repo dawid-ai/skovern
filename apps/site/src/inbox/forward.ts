@@ -18,6 +18,8 @@ export interface ForwardDeps {
   store: InboxStore;
   forwardTo: string;
   maxPerDay: number;
+  /** Forwards of possibly spoofed mail a day, on their own cap (FLAGGED_MAX_PER_DAY). */
+  flaggedPerDay: number;
   quota: ResendQuota;
 }
 
@@ -82,21 +84,28 @@ export async function processOne(deps: ForwardDeps, job: Lease): Promise<Forward
     await deps.store.settle(emailId, "skipped");
     return "loop";
   }
-  // Neither kind takes a forward slot, so a burst of them can't use up the day's
-  // forwards. Both still count against the shared quota (they were received).
+  // Neither automatic nor possibly spoofed mail takes a main forward slot, so a
+  // burst of either can't use up the day's forwards. Both count as received.
   if (isAutoSubmitted(email)) {
     await deps.store.settle(emailId, "held_auto");
     console.warn(`[inbox] email ${emailId} is an automatic reply; it stays in Resend`);
     return "held";
   }
-  if (looksSpoofed(email)) {
-    await deps.store.settle(emailId, "held_spam");
-    const a = email.authentication;
-    const checks = a ? `spf ${a.spf}, dkim ${a.dkim}, dmarc ${a.dmarc}` : "no checks";
-    console.warn(`[inbox] email ${emailId} may be spoofed (${checks}); it stays in Resend`);
-    return "held";
+  // Possibly spoofed mail is still forwarded, flagged [spam?] (a small shop's
+  // weak SPF shouldn't lose its mail), but on its own small cap. Past that cap,
+  // it stays in Resend.
+  const flagged = looksSpoofed(email);
+  if (flagged) {
+    if (!(await deps.store.claimSlot(`forward/${emailId}`, "flagged", deps.quota, deps.flaggedPerDay))) {
+      await deps.store.settle(emailId, "held_spam");
+      const a = email.authentication;
+      const checks = a ? `spf ${a.spf}, dkim ${a.dkim}, dmarc ${a.dmarc}` : "no checks";
+      console.warn(`[inbox] email ${emailId} may be spoofed (${checks}) and the flagged cap is used; it stays in Resend`);
+      return "held";
+    }
+  } else if (!(await deps.store.claimSlot(`forward/${emailId}`, "forward", deps.quota, deps.maxPerDay))) {
+    return hold(deps, emailId);
   }
-  if (!(await deps.store.claimSlot(`forward/${emailId}`, "forward", deps.quota, deps.maxPerDay))) return hold(deps, emailId);
 
   let links = new Map<string, string>();
   if (email.attachments.length && !job.namesOnly) {

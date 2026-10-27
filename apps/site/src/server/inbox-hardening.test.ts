@@ -44,7 +44,7 @@ beforeAll(async () => {
   await new AuthStore(pool).migrate();
   const store = new InboxStore(pool);
   await store.migrate();
-  deps = { api: { baseUrl: url, apiKey: "re_test" }, store, from: FROM, forwardTo: "dawid@inbox.test", maxPerDay: 25, quota: { quota: 100, reserve: 15 } };
+  deps = { api: { baseUrl: url, apiKey: "re_test" }, store, from: FROM, forwardTo: "dawid@inbox.test", maxPerDay: 25, flaggedPerDay: 5, quota: { quota: 100, reserve: 15 } };
   worker = new InboxWorker(deps);
   const auth = new AuthService(new AuthStore(pool), new ConsoleMailer(), { appUrl: "http://x" });
   server = await startAuthServer({ service: auth, inbox: { key: KEY, store, worker, pool, refusals }, accountRoutes: false });
@@ -105,22 +105,36 @@ describe("S2: the sending subdomain", () => {
   });
 });
 
-describe("S3: suspected spam and auto-replies don't spend a forward slot", () => {
-  it("holds possibly spoofed mail as held_spam, counted as received, and still forwards real mail", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+describe("S3: flagged mail and auto-replies don't spend a main forward slot", () => {
+  it("forwards a flagged email with [spam?] and the banner, without taking a main slot", async () => {
     deps.maxPerDay = 1;
-    fake.inbound.set(id(1), received(id(1), { authentication: { spf: "gray", dkim: "gray", dmarc: "gray" } }));
+    fake.inbound.set(id(1), received(id(1), { authentication: { spf: "gray", dkim: "gray", dmarc: "gray" }, reply_to: ["pay@elsewhere.test"] }));
     fake.inbound.set(id(2), received(id(2), { authentication: null }));
     fake.inbound.set(id(3), received(id(3)));
     for (const n of [1, 2, 3]) await deliver(id(n));
-    expect([await outcome(id(1)), await outcome(id(2)), await outcome(id(3))]).toEqual(["held_spam", "held_spam", "forwarded"]);
-    expect(fake.sent.map((m) => m.subject)).toEqual(["[skovern.com] Order"]);
+    expect([await outcome(id(1)), await outcome(id(2)), await outcome(id(3))]).toEqual(["forwarded", "forwarded", "forwarded"]);
+    expect(fake.sent.map((m) => m.subject)).toEqual(["[spam?] [skovern.com] Order", "[spam?] [skovern.com] Order", "[skovern.com] Order"]);
+    expect(fake.sent[0]?.text.split("\n").slice(0, 2)).toEqual(["From: Rosa <rosa@bloom.test>", "Reply-To: pay@elsewhere.test"]);
     const used = await pool.query<{ kind: string; n: string }>(`SELECT kind, count(*) AS n FROM resend_usage GROUP BY kind ORDER BY kind`);
-    expect(used.rows.map((r) => `${r.kind}=${r.n}`)).toEqual(["forward=1", "received=3"]);
-    expect(lines(warn, "may be spoofed")).toEqual([
-      `[inbox] email ${id(1)} may be spoofed (spf gray, dkim gray, dmarc gray); it stays in Resend`,
-      `[inbox] email ${id(2)} may be spoofed (no checks); it stays in Resend`,
+    // Each flagged forward still costs 2 of the shared quota: received + sent.
+    expect(used.rows.map((r) => `${r.kind}=${r.n}`)).toEqual(["flagged=2", "forward=1", "received=3"]);
+  });
+
+  it("holds the 6th flagged email of the day as held_spam", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    for (const n of [1, 2, 3, 4, 5, 6]) {
+      fake.inbound.set(id(n), received(id(n), { authentication: { spf: "fail", dkim: "gray", dmarc: "fail" } }));
+      await deliver(id(n));
+    }
+    expect(fake.sent.filter((m) => m.subject.startsWith("[spam?] "))).toHaveLength(5);
+    expect(await outcome(id(6))).toBe("held_spam");
+    expect(lines(warn, "flagged cap is used")).toEqual([
+      `[inbox] email ${id(6)} may be spoofed (spf fail, dkim gray, dmarc fail) and the flagged cap is used; it stays in Resend`,
     ]);
+    // The main cap is untouched: a clean email still goes.
+    fake.inbound.set(id(7), received(id(7)));
+    await deliver(id(7));
+    expect(await outcome(id(7))).toBe("forwarded");
   });
 
   it("S4: holds Auto-Submitted mail as held_auto, but forwards Auto-Submitted: no", async () => {

@@ -104,11 +104,12 @@ export async function inboxClauses(h: Harness, check: Check, baseWithoutSecret: 
   check("F7", f7.status === 200 && h.fetched.includes(`/emails/receiving/${id(3)}?html_format=cid`), "fetched by ID from the Receiving API");
   check("F7", third?.to === FORWARD_TO && third.subject === "[skovern.com] From the API" && !/attacker|pwned|bank\.test/.test(JSON.stringify(third)), `subject "${third?.subject}"`);
 
-  // S3: possibly spoofed mail (no SPF or DKIM pass) is held and sends nothing.
-  h.inbound.set(id(7), received(id(7), { authentication: { spf: "gray", dkim: "fail", dmarc: "gray" } }));
-  const sentBeforeSpam = forwards().length;
+  // S3: possibly spoofed mail (no SPF or DKIM pass) is forwarded flagged [spam?],
+  // on its own cap, not a main forward slot.
+  h.inbound.set(id(7), received(id(7), { subject: "Pay this", authentication: { spf: "gray", dkim: "fail", dmarc: "gray" } }));
   const spam = await post(api.base, event(id(7)), signed(event(id(7))));
-  check("055-S3", spam.status === 200 && (await outcome(id(7))) === "held_spam" && forwards().length === sentBeforeSpam, `spoofed → ${await outcome(id(7))}`);
+  const flaggedSent = forwards().filter((m) => m.subject === "[spam?] [skovern.com] Pay this").length;
+  check("055-S3", spam.status === 200 && (await outcome(id(7))) === "forwarded" && flaggedSent === 1, `spoofed → ${await outcome(id(7))}, flagged sends ${flaggedSent}`);
 
   // N1: a failed fetch leaves the email pending, and the next run forwards it once.
   h.resend.getFaults = [503];
@@ -135,12 +136,12 @@ export async function inboxClauses(h: Harness, check: Check, baseWithoutSecret: 
     check("F4", r.status === 200 && (await outcome(id(n))) === "held", `over budget → ${r.status}, ${await outcome(id(n))}`);
   }
   const alerts = forwards().filter((m) => m.subject === "[skovern.com] Forwarding paused for today");
-  const sentOn = forwards().length - alerts.length;
+  const sentOn = forwards().filter((m) => !m.subject.startsWith("[spam?] ")).length - alerts.length;
   check("F4", sentOn === 3 && alerts.length === 1 && alerts[0]?.to === FORWARD_TO, `forwards ${sentOn}, alerts ${alerts.length}`);
   check("F4", alerts[0]?.text.startsWith("Forwarding paused for today. New mail is waiting in Resend") === true && /^summary\/\d{4}-\d\d-\d\d$/.test(alerts[0]?.key ?? ""), `alert key ${alerts[0]?.key}`);
   const used = await pool.query<{ kind: string; n: string }>(`SELECT kind, count(*) AS n FROM resend_usage WHERE kind NOT IN ('welcome', 'signin') GROUP BY kind ORDER BY kind`);
   const tally = used.rows.map((r) => `${r.kind}=${r.n}`).join(",");
-  check("F4", tally === "forward=3,received=7,summary=1", `shared quota counts ${tally}`);
+  check("F4", tally === "flagged=1,forward=3,received=7,summary=1", `shared quota counts ${tally}`);
   // P1 (bounce pause): every welcome sent earlier kept Resend's ID, and a signed
   // bounce for one is matched to it.
   const ids = await pool.query<{ total: string; named: string; one: string | null }>(

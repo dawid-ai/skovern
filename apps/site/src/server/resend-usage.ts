@@ -8,7 +8,8 @@ import type { SendMeter } from "../auth/mailer.js";
 // never counts twice:
 //   received/<emailId>   an email.received webhook (forwarded, held, or skipped)
 //   welcome/<claim>      a waitlist welcome
-//   forward/<emailId>    a forward, and forward/<emailId>/names its names-only resend
+//   forward/<emailId>    a forward (kind forward, or flagged when the sender may be
+//                        spoofed), and forward/<emailId>/names its names-only resend
 //   summary/<day>        the day's one "forwarding paused" alert
 //   signin/<uuid>        a sign-in link (account routes, after the beta opens)
 // Senders check their own cap AND `used < quota - reserve` under one lock. The
@@ -23,7 +24,7 @@ export interface ResendQuota {
 
 export const DEFAULT_QUOTA: ResendQuota = { quota: 100, reserve: 15 };
 
-export type UsageKind = "received" | "welcome" | "forward" | "names" | "summary" | "signin";
+export type UsageKind = "received" | "welcome" | "forward" | "flagged" | "names" | "summary" | "signin";
 
 export const USAGE_MIGRATION = `
 CREATE TABLE IF NOT EXISTS resend_usage (

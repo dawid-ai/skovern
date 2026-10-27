@@ -44,6 +44,8 @@ export interface InboxConfig {
   /** The one address every forward goes to. No request can change it. */
   forwardTo: string;
   maxPerDay: number;
+  /** Forwards of possibly spoofed mail (`[spam?]`) a day, on their own cap. */
+  flaggedPerDay: number;
   /** Where forwards and the daily alert come from: a subdomain of skovern.com,
    *  so forwarded junk can't hurt the domain welcomes go out from. */
   fromDomain: string;
@@ -71,6 +73,7 @@ export const PLAIN_ADDRESS = /^[^\s@<>,;"'()]+@[^\s@<>,;"'()]+\.[^\s@<>,;"'()]+$
 function inboxConfig(env: NodeJS.ProcessEnv, resendKey: string | null): InboxConfig | null {
   const secret = env["RESEND_WEBHOOK_SECRET"]?.trim();
   const maxPerDay = positiveInt(env, "FORWARD_MAX_PER_DAY", 15);
+  const flaggedPerDay = positiveInt(env, "FLAGGED_MAX_PER_DAY", 5, 0);
   if (!secret) return null;
   const match = /^whsec_([A-Za-z0-9+/]+={0,2})$/.exec(secret);
   const webhookKey = match?.[1] ? Buffer.from(match[1], "base64") : Buffer.alloc(0);
@@ -90,7 +93,7 @@ function inboxConfig(env: NodeJS.ProcessEnv, resendKey: string | null): InboxCon
     throw new ConfigError(`INBOX_FROM_DOMAIN must be a subdomain of ${OWN_DOMAIN}, like ${DEFAULT_INBOX_FROM_DOMAIN}.`);
   }
   const fromFallback = env["INBOX_FROM_FALLBACK"] === "1";
-  return { webhookKey, forwardTo, maxPerDay, fromDomain: fromFallback ? OWN_DOMAIN : fromDomain, fromFallback };
+  return { webhookKey, forwardTo, maxPerDay, flaggedPerDay, fromDomain: fromFallback ? OWN_DOMAIN : fromDomain, fromFallback };
 }
 
 function list(raw: string | undefined): string[] | null {

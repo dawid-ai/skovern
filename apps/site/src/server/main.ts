@@ -66,6 +66,7 @@ async function main(): Promise<void> {
           from: inboxFrom(cfg.inbox.fromDomain),
           forwardTo: cfg.inbox.forwardTo,
           maxPerDay: cfg.inbox.maxPerDay,
+          flaggedPerDay: cfg.inbox.flaggedPerDay,
           quota: cfg.resendQuota,
         })
       : null;

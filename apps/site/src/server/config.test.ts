@@ -95,6 +95,8 @@ describe("loadConfig inbox", () => {
     expect(inbox?.maxPerDay).toBe(15);
     expect(inbox?.webhookKey.toString()).toBe("0123456789abcdef0123");
     expect(loadConfig({ ...INBOX, FORWARD_MAX_PER_DAY: "5" }).inbox?.maxPerDay).toBe(5);
+    expect(inbox?.flaggedPerDay).toBe(5);
+    expect(loadConfig({ ...INBOX, FLAGGED_MAX_PER_DAY: "0" }).inbox?.flaggedPerDay).toBe(0);
   });
 
   it("S2: sends from in.skovern.com by default, any skovern.com subdomain on request, skovern.com only with the fallback flag", () => {

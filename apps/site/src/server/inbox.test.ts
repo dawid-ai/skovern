@@ -41,7 +41,7 @@ beforeAll(async () => {
   await new AuthStore(pool).migrate();
   const store = new InboxStore(pool);
   await store.migrate();
-  deps = { api: { baseUrl: url, apiKey: "re_test" }, store, from: "Skovern inbox <inbox@in.skovern.com>", forwardTo: FORWARD_TO, maxPerDay: 25, quota: { quota: 100, reserve: 15 } };
+  deps = { api: { baseUrl: url, apiKey: "re_test" }, store, from: "Skovern inbox <inbox@in.skovern.com>", forwardTo: FORWARD_TO, maxPerDay: 25, flaggedPerDay: 5, quota: { quota: 100, reserve: 15 } };
   worker = new InboxWorker(deps);
   const auth = new AuthService(new AuthStore(pool), new ConsoleMailer(), { appUrl: "http://x" });
   on = await startAuthServer({ service: auth, inbox: { key: KEY, store, worker, pool }, accountRoutes: false, trustProxy: true });

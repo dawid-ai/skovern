@@ -142,7 +142,8 @@ port the custom domains target.
      (default 15).
    - Inbox forwarding (optional, see [Inbox forwarding](#inbox-forwarding)):
      `RESEND_WEBHOOK_SECRET` (secret), `FORWARD_TO`, `FORWARD_MAX_PER_DAY` (default 15),
-     `INBOX_FROM_DOMAIN` (default `in.skovern.com`), and `INBOX_FROM_FALLBACK`.
+     `FLAGGED_MAX_PER_DAY` (default 5), `INBOX_FROM_DOMAIN` (default `in.skovern.com`), and
+     `INBOX_FROM_FALLBACK`.
    - Leave `ACCOUNT_ROUTES` unset until the beta. In production it defaults to off, so the api
      serves only `/healthz`, the waitlist, the remove page, and the waitlist admin view.
 4. Variables on `www`: `PORT=8080`. The api origin is baked in at build time
@@ -203,15 +204,18 @@ How it behaves:
   from the webhook body. Attachments go along by their signed download links; over
   25 MB together, or if Resend refuses them, the email goes again with the files
   listed by name.
-- Mail whose sender may be forged is held in Resend as `held_spam`, not forwarded: a
-  sender is trusted only when SPF or DKIM passed and DMARC didn't fail. Softfail, no
-  checks, and errors all count as possibly forged. The log says `may be spoofed`.
-  (`[spam?]` before the subject marks the same rule, if such mail is ever forwarded.)
+- A sender is trusted only when SPF or DKIM passed and DMARC didn't fail. Softfail, no
+  checks, and errors all count as possibly forged. Such mail is still forwarded, with
+  `[spam?]` before the subject (a small shop with weak SPF shouldn't lose its mail), but
+  on its own cap, `FLAGGED_MAX_PER_DAY` (default 5), not a main forward slot. Each one
+  still costs 2 of the shared budget. Past that cap, the rest of the day's flagged mail
+  stays in Resend as `held_spam`, and the log says `may be spoofed ... flagged cap is
+  used`. Treat `[spam?]` as a spoof warning: check the sender before paying or clicking.
 - Automatic mail (`Auto-Submitted: auto-...`, like out-of-office replies) is held as
   `held_auto`. Forwards carry `Auto-Submitted: auto-generated` so auto-responders
   don't answer them.
-- Neither held kind uses a forward slot, but each still counts against the shared
-  Resend budget, because Resend counts every received email.
+- Neither flagged nor automatic mail uses a main forward slot, but each still counts
+  against the shared Resend budget, because Resend counts every received email.
 - Mail from `@skovern.com` senders is never forwarded.
 - After 15 forwarded emails (`FORWARD_MAX_PER_DAY`), forwarding stops for the rest of
   the UTC day; it also stops when the shared budget is spent. Mail after that stays in

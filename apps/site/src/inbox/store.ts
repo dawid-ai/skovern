@@ -45,8 +45,9 @@ export const HOOK_ID_DAYS = 7;
 /** A pending email older than this is held: Resend's Idempotency-Key lasts 24 hours. */
 export const PENDING_MAX_HOURS = 24;
 
-/** held: over budget; held_spam: the sender may be forged; held_auto: an
- *  auto-reply or other machine mail. All stay in Resend, unforwarded. */
+/** held: over budget; held_spam: the sender may be forged and the flagged cap
+ *  is used up; held_auto: an auto-reply or other machine mail. All stay in
+ *  Resend, unforwarded. */
 export type Settled = "forwarded" | "held" | "held_spam" | "held_auto" | "skipped" | "refused" | "gone";
 
 /** Today's alert: claimed now (send it), already claimed, or no room even in the reserve. */
@@ -135,7 +136,7 @@ export class InboxStore {
   /** Under the shared lock, take a send slot counted as `ref`: room under the
    *  shared quota, and (for forwards) under `perDay`. A ref already counted
    *  (a retry) always has its slot. */
-  async claimSlot(ref: string, kind: "forward" | "names", q: ResendQuota, perDay?: number): Promise<boolean> {
+  async claimSlot(ref: string, kind: "forward" | "flagged" | "names", q: ResendQuota, perDay?: number): Promise<boolean> {
     return this.locked(async (client) => {
       const had = await client.query(`SELECT 1 FROM resend_usage WHERE ref = $1`, [ref]);
       if (had.rowCount) return true;
