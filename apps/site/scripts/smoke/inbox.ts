@@ -156,15 +156,26 @@ export async function inboxClauses(h: Harness, check: Check, baseWithoutSecret: 
   check("P1", Number(w.total) > 0 && w.named === w.total && br.status === 200 && matched.rows[0]?.n === "1",
     `welcomes with Resend IDs ${w.named}/${w.total}, bounce → ${br.status}, matched ${matched.rows[0]?.n}`);
 
-  // S2: with INBOX_FROM_FALLBACK=1 the api warns at startup that it sends from skovern.com.
-  const fallback = await h.startApi({ RESEND_WEBHOOK_SECRET: `whsec_${KEY.toString("base64")}`, FORWARD_TO, INBOX_FROM_FALLBACK: "1" });
+  // S2 and H1: with INBOX_FROM_FALLBACK=1 and INBOX_AUTH_MISSING_OK=1 the api warns
+  // at every start; with a bad flag value (H4) it refuses to boot.
+  const flagEnv = { ...h.baseEnv, RESEND_WEBHOOK_SECRET: `whsec_${KEY.toString("base64")}`, FORWARD_TO };
+  const badFlag = h.runOnce({ ...flagEnv, INBOX_AUTH_MISSING_OK: "true" });
+  check("055-H4", badFlag.status !== 0 && badFlag.out.includes("INBOX_AUTH_MISSING_OK must be 1, 0, or unset."), `INBOX_AUTH_MISSING_OK=true exits ${badFlag.status}`);
+  const fallback = await h.startApi({
+    RESEND_WEBHOOK_SECRET: `whsec_${KEY.toString("base64")}`,
+    FORWARD_TO,
+    INBOX_FROM_FALLBACK: "1",
+    INBOX_AUTH_MISSING_OK: "1",
+  });
   let fbLogs = fallback.logs();
-  for (let i = 0; i < 20 && !fbLogs.includes("WARNING"); i += 1) {
+  for (let i = 0; i < 20 && !fbLogs.includes("INBOX_AUTH_MISSING_OK=1"); i += 1) {
     await new Promise((w) => setTimeout(w, 250));
     fbLogs = fallback.logs();
   }
   check("055-S2", fbLogs.includes("WARNING: inbox forwards go out from inbox@skovern.com (INBOX_FROM_FALLBACK=1)"), "fallback warns at startup");
-  check("055-S2", !api.logs().includes("INBOX_FROM_FALLBACK=1"), "no warning without the flag");
+  check("055-S2", fbLogs.includes("Verify in.skovern.com in Resend"), "the warning names the subdomain to verify");
+  check("055-H1", fbLogs.includes("WARNING: mail with no authentication results is forwarded unflagged (INBOX_AUTH_MISSING_OK=1)"), "INBOX_AUTH_MISSING_OK warns at startup");
+  check("055-S2", !/INBOX_FROM_FALLBACK=1|INBOX_AUTH_MISSING_OK=1/.test(api.logs()), "no warnings without the flags");
 
   const logs = api.logs();
   const spent = logs.split("\n").filter((l) => l.includes("forward budget spent")).length;
