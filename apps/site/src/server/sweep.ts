@@ -3,7 +3,7 @@ import { deliverWelcome, type WelcomeDeps } from "../waitlist/welcome.js";
 
 // Hourly cleanup of dead credentials (ledger token-session-expiry-sweep):
 // expired or used magic links, expired sessions, and expired waitlist detail
-// tokens. A day of grace on magic links keeps "that link was used" debuggable.
+// tokens, plus old bounce records and (through `also`) old inbox records. A day of grace on magic links keeps "that link was used" debuggable.
 
 export interface SweepCounts {
   magicTokens: number;
@@ -19,6 +19,8 @@ export async function sweepExpired(pool: pg.Pool): Promise<SweepCounts> {
   const waitlist = await pool.query(
     `DELETE FROM waitlist_tokens WHERE expires_at IS NOT NULL AND expires_at < now()`,
   );
+  // Bounce and complaint records only matter for the 24-hour bounce pause.
+  await pool.query(`DELETE FROM mail_feedback WHERE at < now() - interval '7 days'`);
   return {
     magicTokens: magic.rowCount ?? 0,
     sessions: sessions.rowCount ?? 0,
@@ -28,11 +30,11 @@ export async function sweepExpired(pool: pg.Pool): Promise<SweepCounts> {
 
 /** Run the sweep now and then every `everyMs`. The timer is unref'd so it never
  *  holds the process open during shutdown. Returns a stop function. */
-export function startSweep(pool: pg.Pool, everyMs = 60 * 60_000): () => void {
+export function startSweep(pool: pg.Pool, everyMs = 60 * 60_000, also?: () => Promise<void>): () => void {
   const run = (): void => {
-    sweepExpired(pool).catch((err: unknown) =>
-      console.error("[sweep] failed:", (err as Error).message),
-    );
+    sweepExpired(pool)
+      .then(() => also?.())
+      .catch((err: unknown) => console.error("[sweep] failed:", (err as Error).message));
   };
   run();
   const timer = setInterval(run, everyMs);

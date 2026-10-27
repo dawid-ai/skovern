@@ -1,6 +1,7 @@
 // The stage the image smoke runs on: a Testcontainers Postgres, a fake Resend
-// behind real TLS (production refuses a non-https RESEND_API_URL), and helpers
-// to boot the production image against them.
+// behind real TLS (production refuses a non-https RESEND_API_URL) that takes
+// sends and serves the Receiving API, and helpers to boot the production image
+// against them.
 //
 // TLS: a Caddy container answers as https://resend.test on a private Docker
 // network, with a certificate from Caddy's own throwaway CA, and proxies to the
@@ -8,17 +9,16 @@
 // NODE_EXTRA_CA_CERTS, copied in before it starts. Nothing is trusted on the host.
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { createServer, type IncomingMessage } from "node:http";
-import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
+import { FakeResend } from "./fake-resend.ts";
 
 export const IMAGE = process.env["SMOKE_IMAGE"] ?? "skovern-api-smoke";
 const CADDY = "caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d";
 const HOST_GW = ["--add-host", "host.docker.internal:host-gateway"];
 
-export interface SentEmail { to: string; subject: string; text: string; auth: string | undefined }
+export type { FakeSend as SentEmail } from "./fake-resend.ts";
 
 export interface Api {
   id: string;
@@ -32,23 +32,10 @@ const envArgs = (env: Record<string, string>): string[] => Object.entries(env).f
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 export async function startHarness(adminToken: string) {
-  const sent: SentEmail[] = [];
-  const resend = createServer((req: IncomingMessage, res) => {
-    let raw = "";
-    req.on("data", (c: Buffer) => (raw += c.toString()));
-    req.on("end", () => {
-      if (req.method === "POST" && req.url === "/emails") {
-        const body = JSON.parse(raw) as { to: string; subject: string; text: string };
-        // Answer slowly, like a real mail API, so concurrent joins overlap the send.
-        setTimeout(() => {
-          sent.push({ ...body, auth: req.headers.authorization });
-          res.writeHead(200, { "content-type": "application/json" }).end('{"id":"fake"}');
-        }, 400);
-      } else res.writeHead(404).end();
-    });
-  });
-  await new Promise<void>((r) => resend.listen(0, "0.0.0.0", () => r()));
-  const resendPort = (resend.address() as AddressInfo).port;
+  const resend = new FakeResend();
+  // Answer slowly, like a real mail API, so concurrent joins overlap the send.
+  resend.delayMs = 400;
+  const { port: resendPort } = await resend.listen("0.0.0.0");
 
   console.log("Starting Postgres and the TLS front for the fake Resend…");
   const db: StartedPostgreSqlContainer = await new PostgreSqlContainer("postgres:17-alpine").start();
@@ -100,7 +87,11 @@ export async function startHarness(adminToken: string) {
       if ((await fetch(`${base}/healthz`).then((r) => r.status, () => 0)) === 200) break;
       await sleep(250);
     }
-    return { id, base, port, logs: () => spawnSync("docker", ["logs", id], { encoding: "utf8" }).stdout };
+    const logs = (): string => {
+      const r = spawnSync("docker", ["logs", id], { encoding: "utf8" });
+      return `${r.stdout}${r.stderr}`;
+    };
+    return { id, base, port, logs };
   };
 
   const close = async (): Promise<void> => {
@@ -111,5 +102,5 @@ export async function startHarness(adminToken: string) {
     resend.close();
   };
 
-  return { sent, db, baseEnv, runOnce, startApi, close };
+  return { resend, sent: resend.sent, inbound: resend.inbound, fetched: resend.fetched, db, baseEnv, runOnce, startApi, close };
 }

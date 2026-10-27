@@ -8,8 +8,11 @@ import { DmStore } from "../dm/store.js";
 import { pickNotifier } from "../dm/notifier.js";
 import { VisibilityStore } from "../publish/visibility-store.js";
 import { WaitlistStore } from "../waitlist/store.js";
+import { InboxStore } from "../inbox/store.js";
+import { InboxWorker } from "../inbox/worker.js";
 import { ConfigError, loadConfig, type ServerConfig } from "./config.js";
 import { pickMailers } from "./mailers.js";
+import { SigninMeter } from "./resend-usage.js";
 import { RateLimiter } from "./rate-limit.js";
 import { startSweep, startWelcomeBacklog } from "./sweep.js";
 
@@ -32,7 +35,8 @@ async function main(): Promise<void> {
   const news = new NewsStore(pool);
   const dm = new DmStore(pool);
   const visibility = new VisibilityStore(pool);
-  const waitlist = new WaitlistStore(pool, cfg.welcomeBudget);
+  const waitlist = new WaitlistStore(pool, { ...cfg.welcomeBudget, quota: cfg.resendQuota });
+  const inboxStore = new InboxStore(pool);
   try {
     await new AuthStore(pool).migrate();
     await news.migrate();
@@ -40,6 +44,7 @@ async function main(): Promise<void> {
     await dm.migrate();
     await visibility.migrate();
     await waitlist.migrate();
+    await inboxStore.migrate();
   } catch (err) {
     console.error(
       `[auth-server] can't reach the database at ${cfg.databaseUrl.replace(/:[^:@/]*@/, ":***@")}.\n` +
@@ -50,7 +55,18 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const mailers = pickMailers(cfg);
+  const mailers = pickMailers(cfg, new SigninMeter(pool, cfg.resendQuota));
+  // loadConfig refuses an inbox config without RESEND_API_KEY.
+  const inboxWorker =
+    cfg.inbox && cfg.resendKey
+      ? new InboxWorker({
+          api: { baseUrl: cfg.resendUrl, apiKey: cfg.resendKey },
+          store: inboxStore,
+          forwardTo: cfg.inbox.forwardTo,
+          maxPerDay: cfg.inbox.maxPerDay,
+          quota: cfg.resendQuota,
+        })
+      : null;
   // AuthService reads config.appUrl lazily, so we can fill it from the real
   // bound URL after listening — correct even when PORT=0 picks an ephemeral port.
   const authConfig = { appUrl: cfg.appUrl };
@@ -68,6 +84,9 @@ async function main(): Promise<void> {
     limiter,
     trustProxy: cfg.trustProxy,
     accountRoutes: cfg.accountRoutes,
+    ...(cfg.inbox && inboxWorker
+      ? { inbox: { key: cfg.inbox.webhookKey, store: inboxStore, worker: inboxWorker, pool } }
+      : {}),
     waitlist: {
       deps: { store: waitlist, mailer: mailers.welcome, appUrl: () => authConfig.appUrl },
       limiter,
@@ -90,7 +109,14 @@ async function main(): Promise<void> {
       : `[auth-server] admin pages DISABLED — set SKOVERN_ADMIN_TOKEN before starting to enable them`,
   );
 
-  const stopSweep = startSweep(pool);
+  console.log(
+    cfg.inbox
+      ? `[auth-server] inbox webhook ON at /hooks/resend/inbound (up to ${cfg.inbox.maxPerDay} forwards a day)`
+      : "[auth-server] inbox webhook OFF (set RESEND_WEBHOOK_SECRET and FORWARD_TO to turn it on)",
+  );
+
+  const stopSweep = startSweep(pool, undefined, () => inboxStore.prune());
+  const stopInbox = inboxWorker ? inboxWorker.start() : () => {};
   const stopBacklog = startWelcomeBacklog({ store: waitlist, mailer: mailers.welcome, appUrl: () => authConfig.appUrl });
   const pruneTimer = setInterval(() => limiter.prune(), 5 * 60_000);
   pruneTimer.unref();
@@ -102,6 +128,7 @@ async function main(): Promise<void> {
     console.log(`[auth-server] ${signal}: draining…`);
     stopSweep();
     stopBacklog();
+    stopInbox();
     // Watchdog: a hung socket or a stuck pool must not keep the old container alive.
     setTimeout(() => {
       console.error("[auth-server] drain took too long; exiting anyway");
