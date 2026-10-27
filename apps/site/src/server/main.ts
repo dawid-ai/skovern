@@ -120,7 +120,7 @@ async function main(): Promise<void> {
   if (cfg.inbox?.fromFallback) {
     console.warn(
       `[auth-server] WARNING: inbox forwards go out from inbox@skovern.com (INBOX_FROM_FALLBACK=1). ` +
-        `Verify ${process.env["INBOX_FROM_DOMAIN"]?.trim() || "in.skovern.com"} in Resend, then remove INBOX_FROM_FALLBACK.`,
+        `Verify ${cfg.inbox.wantedFromDomain} in Resend, then remove INBOX_FROM_FALLBACK.`,
     );
   }
 

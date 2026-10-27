@@ -52,6 +52,8 @@ export interface InboxConfig {
   /** INBOX_FROM_FALLBACK=1: send from skovern.com until the subdomain is
    *  verified in Resend. Logged as a warning at startup. */
   fromFallback: boolean;
+  /** The subdomain to verify, named in the fallback warning. */
+  wantedFromDomain: string;
 }
 
 export class ConfigError extends Error {}
@@ -92,8 +94,16 @@ function inboxConfig(env: NodeJS.ProcessEnv, resendKey: string | null): InboxCon
   if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(fromDomain) || !fromDomain.endsWith(`.${OWN_DOMAIN}`)) {
     throw new ConfigError(`INBOX_FROM_DOMAIN must be a subdomain of ${OWN_DOMAIN}, like ${DEFAULT_INBOX_FROM_DOMAIN}.`);
   }
-  const fromFallback = env["INBOX_FROM_FALLBACK"] === "1";
-  return { webhookKey, forwardTo, maxPerDay, flaggedPerDay, fromDomain: fromFallback ? OWN_DOMAIN : fromDomain, fromFallback };
+  const fromFallback = onOff(env, "INBOX_FROM_FALLBACK");
+  return {
+    webhookKey,
+    forwardTo,
+    maxPerDay,
+    flaggedPerDay,
+    fromDomain: fromFallback ? OWN_DOMAIN : fromDomain,
+    fromFallback,
+    wantedFromDomain: fromDomain,
+  };
 }
 
 function list(raw: string | undefined): string[] | null {
@@ -110,6 +120,15 @@ function positiveInt(env: NodeJS.ProcessEnv, key: string, fallback: number, min 
   const n = Number(raw);
   if (!Number.isInteger(n) || n < min) throw new ConfigError(`${key} must be a whole number of ${min} or more.`);
   return n;
+}
+
+/** A safety switch: unset or `0` is off, `1` is on, anything else (`true`,
+ *  `yes`, a typo) refuses to boot rather than guess. */
+function onOff(env: NodeJS.ProcessEnv, key: string): boolean {
+  const raw = env[key]?.trim() ?? "";
+  if (raw === "" || raw === "0") return false;
+  if (raw === "1") return true;
+  throw new ConfigError(`${key} must be 1, 0, or unset.`);
 }
 
 function resendQuota(env: NodeJS.ProcessEnv): ResendQuota {

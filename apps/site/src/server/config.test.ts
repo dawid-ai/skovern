@@ -102,10 +102,23 @@ describe("loadConfig inbox", () => {
   it("S2: sends from in.skovern.com by default, any skovern.com subdomain on request, skovern.com only with the fallback flag", () => {
     expect(loadConfig(INBOX).inbox).toMatchObject({ fromDomain: "in.skovern.com", fromFallback: false });
     expect(loadConfig({ ...INBOX, INBOX_FROM_DOMAIN: "Mail.Skovern.com" }).inbox?.fromDomain).toBe("mail.skovern.com");
-    expect(loadConfig({ ...INBOX, INBOX_FROM_FALLBACK: "1" }).inbox).toMatchObject({ fromDomain: "skovern.com", fromFallback: true });
+    expect(loadConfig({ ...INBOX, INBOX_FROM_FALLBACK: "1" }).inbox).toMatchObject({
+      fromDomain: "skovern.com",
+      fromFallback: true,
+      wantedFromDomain: "in.skovern.com",
+    });
+    expect(loadConfig({ ...INBOX, INBOX_FROM_FALLBACK: "0" }).inbox).toMatchObject({ fromDomain: "in.skovern.com", fromFallback: false });
     for (const bad of ["skovern.com", "evil.com", "skovern.com.evil.com", "in.notskovern.com", "a..skovern.com", "-x.skovern.com"]) {
       expect(() => loadConfig({ ...INBOX, INBOX_FROM_DOMAIN: bad }), bad).toThrow("INBOX_FROM_DOMAIN must be a subdomain of skovern.com");
     }
+  });
+
+  it.each(["true", "yes", "on", "2", "1 ", "01"])("H4: refuses INBOX_FROM_FALLBACK=%j", (v) => {
+    if (v === "1 ") {
+      expect(loadConfig({ ...INBOX, INBOX_FROM_FALLBACK: v }).inbox?.fromFallback).toBe(true); // trimmed
+      return;
+    }
+    expect(() => loadConfig({ ...INBOX, INBOX_FROM_FALLBACK: v })).toThrow("INBOX_FROM_FALLBACK must be 1, 0, or unset.");
   });
 
   it.each([
