@@ -30,6 +30,8 @@ let ctx: InboxRouteContext;
 const sent: Sent[] = [];
 const fetched: string[] = [];
 const emails = new Map<string, Record<string, unknown>>();
+/** Make the fake answer 422 to every send, or to sends with attachments. */
+let refuseSends: "none" | "all" | "attachments" = "none";
 
 const received = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   object: "email", id: ID, from: "Rosa <rosa@bloom.test>", to: ["hi@skovern.com"], cc: [], bcc: [], reply_to: [],
@@ -54,7 +56,9 @@ beforeAll(async () => {
         return void res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(body));
       }
       if (req.method === "POST" && url === "/emails") {
-        sent.push(JSON.parse(raw) as Sent);
+        const mail = JSON.parse(raw) as Sent;
+        if (refuseSends === "all" || (refuseSends === "attachments" && mail.attachments)) return void res.writeHead(422).end("{}");
+        sent.push(mail);
         return void res.writeHead(200, { "content-type": "application/json" }).end('{"id":"fake"}');
       }
       res.writeHead(404).end();
@@ -97,6 +101,7 @@ beforeEach(async () => {
   fetched.length = 0;
   emails.clear();
   ctx.forward.maxPerDay = 25;
+  refuseSends = "none";
   await pool.query("TRUNCATE resend_hook_ids, inbox_mail, inbox_summaries");
 });
 
@@ -242,6 +247,25 @@ describe("POST /hooks/resend/inbound", () => {
     expect(statuses[20]).toBe(429);
     emails.set(ID, received());
     expect((await hook(body, { ...signed(body), "x-forwarded-for": "203.0.113.10" })).status).toBe(200);
+  });
+
+  it("resends without attachments, listed by name, when Resend refuses them; gives up on a refused message", async () => {
+    emails.set(ID, received({ attachments: [{ id: "a1", filename: "menu.pdf", content_type: "application/pdf", content_id: null, size: 1200 }] }));
+    refuseSends = "attachments";
+    const body = event(ID);
+    expect((await hook(body, signed(body))).status).toBe(200);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.attachments).toBeUndefined();
+    expect(sent[0]?.text).toContain("- menu.pdf (0.1 MB)");
+
+    const other = "22222222-0000-4000-8000-000000000001";
+    emails.set(other, received({ id: other }));
+    refuseSends = "all";
+    const body2 = event(other);
+    const r = await hook(body2, signed(body2));
+    expect(r.status).toBe(200);
+    expect(await r.json()).toMatchObject({ outcome: "refused" });
+    expect((await pool.query(`SELECT outcome FROM inbox_mail WHERE email_id = $1`, [other])).rows[0]).toEqual({ outcome: "refused" });
   });
 
   it("answers 500 and forgets the delivery when Resend is down, so the retry forwards", async () => {
