@@ -132,9 +132,11 @@ port the custom domains target.
    - `DATABASE_URL=${{Postgres.DATABASE_URL}}` (a Railway reference)
    - Secrets: `RESEND_API_KEY`, `SKOVERN_ADMIN_TOKEN` (32 characters or more). Set them with
      `railway variables --service api --set-from-stdin <NAME>`, never on the command line.
-   - Optional: `WELCOME_MAX_PER_HOUR` (default 30) and `WELCOME_MAX_PER_DAY` (default 90) cap
+   - Optional: `WELCOME_MAX_PER_HOUR` (default 20) and `WELCOME_MAX_PER_DAY` (default 70) cap
      welcome emails across all signups, to stay inside Resend's free tier. Over the cap, signups
-     are still saved and the welcome goes out later, oldest first.
+     are still saved and the welcome goes out later, newest first.
+   - Inbox forwarding (optional, see [Inbox forwarding](#inbox-forwarding)):
+     `RESEND_WEBHOOK_SECRET` (secret), `FORWARD_TO`, and `FORWARD_MAX_PER_DAY` (default 25).
    - Leave `ACCOUNT_ROUTES` unset until the beta. In production it defaults to off, so the api
      serves only `/healthz`, the waitlist, the remove page, and the waitlist admin view.
 4. Variables on `www`: `PORT=8080`. The api origin is baked in at build time
@@ -142,7 +144,51 @@ port the custom domains target.
 
 The api refuses to boot in production without `RESEND_API_KEY`, `APP_URL`, or
 `DATABASE_URL`, with an admin token under 32 characters, or with a non-https
-`RESEND_API_URL`, and says which setting is wrong in the deploy log.
+`RESEND_API_URL`, and says which setting is wrong in the deploy log. With
+`RESEND_WEBHOOK_SECRET` set, it also refuses a secret that isn't `whsec_...`, a
+missing `FORWARD_TO`, a `FORWARD_TO` that isn't one plain address, or one at
+`skovern.com`.
+
+### Inbox forwarding
+
+Mail to any `@skovern.com` address arrives at Resend (MX `@` →
+`receive.forge.rmta.net`, priority 10, with receiving turned on for the domain).
+Resend posts a signed webhook to the api, and the api forwards each email to
+`FORWARD_TO` from `Skovern inbox <inbox@skovern.com>`, with **Reply-To** set to
+the sender and `[skovern.com]` before the subject. The same webhook carries
+bounce and complaint events, which pause welcome emails when more than 5% of
+the last 24 hours' welcomes (with at least 20 sent) bounce or are marked as spam.
+
+1. Create the webhook through the Resend API (or **Webhooks** → **Add webhook** in
+   the dashboard):
+   - Endpoint: `https://api.skovern.com/hooks/resend/inbound`
+   - Events: `email.received`, `email.bounced`, `email.complained`
+2. Copy its signing secret (`whsec_...`, returned by the create call) straight into
+   Railway without printing it:
+   `railway variables --service api --set-from-stdin RESEND_WEBHOOK_SECRET`
+3. Set `FORWARD_TO` on `api` to the one inbox that gets the mail. It can't be at
+   `skovern.com`. Optionally set `FORWARD_MAX_PER_DAY` (default 25).
+4. Redeploy `api`. The deploy log says `inbox webhook ON at /hooks/resend/inbound`.
+   Without `RESEND_WEBHOOK_SECRET` the route doesn't exist (404).
+
+How it behaves:
+- Each request must carry a valid Svix signature (`svix-id`, `svix-timestamp`,
+  `svix-signature`) with a timestamp within 5 minutes. Anything else gets 401, and
+  20 bad requests from one address in 10 minutes get 429.
+- A repeated `svix-id` gets 200 and does nothing; IDs are kept for 7 days. The same
+  email is never forwarded twice, even under a new delivery ID.
+- The forward is built from the Receiving API (`GET /emails/receiving/{id}`), never
+  from the webhook body. Attachments go along by their signed download links; over
+  25 MB together, or if Resend refuses them, they're listed by name instead.
+- `[spam?]` goes before the subject when Resend's SPF, DKIM, or DMARC check failed.
+- Mail from `@skovern.com` senders is never forwarded.
+- Over `FORWARD_MAX_PER_DAY` forwards in 24 hours, mail stays in Resend's
+  **Receiving** tab. The log says `forward budget spent` once per held email, and the
+  first held email of the (UTC) day sends one summary: "N emails waiting in Resend".
+- If Resend is unreachable, the webhook answers 500 and Resend retries it later.
+
+Resend's free plan sends 100 emails a day in total: 70 welcomes, 25 forwards, and
+1 summary fit under it. Replies sent from Gmail as `hi@skovern.com` count too.
 
 ### Before a deploy
 
@@ -157,13 +203,16 @@ docker build -f apps/www/Dockerfile -t skovern-www-smoke .
 
 1. `curl https://api.skovern.com/healthz` and `curl https://skovern.com/healthz` both say ok.
 2. `node apps/site/scripts/smoke-prod.ts https://api.skovern.com <address>` signs up a test
-   address you can read (there's no inbox at `skovern.com`) and checks the number and CORS.
+   address you can read (mail to `skovern.com` is forwarded only when inbox forwarding is on) and checks the number and CORS.
    Open that welcome email and run the script again with `--remove "<link>"` to check the
    remove page and delete the address. The test uses up one waitlist number for good, because
    numbers never repeat: the next real signup gets the one after it.
 3. Open `https://api.skovern.com/admin/waitlist` and sign in with any user name and the
    `SKOVERN_ADMIN_TOKEN` value as the password. It's in the Railway dashboard under the `api`
    service's **Variables**.
+4. If inbox forwarding is on, send an email from your phone to `hi@skovern.com`. It arrives at
+   `FORWARD_TO` within a minute with `[skovern.com]` before the subject, and **Reply** goes back
+   to the phone. The `api` log shows `[inbox] email <id>: forwarded`.
 
 ### Blog posts
 
