@@ -27,7 +27,10 @@ export async function deliverWelcome(deps: WelcomeDeps, job: WelcomeJob): Promis
   try {
     const removeToken = await deps.store.issueToken(job.id, "remove");
     const removeUrl = `${deps.appUrl()}/waitlist/remove?t=${removeToken}`;
-    await deps.mailer.sendWelcome(job.email, { name: job.name, number: job.number, removeUrl });
+    const resendId = await deps.mailer.sendWelcome(job.email, { name: job.name, number: job.number, removeUrl });
+    // Bounce events name the email by this ID (bounce-pause.ts). A failure to
+    // record it must not turn a sent welcome into a retried one.
+    if (resendId) await deps.store.recordWelcomeId(job.claim, resendId).catch(() => {});
     return "sent";
   } catch (err) {
     const status = err instanceof MailError ? err.status : null;

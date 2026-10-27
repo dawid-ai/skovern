@@ -1,19 +1,30 @@
 import type pg from "pg";
 import { bouncePaused, FEEDBACK_MIGRATION, logWelcomesPaused, welcomeBounceStats } from "./bounce-pause.js";
+import {
+  countUse,
+  DEFAULT_QUOTA,
+  lockMailBudget,
+  sharedRoom,
+  uncountUse,
+  USAGE_MIGRATION,
+  type ResendQuota,
+} from "../server/resend-usage.js";
 
 // A global cap on welcome emails, kept in Postgres so every api instance and
-// restart sees the same count (loop 051 SECURE B2, N1). Resend's free tier
-// allows 100 emails a day; the defaults stay under it with room for sign-in
-// links. Over budget, a signup is still saved with welcome_sent_at NULL, and the
-// backlog sender (server/sweep.ts) mails it later, if it's still fresh.
+// restart sees the same count (loop 051 SECURE B2, N1). Each welcome also counts
+// against the shared Resend quota (server/resend-usage.ts, loop 052), which
+// inbox forwards and received mail use too. Over either budget, a signup is
+// still saved with welcome_sent_at NULL, and the backlog sender
+// (server/sweep.ts) mails it later, if it's still fresh.
 
 export interface WelcomeBudget {
   perHour: number;
   perDay: number;
+  /** The shared Resend quota. Defaults to 100 a day with 15 kept free. */
+  quota?: ResendQuota;
 }
 
-// 70 welcomes + 25 inbox forwards + 1 summary stay under Resend's 100 a day (loop 052).
-export const DEFAULT_WELCOME_BUDGET: WelcomeBudget = { perHour: 20, perDay: 70 };
+export const DEFAULT_WELCOME_BUDGET: WelcomeBudget = { perHour: 20, perDay: 50 };
 
 /** Who is asking for a slot. The backlog may use at most half of each hour, so
  *  a flood that fills the backlog can't crowd out people joining right now. */
@@ -25,23 +36,28 @@ CREATE TABLE IF NOT EXISTS waitlist_welcome_sends (
   sent_at  timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS waitlist_welcome_sends_at ON waitlist_welcome_sends (sent_at);
+-- Resend's ID for the sent welcome: bounce events name it (bounce-pause.ts).
+ALTER TABLE waitlist_welcome_sends ADD COLUMN IF NOT EXISTS resend_id text;
+CREATE INDEX IF NOT EXISTS waitlist_welcome_sends_resend ON waitlist_welcome_sends (resend_id);
 -- Why a welcome will never go out: 'expired' (waited over a day in the
 -- backlog) or 'refused' (the mail service rejected the address).
 ALTER TABLE waitlist ADD COLUMN IF NOT EXISTS welcome_skipped text;
 ALTER TABLE waitlist ADD COLUMN IF NOT EXISTS welcome_skipped_at timestamptz;
-${FEEDBACK_MIGRATION}`;
+${FEEDBACK_MIGRATION}
+${USAGE_MIGRATION}`;
 
 /** A repeat signup inside this window gets no second welcome email. */
 export const WELCOME_COOLDOWN_HOURS = 24;
 /** A backlog welcome older than this is skipped, not sent. */
 export const BACKLOG_MAX_AGE_HOURS = 24;
 
-/** Take the budget lock for the rest of the caller's transaction. Every claim
- *  takes it first, before any row lock, so two claimers can't deadlock and two
- *  signups can't both take the last slot. */
-export async function lockBudget(client: pg.PoolClient): Promise<void> {
-  await client.query("SELECT pg_advisory_xact_lock(hashtext('waitlist:welcome-budget'))");
-}
+/** Take the budget lock for the rest of the caller's transaction. It's the
+ *  shared Resend lock, so a welcome and a forward can't both take the last
+ *  slot. Every claim takes it before any row lock, so claimers can't deadlock. */
+export const lockBudget = lockMailBudget;
+
+/** The shared-quota ref of one welcome claim. */
+const useRef = (claim: string): string => `welcome/${claim}`;
 
 /** Why a welcome can't go out now: the budget is spent, or welcomes are
  *  paused for bounces (bounce-pause.ts). */
@@ -54,6 +70,7 @@ export async function budgetRoom(client: pg.PoolClient, budget: WelcomeBudget, w
     logWelcomesPaused(stats);
     return "paused";
   }
+  if (!(await sharedRoom(client, budget.quota ?? DEFAULT_QUOTA))) return "spent";
   const used = await client.query<{ hour: string; day: string }>(
     `SELECT count(*) FILTER (WHERE sent_at > now() - interval '1 hour') AS hour, count(*) AS day
        FROM waitlist_welcome_sends WHERE sent_at > now() - interval '1 day'`,
@@ -79,7 +96,15 @@ export async function claimRow(client: pg.PoolClient, waitlistId: string): Promi
   );
   if (!claimed.rowCount) return null;
   const log = await client.query<{ id: string }>(`INSERT INTO waitlist_welcome_sends DEFAULT VALUES RETURNING id`);
-  return log.rows[0]?.id ?? null;
+  const claim = log.rows[0]?.id ?? null;
+  if (claim) await countUse(client, useRef(claim), "welcome");
+  return claim;
+}
+
+/** Hand a claim's send slot back, in both budgets (the send didn't happen). */
+export async function returnSlot(db: pg.Pool, claim: string): Promise<void> {
+  await db.query(`DELETE FROM waitlist_welcome_sends WHERE id = $1`, [claim]);
+  await uncountUse(db, useRef(claim));
 }
 
 /** How many signups are still waiting for a welcome (for the budget log line). */

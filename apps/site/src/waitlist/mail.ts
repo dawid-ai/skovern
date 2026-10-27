@@ -13,7 +13,8 @@ export interface Welcome {
 }
 
 export interface WelcomeMailer {
-  sendWelcome(to: string, w: Welcome): Promise<void>;
+  /** Resolves to the mail service's ID for the email, when it gives one. */
+  sendWelcome(to: string, w: Welcome): Promise<string | null | void>;
 }
 
 /** The greeting word: the first word of the name, skipping any word with a
@@ -47,9 +48,9 @@ export class ResendWelcomeMailer implements WelcomeMailer {
     private readonly baseUrl: string,
   ) {}
 
-  async sendWelcome(to: string, w: Welcome): Promise<void> {
+  async sendWelcome(to: string, w: Welcome): Promise<string | null> {
     const { subject, text } = welcomeText(w);
-    await resendPost(this.baseUrl, this.apiKey, {
+    return resendPost(this.baseUrl, this.apiKey, {
       from: this.from,
       to,
       subject,
