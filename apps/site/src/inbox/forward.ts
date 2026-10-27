@@ -20,6 +20,8 @@ export interface ForwardDeps {
   maxPerDay: number;
   /** Forwards of possibly spoofed mail a day, on their own cap (FLAGGED_MAX_PER_DAY). */
   flaggedPerDay: number;
+  /** INBOX_AUTH_MISSING_OK: no authentication results isn't a flag. */
+  authMissingOk?: boolean;
   quota: ResendQuota;
 }
 
@@ -94,8 +96,11 @@ export async function processOne(deps: ForwardDeps, job: Lease): Promise<Forward
   // Possibly spoofed mail is still forwarded, flagged [spam?] (a small shop's
   // weak SPF shouldn't lose its mail), but on its own small cap. Past that cap,
   // it stays in Resend.
-  if (email.authentication === null) console.warn(`[inbox] no authentication data on ${emailId}; forwarding it unflagged`);
-  if (looksSpoofed(email)) {
+  if (email.authentication === null) {
+    const then = deps.authMissingOk ? "forwarding it unflagged (INBOX_AUTH_MISSING_OK=1)" : "treating it as flagged";
+    console.warn(`[inbox] no authentication data on ${emailId}; ${then}`);
+  }
+  if (looksSpoofed(email, deps.authMissingOk)) {
     const slot = await deps.store.claimSlot(`forward/${emailId}`, "flagged", deps.quota, deps.flaggedPerDay);
     if (slot !== "ok") {
       await deps.store.settle(emailId, "held_spam");
@@ -120,7 +125,7 @@ export async function processOne(deps: ForwardDeps, job: Lease): Promise<Forward
     }
   }
   const build = (withAttachments: boolean): ResendEmail =>
-    buildForward(email, { from: deps.from, forwardTo: deps.forwardTo, links, withAttachments });
+    buildForward(email, { from: deps.from, forwardTo: deps.forwardTo, links, withAttachments, authMissingOk: deps.authMissingOk ?? false });
 
   let result: Sent = "refused";
   if (!job.namesOnly) {

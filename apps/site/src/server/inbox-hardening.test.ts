@@ -68,6 +68,7 @@ beforeEach(async () => {
   resetAlertSkipLog();
   vi.restoreAllMocks();
   deps.maxPerDay = 25;
+  deps.authMissingOk = false;
   deps.quota = { quota: 100, reserve: 15 };
   await pool.query("TRUNCATE resend_hook_ids, inbox_mail, resend_usage");
 });
@@ -169,8 +170,18 @@ describe("S3: flagged mail and auto-replies don't spend a main forward slot", ()
     expect(await outcome(id(1))).toBe("forwarded");
   });
 
-  it("forwards mail with no authentication data unflagged, with one log line", async () => {
+  it("H1: flags mail with no authentication data by default", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    fake.inbound.set(id(1), received(id(1), { authentication: null }));
+    await deliver(id(1));
+    expect(fake.sent.map((m) => m.subject)).toEqual(["[spam?] [skovern.com] Order"]);
+    expect(lines(warn, "no authentication data")).toEqual([`[inbox] no authentication data on ${id(1)}; treating it as flagged`]);
+    expect((await pool.query(`SELECT kind FROM resend_usage WHERE ref = $1`, [`forward/${id(1)}`])).rows[0]?.kind).toBe("flagged");
+  });
+
+  it("H1: with INBOX_AUTH_MISSING_OK, forwards it unflagged, with one log line", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    deps.authMissingOk = true;
     for (const [n, auth] of [[1, undefined], [2, null], [3, "pass"], [4, {}]] as const) {
       const over: Record<string, unknown> = { authentication: auth };
       if (auth === undefined) over["authentication"] = undefined;
@@ -178,7 +189,9 @@ describe("S3: flagged mail and auto-replies don't spend a main forward slot", ()
       await deliver(id(n));
     }
     expect(fake.sent.map((m) => m.subject)).toEqual(Array(4).fill("[skovern.com] Order"));
-    expect(lines(warn, "no authentication data")).toEqual([1, 2, 3, 4].map((n) => `[inbox] no authentication data on ${id(n)}; forwarding it unflagged`));
+    expect(lines(warn, "no authentication data")).toEqual(
+      [1, 2, 3, 4].map((n) => `[inbox] no authentication data on ${id(n)}; forwarding it unflagged (INBOX_AUTH_MISSING_OK=1)`),
+    );
   });
 
   it("reads upper-case results from the API as their lower-case values", async () => {

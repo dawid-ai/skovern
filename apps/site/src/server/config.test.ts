@@ -113,6 +113,13 @@ describe("loadConfig inbox", () => {
     }
   });
 
+  it("H1: INBOX_AUTH_MISSING_OK is off unless 1, and refuses anything else", () => {
+    expect(loadConfig(INBOX).inbox?.authMissingOk).toBe(false);
+    expect(loadConfig({ ...INBOX, INBOX_AUTH_MISSING_OK: "1" }).inbox?.authMissingOk).toBe(true);
+    expect(loadConfig({ ...INBOX, INBOX_AUTH_MISSING_OK: "0" }).inbox?.authMissingOk).toBe(false);
+    expect(() => loadConfig({ ...INBOX, INBOX_AUTH_MISSING_OK: "true" })).toThrow("INBOX_AUTH_MISSING_OK must be 1, 0, or unset.");
+  });
+
   it.each(["true", "yes", "on", "2", "1 ", "01"])("H4: refuses INBOX_FROM_FALLBACK=%j", (v) => {
     if (v === "1 ") {
       expect(loadConfig({ ...INBOX, INBOX_FROM_FALLBACK: v }).inbox?.fromFallback).toBe(true); // trimmed

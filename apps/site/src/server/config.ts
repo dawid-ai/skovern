@@ -54,6 +54,10 @@ export interface InboxConfig {
   fromFallback: boolean;
   /** The subdomain to verify, named in the fallback warning. */
   wantedFromDomain: string;
+  /** INBOX_AUTH_MISSING_OK=1: mail with no authentication results is forwarded
+   *  unflagged (an API-shape problem, not a spoof). Off: it's flagged. Logged
+   *  as a warning at startup. */
+  authMissingOk: boolean;
 }
 
 export class ConfigError extends Error {}
@@ -103,6 +107,7 @@ function inboxConfig(env: NodeJS.ProcessEnv, resendKey: string | null): InboxCon
     fromDomain: fromFallback ? OWN_DOMAIN : fromDomain,
     fromFallback,
     wantedFromDomain: fromDomain,
+    authMissingOk: onOff(env, "INBOX_AUTH_MISSING_OK"),
   };
 }
 

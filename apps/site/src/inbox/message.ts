@@ -41,13 +41,13 @@ export function replyAddress(e: ReceivedEmail): string | null {
   return senderAddress(e.from);
 }
 
-/** The sender may be forged: Resend reported results, and neither SPF nor DKIM
- *  passed, or DMARC failed. Only a pass counts; softfail, none, and errors
- *  don't. No results at all isn't a flag: that's more likely an API-shape
- *  problem than a spoof, and forward.ts logs it. */
-export function looksSpoofed(e: ReceivedEmail): boolean {
+/** The sender may be forged: neither SPF nor DKIM passed, or DMARC failed.
+ *  Only a pass counts; softfail, none, and errors don't. No results at all is
+ *  flagged too, unless `missingOk` (INBOX_AUTH_MISSING_OK=1, for when Resend's
+ *  API shape is in doubt). */
+export function looksSpoofed(e: ReceivedEmail, missingOk = false): boolean {
   const a = e.authentication;
-  if (a === null) return false;
+  if (a === null) return !missingOk;
   const is = (v: string | null, want: string): boolean => v?.toLowerCase() === want;
   return !((is(a.spf, "pass") || is(a.dkim, "pass")) && !is(a.dmarc, "fail"));
 }
@@ -60,9 +60,9 @@ export function isAutoSubmitted(e: ReceivedEmail): boolean {
 
 const oneLine = (s: string): string => s.replace(/[\r\n\t]+/g, " ").trim();
 
-export function forwardSubject(e: ReceivedEmail): string {
+export function forwardSubject(e: ReceivedEmail, missingOk = false): string {
   const subject = oneLine(e.subject).slice(0, MAX_SUBJECT_CHARS) || "(no subject)";
-  return `${looksSpoofed(e) ? "[spam?] " : ""}[skovern.com] ${subject}`;
+  return `${looksSpoofed(e, missingOk) ? "[spam?] " : ""}[skovern.com] ${subject}`;
 }
 
 const escapeHtml = (s: string): string =>
@@ -80,6 +80,8 @@ export interface ForwardOptions {
   links: Map<string, string>;
   /** False drops every attachment and lists them by name instead. */
   withAttachments: boolean;
+  /** INBOX_AUTH_MISSING_OK: no authentication results isn't a flag. */
+  authMissingOk?: boolean;
 }
 
 /** Attach everything, or nothing: when one file can't be attached (no link) or
@@ -131,7 +133,7 @@ export function buildForward(e: ReceivedEmail, o: ForwardOptions): ResendEmail {
   return {
     from: o.from,
     to: o.forwardTo,
-    subject: forwardSubject(e),
+    subject: forwardSubject(e, o.authMissingOk),
     text: `${header.join("\n")}\n\n${body}${footer}`,
     ...(html !== null ? { html: `${banner(header)}${html}${notes.length ? banner(notes) : ""}` } : {}),
     ...(reply ? { reply_to: reply } : {}),

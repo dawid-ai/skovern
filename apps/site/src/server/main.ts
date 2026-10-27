@@ -67,6 +67,7 @@ async function main(): Promise<void> {
           forwardTo: cfg.inbox.forwardTo,
           maxPerDay: cfg.inbox.maxPerDay,
           flaggedPerDay: cfg.inbox.flaggedPerDay,
+          authMissingOk: cfg.inbox.authMissingOk,
           quota: cfg.resendQuota,
         })
       : null;
@@ -121,6 +122,12 @@ async function main(): Promise<void> {
     console.warn(
       `[auth-server] WARNING: inbox forwards go out from inbox@skovern.com (INBOX_FROM_FALLBACK=1). ` +
         `Verify ${cfg.inbox.wantedFromDomain} in Resend, then remove INBOX_FROM_FALLBACK.`,
+    );
+  }
+  if (cfg.inbox?.authMissingOk) {
+    console.warn(
+      "[auth-server] WARNING: mail with no authentication results is forwarded unflagged (INBOX_AUTH_MISSING_OK=1). " +
+        "Remove it once Resend's results are confirmed on real mail.",
     );
   }
 

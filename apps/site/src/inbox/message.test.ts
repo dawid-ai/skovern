@@ -57,13 +57,21 @@ describe("buildForward", () => {
       ["DKIM missing, SPF softfail", auth("gray", null, "gray"), true],
       ["SPF pass but DMARC fail", auth("pass", "gray", "fail"), true],
       ["checks errored", auth("processing_failed", "unknown", "unknown"), true],
-      // No results at all is an API-shape problem, not a spoof: forwarded unflagged.
-      ["no authentication reported", email({ authentication: null }), false],
+      // H1: no results at all is flagged by default.
+      ["no authentication reported", email({ authentication: null }), true],
     ];
     for (const [label, e, spoofed] of cases) {
       expect(looksSpoofed(e), label).toBe(spoofed);
       expect(buildForward(e, opts).subject.startsWith("[spam?] "), label).toBe(spoofed);
     }
+  });
+
+  it("H1: forwards mail with no authentication results unflagged only with INBOX_AUTH_MISSING_OK", () => {
+    const e = email({ authentication: null });
+    expect(buildForward(e, opts).subject).toBe("[spam?] [skovern.com] Hello there");
+    expect(buildForward(e, { ...opts, authMissingOk: true }).subject).toBe("[skovern.com] Hello there");
+    expect(looksSpoofed(e, true)).toBe(false);
+    expect(looksSpoofed(email({ authentication: { spf: "fail", dkim: null, dmarc: null } }), true)).toBe(true);
   });
 
   it("S1: shows Reply-To in the banner when it differs from the sender", () => {
