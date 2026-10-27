@@ -41,12 +41,15 @@ export function replyAddress(e: ReceivedEmail): string | null {
   return senderAddress(e.from);
 }
 
-/** The sender may be forged: neither SPF nor DKIM passed, DMARC failed, or
- *  Resend reported no checks at all. Only a pass counts; softfail, none, and
- *  errors don't. */
+/** The sender may be forged: Resend reported results, and neither SPF nor DKIM
+ *  passed, or DMARC failed. Only a pass counts; softfail, none, and errors
+ *  don't. No results at all isn't a flag: that's more likely an API-shape
+ *  problem than a spoof, and forward.ts logs it. */
 export function looksSpoofed(e: ReceivedEmail): boolean {
   const a = e.authentication;
-  return !(a !== null && (a.spf === "pass" || a.dkim === "pass") && a.dmarc !== "fail");
+  if (a === null) return false;
+  const is = (v: string | null, want: string): boolean => v?.toLowerCase() === want;
+  return !((is(a.spf, "pass") || is(a.dkim, "pass")) && !is(a.dmarc, "fail"));
 }
 
 /** Sent by a machine (an auto-reply, a bounce, a vacation notice): RFC 3834

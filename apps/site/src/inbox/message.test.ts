@@ -52,10 +52,13 @@ describe("buildForward", () => {
       ["SPF pass only, no DMARC policy", auth("pass", "gray", "gray"), false],
       ["DKIM pass only", auth("fail", "pass", null), false],
       ["softfail and unsigned (gray)", auth("gray", "gray", "gray"), true],
-      ["none at all (null results)", auth(null, null, null), true],
+      ["upper-case results", auth("PASS", "Gray", "NONE"), false],
+      ["upper-case DMARC fail", auth("PASS", "PASS", "FAIL"), true],
+      ["DKIM missing, SPF softfail", auth("gray", null, "gray"), true],
       ["SPF pass but DMARC fail", auth("pass", "gray", "fail"), true],
       ["checks errored", auth("processing_failed", "unknown", "unknown"), true],
-      ["no authentication reported", email({ authentication: null }), true],
+      // No results at all is an API-shape problem, not a spoof: forwarded unflagged.
+      ["no authentication reported", email({ authentication: null }), false],
     ];
     for (const [label, e, spoofed] of cases) {
       expect(looksSpoofed(e), label).toBe(spoofed);

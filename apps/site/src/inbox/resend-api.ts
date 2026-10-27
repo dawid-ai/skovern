@@ -35,7 +35,8 @@ export interface ReceivedEmail {
   text: string | null;
   html: string | null;
   /** SPF, DKIM, and DMARC results from Resend's receiving server, not from the
-   *  message's own headers, so the sender can't forge them. */
+   *  message's own headers, so the sender can't forge them. Lowercased; null
+   *  when the API reported none (authResults). */
   authentication: { spf: string | null; dkim: string | null; dmarc: string | null } | null;
   attachments: ReceivedAttachment[];
   /** The message's Auto-Submitted header (RFC 3834), if any. */
@@ -69,15 +70,36 @@ async function getJson(api: ResendApi, path: string): Promise<Record<string, unk
   throw new MailError(502);
 }
 
-/** One header from the API's `headers` object, matched without regard to case. */
-function headerValue(headers: unknown, name: string): string | null {
+/** One header, matched without regard to case. The API's `headers` may be a
+ *  map (`{ "Auto-Submitted": "..." }`, a value possibly an array) or a list of
+ *  `{ name, value }`; both are read. */
+export function headerValue(headers: unknown, name: string): string | null {
+  const want = name.toLowerCase();
+  const pick = (v: unknown): string | null =>
+    typeof v === "string" ? v : Array.isArray(v) && typeof v[0] === "string" ? v[0] : null;
+  if (Array.isArray(headers)) {
+    for (const h of headers as unknown[]) {
+      const entry = h && typeof h === "object" ? (h as Record<string, unknown>) : {};
+      if (typeof entry["name"] === "string" && entry["name"].toLowerCase() === want) return pick(entry["value"]);
+    }
+    return null;
+  }
   if (!headers || typeof headers !== "object") return null;
   for (const [k, v] of Object.entries(headers as Record<string, unknown>)) {
-    if (k.toLowerCase() !== name) continue;
-    if (typeof v === "string") return v;
-    if (Array.isArray(v) && typeof v[0] === "string") return v[0];
+    if (k.toLowerCase() === want) return pick(v);
   }
   return null;
+}
+
+/** SPF, DKIM, and DMARC results, lowercased. Null when the API gave none at
+ *  all (missing, not an object, or every result empty): that's more likely an
+ *  API-shape change than a spoof, so it isn't treated as one. */
+export function authResults(raw: unknown): ReceivedEmail["authentication"] {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const a = raw as Record<string, unknown>;
+  const norm = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim().toLowerCase() : null);
+  const out = { spf: norm(a["spf"]), dkim: norm(a["dkim"]), dmarc: norm(a["dmarc"]) };
+  return out.spf || out.dkim || out.dmarc ? out : null;
 }
 
 function attachment(raw: unknown): ReceivedAttachment | null {
@@ -97,8 +119,6 @@ function attachment(raw: unknown): ReceivedAttachment | null {
 export async function getReceivedEmail(api: ResendApi, id: string): Promise<ReceivedEmail> {
   if (!EMAIL_ID.test(id)) throw new MailError(400);
   const e = await getJson(api, `/emails/receiving/${id}?html_format=cid`);
-  const auth = e["authentication"];
-  const a = auth && typeof auth === "object" ? (auth as Record<string, unknown>) : null;
   return {
     id,
     from: str(e["from"]) ?? "",
@@ -108,7 +128,7 @@ export async function getReceivedEmail(api: ResendApi, id: string): Promise<Rece
     subject: str(e["subject"]) ?? "",
     text: str(e["text"]),
     html: str(e["html"]),
-    authentication: a ? { spf: str(a["spf"]), dkim: str(a["dkim"]), dmarc: str(a["dmarc"]) } : null,
+    authentication: authResults(e["authentication"]),
     autoSubmitted: headerValue(e["headers"], "auto-submitted"),
     attachments: (Array.isArray(e["attachments"]) ? e["attachments"] : [])
       .map(attachment)
