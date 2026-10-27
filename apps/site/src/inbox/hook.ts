@@ -1,18 +1,22 @@
 import type { IncomingMessage } from "node:http";
 import type pg from "pg";
 import type { HttpResult } from "../auth/handlers.js";
-import { clientIp, readRawBody } from "../http.js";
-import { LIMITS, limitFailures, type RateLimiter } from "../server/rate-limit.js";
+import { readRawBody } from "../http.js";
 import { recordFeedback, type FeedbackKind } from "../waitlist/bounce-pause.js";
-import { forwardReceived, type ForwardDeps } from "./forward.js";
 import { EMAIL_ID } from "./resend-api.js";
+import type { InboxStore } from "./store.js";
 import { verifySvix } from "./svix.js";
+import type { InboxWorker } from "./worker.js";
 
 // POST /hooks/resend/inbound: Resend's signed webhook. Mounted only when
 // RESEND_WEBHOOK_SECRET is set. Handles:
-// - email.received → forward it to FORWARD_TO (forward.ts)
-// - email.bounced, email.complained → feed the welcome bounce pause
-// Every other event type is acknowledged and ignored.
+// - email.received → record it as pending (counted against the quota) and
+//   answer at once; the worker forwards it to FORWARD_TO (worker.ts)
+// - email.bounced, email.complained, email.suppressed → the welcome bounce pause
+// Every other event type is acknowledged and ignored. There's no per-address
+// limit: Resend's senders share addresses with every other Resend account, so a
+// limit on bad signatures would let anyone lock out real deliveries. Checking a
+// signature is cheap and the body is capped.
 
 export const HOOK_PATH = "/hooks/resend/inbound";
 
@@ -22,13 +26,18 @@ const MAX_HOOK_BODY = 256 * 1024;
 export interface InboxRouteContext {
   /** The signing key: the decoded base64 part of `whsec_...`. */
   key: Buffer;
-  forward: ForwardDeps;
+  store: InboxStore;
+  worker: InboxWorker;
   /** For the bounce and complaint records. */
   pool: pg.Pool;
-  limiter: RateLimiter;
-  trustProxy: boolean;
   now?: () => number;
 }
+
+const FEEDBACK: Record<string, FeedbackKind> = {
+  "email.bounced": "bounced",
+  "email.complained": "complained",
+  "email.suppressed": "suppressed",
+};
 
 const OK: HttpResult = { status: 200, body: { ok: true } };
 const UNSIGNED: HttpResult = { status: 401, body: { ok: false, message: "Bad signature." } };
@@ -57,16 +66,13 @@ async function handleEvent(ctx: InboxRouteContext, event: { type?: unknown; data
     if (!EMAIL_ID.test(emailId)) return { status: 400, body: { ok: false, message: "No email ID." } };
     // Only the ID is taken from the event. Who sent it, what it says, and where
     // it goes all come from the Receiving API and the config (forward.ts).
-    const outcome = await forwardReceived(ctx.forward, emailId);
-    console.log(`[inbox] email ${emailId}: ${outcome}`);
-    return { status: 200, body: { ok: true, outcome } };
+    await ctx.store.receive(emailId);
+    // After this response is written, not before: Resend doesn't wait on the forward.
+    setImmediate(() => ctx.worker.kick());
+    return { status: 200, body: { ok: true, queued: true } };
   }
-  if (event.type === "email.bounced" || event.type === "email.complained") {
-    if (!emailId) return OK;
-    const kind: FeedbackKind = event.type === "email.bounced" ? "bounced" : "complained";
-    await recordFeedback(ctx.pool, emailId, kind, kindTag(data["tags"]));
-    return OK;
-  }
+  const kind = typeof event.type === "string" ? FEEDBACK[event.type] : undefined;
+  if (kind && emailId) await recordFeedback(ctx.pool, emailId, kind, kindTag(data["tags"]));
   return OK;
 }
 
@@ -95,20 +101,17 @@ async function attempt(ctx: InboxRouteContext, req: IncomingMessage): Promise<Ht
     return { status: 400, body: { ok: false, message: "Bad request." } };
   }
   // A replayed (or retried, after a success) delivery is acknowledged and dropped.
-  if (!(await ctx.forward.store.firstSight(id))) return { status: 200, body: { ok: true, duplicate: true } };
+  if (!(await ctx.store.firstSight(id))) return { status: 200, body: { ok: true, duplicate: true } };
   try {
     return await handleEvent(ctx, event);
   } catch (err) {
-    console.error("[inbox] webhook failed; Resend will retry:", (err as Error).message);
-    await ctx.forward.store.forget(id).catch(() => {});
+    console.error("[inbox] couldn't record the webhook; Resend will retry:", (err as Error).message);
+    await ctx.store.forget(id).catch(() => {});
     return RETRY;
   }
 }
 
-/** Only failed signatures count against the per-address limit, so Resend's
- *  real deliveries are never throttled. */
 export function handleInboxHook(ctx: InboxRouteContext, req: IncomingMessage): Promise<HttpResult> {
   if (req.method !== "POST") return Promise.resolve({ status: 405, body: { ok: false, message: "Use POST." } });
-  const key = `hook-fail:${clientIp(req, ctx.trustProxy)}`;
-  return limitFailures(ctx.limiter, key, LIMITS.hookFail, () => attempt(ctx, req), (r) => r.status === 401);
+  return attempt(ctx, req);
 }

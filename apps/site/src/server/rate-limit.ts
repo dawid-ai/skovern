@@ -64,8 +64,6 @@ export const LIMITS = {
   authRequest: { max: 6, windowMs: 10 * 60_000 },
   /** Wrong or missing admin passwords, per address. */
   adminFail: { max: 10, windowMs: 10 * 60_000 },
-  /** Badly signed webhooks, per address. Resend's real ones never count. */
-  hookFail: { max: 20, windowMs: 10 * 60_000 },
 } satisfies Record<string, Limit>;
 
 export const TOO_MANY = (limiter: RateLimiter, key: string): HttpResult => ({
