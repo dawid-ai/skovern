@@ -195,6 +195,16 @@ describe("S3: flagged mail and auto-replies don't spend a main forward slot", ()
     );
   });
 
+  it("H6: logs only plain lowercase words for authentication results", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    deps.flaggedPerDay = 0;
+    fake.inbound.set(id(1), received(id(1), { authentication: { spf: "fail\n[inbox] forged", dkim: null, dmarc: "processing_failed" } }));
+    await deliver(id(1));
+    expect(lines(warn, "may be spoofed")).toEqual([
+      `[inbox] email ${id(1)} may be spoofed (spf other, dkim other, dmarc other) and the flagged cap is used; it stays in Resend`,
+    ]);
+  });
+
   it("H2: forwards an unverified sender on a main slot, not the flagged cap", async () => {
     deps.flaggedPerDay = 0;
     fake.inbound.set(id(1), received(id(1), { authentication: { spf: "pass", dkim: "gray", dmarc: "gray" } }));

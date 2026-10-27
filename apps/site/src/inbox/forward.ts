@@ -29,6 +29,13 @@ export type ForwardOutcome = "forwarded" | "held" | "loop" | "refused" | "gone" 
 
 type Sent = "sent" | "refused" | "retry";
 
+/** An authentication result as it may appear in a log: a short lowercase word
+ *  (pass, fail, gray, ...), or `other`. The value comes from mail we don't
+ *  control, so nothing else reaches the logs. */
+export function authWord(v: string | null): string {
+  return v !== null && /^[a-z]{1,16}$/.test(v) ? v : "other";
+}
+
 const permanent = (err: unknown): boolean =>
   err instanceof MailError && (err.status === 400 || err.status === 404 || err.status === 422);
 const why = (err: unknown): string =>
@@ -107,7 +114,7 @@ export async function processOne(deps: ForwardDeps, job: Lease): Promise<Forward
     if (slot !== "ok") {
       await deps.store.settle(emailId, spoofed ? "held_spam" : "held_auto");
       const a = email.authentication;
-      const checks = a ? `spf ${a.spf}, dkim ${a.dkim}, dmarc ${a.dmarc}` : "no checks";
+      const checks = a ? `spf ${authWord(a.spf)}, dkim ${authWord(a.dkim)}, dmarc ${authWord(a.dmarc)}` : "no checks";
       const what = spoofed ? `may be spoofed (${checks})` : "is automatic mail";
       const reason = slot === "cap" ? "the flagged cap is used" : "the shared Resend budget is spent";
       console.warn(`[inbox] email ${emailId} ${what} and ${reason}; it stays in Resend`);
