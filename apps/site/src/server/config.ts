@@ -27,11 +27,54 @@ export interface ServerConfig {
   accountRoutes: boolean;
   /** Global cap on welcome emails (Resend's free tier is 100 a day). */
   welcomeBudget: { perHour: number; perDay: number };
+  /** Mail to @skovern.com forwarded to one fixed inbox (loop 052). Null = the
+   *  webhook route isn't mounted. */
+  inbox: InboxConfig | null;
   host: string;
   port: number;
 }
 
+export interface InboxConfig {
+  /** The Svix signing key: the base64 part of `whsec_...`, decoded. */
+  webhookKey: Buffer;
+  /** The one address every forward goes to. No request can change it. */
+  forwardTo: string;
+  maxPerDay: number;
+}
+
 export class ConfigError extends Error {}
+
+/** Our own mail domain. A forward never goes to it (a loop) and mail from it is never forwarded. */
+export const OWN_DOMAIN = "skovern.com";
+
+/** True when the address is at skovern.com or one of its subdomains. */
+export function isOwnDomain(address: string): boolean {
+  const domain = address.slice(address.lastIndexOf("@") + 1).toLowerCase();
+  return domain === OWN_DOMAIN || domain.endsWith(`.${OWN_DOMAIN}`);
+}
+
+/** A single plain address: no name, no list, no spaces or line breaks. */
+export const PLAIN_ADDRESS = /^[^\s@<>,;"'()]+@[^\s@<>,;"'()]+\.[^\s@<>,;"'()]+$/;
+
+function inboxConfig(env: NodeJS.ProcessEnv, resendKey: string | null): InboxConfig | null {
+  const secret = env["RESEND_WEBHOOK_SECRET"]?.trim();
+  const maxPerDay = positiveInt(env, "FORWARD_MAX_PER_DAY", 25);
+  if (!secret) return null;
+  const match = /^whsec_([A-Za-z0-9+/]+={0,2})$/.exec(secret);
+  const webhookKey = match?.[1] ? Buffer.from(match[1], "base64") : Buffer.alloc(0);
+  if (webhookKey.length < 16) {
+    throw new ConfigError("RESEND_WEBHOOK_SECRET must be the whsec_... signing secret from the Resend webhook.");
+  }
+  const forwardTo = env["FORWARD_TO"]?.trim() ?? "";
+  if (!PLAIN_ADDRESS.test(forwardTo)) {
+    throw new ConfigError("FORWARD_TO must be one plain email address when RESEND_WEBHOOK_SECRET is set.");
+  }
+  if (isOwnDomain(forwardTo)) {
+    throw new ConfigError(`FORWARD_TO can't be at ${OWN_DOMAIN}: every forward would come straight back.`);
+  }
+  if (!resendKey) throw new ConfigError("RESEND_API_KEY is required when RESEND_WEBHOOK_SECRET is set.");
+  return { webhookKey, forwardTo, maxPerDay };
+}
 
 function list(raw: string | undefined): string[] | null {
   if (!raw?.trim()) return null;
@@ -79,12 +122,13 @@ export function loadConfig(env: NodeJS.ProcessEnv): ServerConfig {
   if (production && !appUrl.startsWith("https://")) {
     throw new ConfigError("APP_URL must use https:// in production.");
   }
+  const resendKey = val("RESEND_API_KEY");
   return {
     production,
     databaseUrl: val("DATABASE_URL") ?? DEV_DATABASE_URL,
     appUrl,
     siteUrl: (val("SITE_URL") ?? "https://skovern.com").replace(/\/$/, ""),
-    resendKey: val("RESEND_API_KEY"),
+    resendKey,
     resendUrl,
     mailFrom: val("MAIL_FROM") ?? "Skovern <hi@skovern.com>",
     adminToken,
@@ -92,9 +136,10 @@ export function loadConfig(env: NodeJS.ProcessEnv): ServerConfig {
     trustProxy: env["TRUST_PROXY"] === "1",
     accountRoutes: env["ACCOUNT_ROUTES"] ? env["ACCOUNT_ROUTES"] === "1" : !production,
     welcomeBudget: {
-      perHour: positiveInt(env, "WELCOME_MAX_PER_HOUR", 30),
-      perDay: positiveInt(env, "WELCOME_MAX_PER_DAY", 90),
+      perHour: positiveInt(env, "WELCOME_MAX_PER_HOUR", 20),
+      perDay: positiveInt(env, "WELCOME_MAX_PER_DAY", 70),
     },
+    inbox: inboxConfig(env, resendKey),
     host: val("HOST") ?? "127.0.0.1",
     port: Number(val("PORT") ?? 8787),
   };

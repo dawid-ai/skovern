@@ -3,6 +3,9 @@ import { resendPost } from "../auth/mailer.js";
 // The one email the waitlist sends: a welcome with the person's place in line
 // and a one-click remove link (CAN-SPAM / CASL). Plain text, no tracking.
 
+/** The `kind` tag on every welcome email; bounce events carry it back. */
+export const WELCOME_TAG = "welcome";
+
 export interface Welcome {
   name: string;
   number: number;
@@ -56,6 +59,8 @@ export class ResendWelcomeMailer implements WelcomeMailer {
         "List-Unsubscribe": `<${w.removeUrl}>`,
         "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
       },
+      // Resend echoes this on bounce and complaint events (the bounce pause).
+      tags: [{ name: "kind", value: WELCOME_TAG }],
     });
   }
 }

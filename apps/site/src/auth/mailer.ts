@@ -44,11 +44,29 @@ export class MailError extends Error {
 /** Under the 8 s shutdown deadline, so a hung mail API can't hold a drain open. */
 const SEND_TIMEOUT_MS = 5_000;
 
-export async function resendPost(
-  baseUrl: string,
-  apiKey: string,
-  email: { from: string; to: string; subject: string; text: string; headers?: Record<string, string> },
-): Promise<void> {
+/** One attachment Resend fetches itself from `path` (a URL it can reach). */
+export interface ResendAttachment {
+  filename: string;
+  path: string;
+  content_type?: string;
+  content_id?: string;
+}
+
+/** The subset of Resend's send-email body this server uses. */
+export interface ResendEmail {
+  from: string;
+  to: string;
+  subject: string;
+  text: string;
+  html?: string;
+  reply_to?: string;
+  headers?: Record<string, string>;
+  attachments?: ResendAttachment[];
+  /** Echoed back on bounce and complaint events, so feedback can be told apart. */
+  tags?: { name: string; value: string }[];
+}
+
+export async function resendPost(baseUrl: string, apiKey: string, email: ResendEmail): Promise<void> {
   let res: Response;
   try {
     res = await fetch(`${baseUrl}/emails`, {
