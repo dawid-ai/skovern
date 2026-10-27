@@ -69,6 +69,39 @@ describe("loadConfig", () => {
     expect(cfg.production).toBe(false);
     expect(cfg.resendKey).toBeNull();
     expect(cfg.trustProxy).toBe(false);
+    expect(cfg.inbox).toBeNull();
+    expect(cfg.welcomeBudget).toEqual({ perHour: 20, perDay: 70 });
+  });
+});
+
+describe("loadConfig inbox", () => {
+  const SECRET = `whsec_${Buffer.from("0123456789abcdef0123").toString("base64")}`;
+  const INBOX = { ...PROD, RESEND_WEBHOOK_SECRET: SECRET, FORWARD_TO: "jozwiakdawid+skovern@gmail.com" };
+
+  it("stays off without RESEND_WEBHOOK_SECRET, even with FORWARD_TO", () => {
+    expect(loadConfig({ ...PROD, FORWARD_TO: "a@b.test" }).inbox).toBeNull();
+  });
+
+  it("turns on with the secret and one address, at 25 forwards a day by default", () => {
+    const inbox = loadConfig(INBOX).inbox;
+    expect(inbox?.forwardTo).toBe("jozwiakdawid+skovern@gmail.com");
+    expect(inbox?.maxPerDay).toBe(25);
+    expect(inbox?.webhookKey.toString()).toBe("0123456789abcdef0123");
+    expect(loadConfig({ ...INBOX, FORWARD_MAX_PER_DAY: "5" }).inbox?.maxPerDay).toBe(5);
+  });
+
+  it.each([
+    ["no whsec_ prefix", { RESEND_WEBHOOK_SECRET: SECRET.slice("whsec_".length) }, /RESEND_WEBHOOK_SECRET/],
+    ["a short key", { RESEND_WEBHOOK_SECRET: "whsec_YWJj" }, /RESEND_WEBHOOK_SECRET/],
+    ["no FORWARD_TO", { FORWARD_TO: "" }, /FORWARD_TO must be one plain email/],
+    ["two addresses", { FORWARD_TO: "a@b.test,c@d.test" }, /FORWARD_TO must be one plain email/],
+    ["a named address", { FORWARD_TO: "Dawid <a@b.test>" }, /FORWARD_TO must be one plain email/],
+    ["our own domain", { FORWARD_TO: "hi@skovern.com" }, /can't be at skovern.com/],
+    ["our own subdomain", { FORWARD_TO: "x@mail.Skovern.com" }, /can't be at skovern.com/],
+    ["no Resend key", { NODE_ENV: "", RESEND_API_KEY: "" }, /RESEND_API_KEY is required when/],
+    ["a zero budget", { FORWARD_MAX_PER_DAY: "0" }, /FORWARD_MAX_PER_DAY/],
+  ])("refuses to boot with %s", (_label, change, message) => {
+    expect(() => loadConfig({ ...INBOX, ...change })).toThrow(message);
   });
 });
 
