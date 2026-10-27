@@ -1,4 +1,4 @@
-import { MailError } from "../auth/mailer.js";
+import { errorCode, MailError } from "../auth/mailer.js";
 
 // Reads a received email back from Resend's Receiving API, by the ID in the
 // webhook. The webhook body only says WHICH email arrived; everything that is
@@ -29,6 +29,8 @@ export interface ReceivedEmail {
   from: string;
   to: string[];
   cc: string[];
+  /** The message's own Reply-To addresses, if any. */
+  replyTo: string[];
   subject: string;
   text: string | null;
   html: string | null;
@@ -55,7 +57,7 @@ async function getJson(api: ResendApi, path: string): Promise<Record<string, unk
     throw new MailError(null);
   }
   // why: never include the response body; it can carry addresses.
-  if (!res.ok) throw new MailError(res.status);
+  if (!res.ok) throw new MailError(res.status, await errorCode(res));
   try {
     const body = (await res.json()) as unknown;
     if (body && typeof body === "object") return body as Record<string, unknown>;
@@ -89,6 +91,7 @@ export async function getReceivedEmail(api: ResendApi, id: string): Promise<Rece
     from: str(e["from"]) ?? "",
     to: strs(e["to"]),
     cc: strs(e["cc"]),
+    replyTo: strs(e["reply_to"]),
     subject: str(e["subject"]) ?? "",
     text: str(e["text"]),
     html: str(e["html"]),

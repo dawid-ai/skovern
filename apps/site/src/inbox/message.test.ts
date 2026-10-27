@@ -7,6 +7,7 @@ const email = (over: Partial<ReceivedEmail> = {}): ReceivedEmail => ({
   from: "Rosa <rosa@bloom.test>",
   to: ["hi@skovern.com"],
   cc: [],
+  replyTo: [],
   subject: "Hello there",
   text: "Do you do weddings?",
   html: null,
@@ -42,6 +43,13 @@ describe("buildForward", () => {
   it("keeps a subject to one line and names an empty one", () => {
     expect(buildForward(email({ subject: "a\r\nBcc: x@evil.test" }), opts).subject).toBe("[skovern.com] a Bcc: x@evil.test");
     expect(buildForward(email({ subject: "" }), opts).subject).toBe("[skovern.com] (no subject)");
+  });
+
+  it("replies to the message's own Reply-To when it's one plain outside address", () => {
+    expect(buildForward(email({ replyTo: ["Orders <orders@bloom.test>"] }), opts).reply_to).toBe("orders@bloom.test");
+    expect(buildForward(email({ replyTo: ["a@bloom.test", "b@bloom.test"] }), opts).reply_to).toBe("rosa@bloom.test");
+    expect(buildForward(email({ replyTo: ["hi@skovern.com"] }), opts).reply_to).toBe("rosa@bloom.test");
+    expect(buildForward(email({ replyTo: ["two words"] }), opts).reply_to).toBe("rosa@bloom.test");
   });
 
   it("leaves Reply-To off when the sender isn't one plain address", () => {

@@ -1,5 +1,5 @@
 import type { ResendAttachment, ResendEmail } from "../auth/mailer.js";
-import { PLAIN_ADDRESS } from "../server/config.js";
+import { isOwnDomain, PLAIN_ADDRESS } from "../server/config.js";
 import type { ReceivedEmail } from "./resend-api.js";
 
 // Builds the forward of one received email (pure, no I/O). The recipient is
@@ -21,6 +21,14 @@ export function senderAddress(from: string): string | null {
   const bracketed = /<([^<>]+)>\s*$/.exec(from)?.[1];
   const address = (bracketed ?? from).trim();
   return PLAIN_ADDRESS.test(address) ? address : null;
+}
+
+/** Where Reply goes: the message's own Reply-To when it's one plain address
+ *  outside skovern.com, else the sender. Null when neither is usable. */
+export function replyAddress(e: ReceivedEmail): string | null {
+  const only = e.replyTo.length === 1 ? senderAddress(e.replyTo[0] ?? "") : null;
+  if (only && !isOwnDomain(only)) return only;
+  return senderAddress(e.from);
 }
 
 /** SPF or DKIM failed (DMARC too): forwarded anyway, but flagged. */
@@ -89,7 +97,7 @@ export function buildForward(e: ReceivedEmail, o: ForwardOptions): ResendEmail {
   if (e.html !== null && html === null) notes.push("The formatted version was too big to forward; this is the plain text.");
   const footer = notes.length ? `\n\n--\n${notes.join("\n")}` : "";
   const body = e.text?.slice(0, MAX_TEXT_CHARS) ?? (html ? "(This email has only a formatted version.)" : "(This email is empty.)");
-  const reply = senderAddress(e.from);
+  const reply = replyAddress(e);
   const banner = (lines: string[]): string =>
     `<div style="font:13px sans-serif;color:#555;border-bottom:1px solid #ddd;padding-bottom:8px;margin-bottom:12px">` +
     `${lines.map(escapeHtml).join("<br>")}</div>`;
