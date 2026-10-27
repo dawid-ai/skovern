@@ -132,11 +132,16 @@ port the custom domains target.
    - `DATABASE_URL=${{Postgres.DATABASE_URL}}` (a Railway reference)
    - Secrets: `RESEND_API_KEY`, `SKOVERN_ADMIN_TOKEN` (32 characters or more). Set them with
      `railway variables --service api --set-from-stdin <NAME>`, never on the command line.
-   - Optional: `WELCOME_MAX_PER_HOUR` (default 20) and `WELCOME_MAX_PER_DAY` (default 70) cap
-     welcome emails across all signups, to stay inside Resend's free tier. Over the cap, signups
-     are still saved and the welcome goes out later, newest first.
+     `RESEND_API_KEY` needs **Full access**: inbox forwarding reads received email, which a
+     sending-only key can't.
+   - Optional: `WELCOME_MAX_PER_HOUR` (default 20) and `WELCOME_MAX_PER_DAY` (default 50) cap
+     welcome emails across all signups. Over the cap, or over the shared Resend budget (see
+     [The Resend budget](#the-resend-budget)), signups are still saved and the welcome goes
+     out later, newest first.
+   - Optional: `RESEND_DAILY_QUOTA` (default 100, Resend's free plan) and `RESEND_RESERVE`
+     (default 15).
    - Inbox forwarding (optional, see [Inbox forwarding](#inbox-forwarding)):
-     `RESEND_WEBHOOK_SECRET` (secret), `FORWARD_TO`, and `FORWARD_MAX_PER_DAY` (default 25).
+     `RESEND_WEBHOOK_SECRET` (secret), `FORWARD_TO`, and `FORWARD_MAX_PER_DAY` (default 15).
    - Leave `ACCOUNT_ROUTES` unset until the beta. In production it defaults to off, so the api
      serves only `/healthz`, the waitlist, the remove page, and the waitlist admin view.
 4. Variables on `www`: `PORT=8080`. The api origin is baked in at build time
@@ -147,48 +152,79 @@ The api refuses to boot in production without `RESEND_API_KEY`, `APP_URL`, or
 `RESEND_API_URL`, and says which setting is wrong in the deploy log. With
 `RESEND_WEBHOOK_SECRET` set, it also refuses a secret that isn't `whsec_...`, a
 missing `FORWARD_TO`, a `FORWARD_TO` that isn't one plain address, or one at
-`skovern.com`.
+`skovern.com`. It refuses a `RESEND_RESERVE` that isn't smaller than
+`RESEND_DAILY_QUOTA`.
 
 ### Inbox forwarding
 
 Mail to any `@skovern.com` address arrives at Resend (MX `@` →
 `receive.forge.rmta.net`, priority 10, with receiving turned on for the domain).
 Resend posts a signed webhook to the api, and the api forwards each email to
-`FORWARD_TO` from `Skovern inbox <inbox@skovern.com>`, with **Reply-To** set to
-the sender and `[skovern.com]` before the subject. The same webhook carries
-bounce and complaint events, which pause welcome emails when more than 5% of
-the last 24 hours' welcomes (with at least 20 sent) bounce or are marked as spam.
+`FORWARD_TO` from `Skovern inbox <inbox@skovern.com>`, with `[skovern.com]` before
+the subject. **Reply** goes to the message's own Reply-To when it's one plain
+address outside `skovern.com`, and to the sender otherwise. The same webhook
+carries bounce, complaint, and suppression events. They pause welcome emails when
+more than 5% of the welcomes sent in the last 24 hours (with at least 20 sent)
+bounced, were marked as spam, or were suppressed.
 
 1. Create the webhook through the Resend API (or **Webhooks** → **Add webhook** in
    the dashboard):
    - Endpoint: `https://api.skovern.com/hooks/resend/inbound`
-   - Events: `email.received`, `email.bounced`, `email.complained`
+   - Events: `email.received`, `email.bounced`, `email.complained`, `email.suppressed`
 2. Copy its signing secret (`whsec_...`, returned by the create call) straight into
    Railway without printing it:
    `railway variables --service api --set-from-stdin RESEND_WEBHOOK_SECRET`
 3. Set `FORWARD_TO` on `api` to the one inbox that gets the mail. It can't be at
-   `skovern.com`. Optionally set `FORWARD_MAX_PER_DAY` (default 25).
+   `skovern.com`. Optionally set `FORWARD_MAX_PER_DAY` (default 15).
 4. Redeploy `api`. The deploy log says `inbox webhook ON at /hooks/resend/inbound`.
    Without `RESEND_WEBHOOK_SECRET` the route doesn't exist (404).
 
 How it behaves:
 - Each request must carry a valid Svix signature (`svix-id`, `svix-timestamp`,
-  `svix-signature`) with a timestamp within 5 minutes. Anything else gets 401, and
-  20 bad requests from one address in 10 minutes get 429.
+  `svix-signature`) with a timestamp within 5 minutes. Anything else gets 401. There's
+  no per-address limit: Resend delivers from addresses every Resend account shares.
 - A repeated `svix-id` gets 200 and does nothing; IDs are kept for 7 days. The same
   email is never forwarded twice, even under a new delivery ID.
+- The webhook only records the email as pending and answers 200. A background worker
+  forwards it right after, and retries a failed attempt (a minute later per attempt,
+  up to 30 minutes apart). An email still pending after 24 hours stays in Resend. The
+  log names what failed: `fetching received email <id> failed (status ...)` or
+  `sending the forward of email <id> failed (status ...)`.
+- Sends carry an `Idempotency-Key` (`forward/<id>`, `forward/<id>/names`,
+  `summary/<UTC day>`), so a retry after a lost answer doesn't deliver twice.
 - The forward is built from the Receiving API (`GET /emails/receiving/{id}`), never
   from the webhook body. Attachments go along by their signed download links; over
-  25 MB together, or if Resend refuses them, they're listed by name instead.
+  25 MB together, or if Resend refuses them, the email goes again with the files
+  listed by name.
 - `[spam?]` goes before the subject when Resend's SPF, DKIM, or DMARC check failed.
 - Mail from `@skovern.com` senders is never forwarded.
-- Over `FORWARD_MAX_PER_DAY` forwards in 24 hours, mail stays in Resend's
-  **Receiving** tab. The log says `forward budget spent` once per held email, and the
-  first held email of the (UTC) day sends one summary: "N emails waiting in Resend".
-- If Resend is unreachable, the webhook answers 500 and Resend retries it later.
+- Over `FORWARD_MAX_PER_DAY` forwards in the UTC day, or over the shared budget, mail
+  stays in Resend's **Receiving** tab and isn't forwarded later. The log says `forward
+  budget spent` once per held email, and the first held email of the day sends one
+  alert: "Forwarding paused for today. New mail is waiting in Resend → Emails →
+  Receiving."
 
-Resend's free plan sends 100 emails a day in total: 70 welcomes, 25 forwards, and
-1 summary fit under it. Replies sent from Gmail as `hi@skovern.com` count too.
+### The Resend budget
+
+Resend counts every email sent **and every email received** against one daily
+quota per UTC day: 100 on the free plan. The api keeps one shared count of both in
+Postgres:
+- Each received email counts 1, whether it's forwarded, held, or skipped.
+- Each send counts 1: a welcome, a forward, a names-only resend, the daily alert.
+
+So a forwarded email costs 2. Before a welcome or a forward goes out, its own cap
+must have room and the shared count must be under `RESEND_DAILY_QUOTA` minus
+`RESEND_RESERVE` (100 − 15 = 85 by default). The reserve covers your own replies
+from Gmail as `hi@skovern.com`, which the api can't see. Only the daily alert may
+use the reserve, since it matters most when the budget is gone.
+
+With the defaults, a day of 50 welcomes and 15 forwarded emails uses 50 + 30 = 80,
+plus 1 for the alert. Every extra received email uses 1 more, even when it's held.
+
+Received mail can't be capped. A burst of spam to `@skovern.com` uses up the quota
+by itself: forwards and welcomes stop for the rest of the UTC day, and Resend may
+refuse sends past 100, including Gmail replies. The fix is Resend's paid plan; then
+raise `RESEND_DAILY_QUOTA` to match.
 
 ### Before a deploy
 
