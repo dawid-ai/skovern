@@ -69,6 +69,7 @@ beforeEach(async () => {
   vi.restoreAllMocks();
   deps.maxPerDay = 25;
   deps.authMissingOk = false;
+  deps.flaggedPerDay = 2;
   deps.quota = { quota: 100, reserve: 15 };
   await pool.query("TRUNCATE resend_hook_ids, inbox_mail, resend_usage");
 });
@@ -192,6 +193,15 @@ describe("S3: flagged mail and auto-replies don't spend a main forward slot", ()
     expect(lines(warn, "no authentication data")).toEqual(
       [1, 2, 3, 4].map((n) => `[inbox] no authentication data on ${id(n)}; forwarding it unflagged (INBOX_AUTH_MISSING_OK=1)`),
     );
+  });
+
+  it("H2: forwards an unverified sender on a main slot, not the flagged cap", async () => {
+    deps.flaggedPerDay = 0;
+    fake.inbound.set(id(1), received(id(1), { authentication: { spf: "pass", dkim: "gray", dmarc: "gray" } }));
+    await deliver(id(1));
+    expect(fake.sent.map((m) => m.subject)).toEqual(["[skovern.com] Order"]);
+    expect(fake.sent[0]?.text).toContain("Sender not verified for bloom.test");
+    expect((await pool.query(`SELECT kind FROM resend_usage WHERE ref = $1`, [`forward/${id(1)}`])).rows[0]?.kind).toBe("forward");
   });
 
   it("reads upper-case results from the API as their lower-case values", async () => {

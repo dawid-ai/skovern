@@ -74,6 +74,17 @@ describe("buildForward", () => {
     expect(looksSpoofed(email({ authentication: { spf: "fail", dkim: null, dmarc: null } }), true)).toBe(true);
   });
 
+  it("H2: says the sender isn't verified when DMARC didn't pass, without a prefix", () => {
+    const m = buildForward(email({ authentication: { spf: "pass", dkim: "gray", dmarc: "gray" }, html: "<p>x</p>" }), opts);
+    expect(m.subject).toBe("[skovern.com] Hello there");
+    expect(m.text.split("\n").slice(0, 2)).toEqual(["From: Rosa <rosa@bloom.test>", "Sender not verified for bloom.test"]);
+    expect(m.html).toContain("Sender not verified for bloom.test");
+    expect(buildForward(email({ authentication: { spf: "pass", dkim: "pass", dmarc: null } }), opts).text).toContain("Sender not verified for bloom.test");
+    // DMARC passed: nothing to say. Flagged: [spam?] already says it.
+    expect(buildForward(email(), opts).text).not.toContain("not verified");
+    expect(buildForward(email({ authentication: { spf: "fail", dkim: "fail", dmarc: "fail" } }), opts).text).not.toContain("not verified");
+  });
+
   it("S1: shows Reply-To in the banner when it differs from the sender", () => {
     const m = buildForward(email({ replyTo: ["Orders <orders@bloom.test>"], html: "<p>x</p>" }), opts);
     expect(m.text.split("\n").slice(0, 3)).toEqual(["From: Rosa <rosa@bloom.test>", "Reply-To: orders@bloom.test", "To: hi@skovern.com"]);

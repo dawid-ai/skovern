@@ -110,8 +110,13 @@ export function buildForward(e: ReceivedEmail, o: ForwardOptions): ResendEmail {
   const reply = replyAddress(e);
   // Reply goes somewhere other than the sender: say so where Dawid can see it.
   const replyDiffers = reply !== null && reply.toLowerCase() !== senderAddress(e.from)?.toLowerCase();
+  // Passed SPF or DKIM, but DMARC didn't confirm the From domain: not flagged,
+  // and no subject prefix, but say so in the banner.
+  const unverified = !looksSpoofed(e, o.authMissingOk) && e.authentication?.dmarc !== "pass";
+  const fromDomain = senderAddress(e.from)?.split("@")[1]?.toLowerCase() ?? "this sender";
   const header = [
     `From: ${oneLine(e.from)}`,
+    ...(unverified ? [`Sender not verified for ${fromDomain}`] : []),
     ...(replyDiffers ? [`Reply-To: ${reply}`] : []),
     `To: ${e.to.map(oneLine).join(", ")}`,
     ...(e.cc.length ? [`Cc: ${e.cc.map(oneLine).join(", ")}`] : []),
