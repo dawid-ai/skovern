@@ -1,6 +1,7 @@
 ---
 // An app screenshot that follows the reader's light or dark setting. Only the
-// matching file downloads (one <picture>, two sources).
+// matching file downloads (one <picture>, two sources). The <picture> is the
+// window frame: rounded corners that clip the image (.frame, global.css).
 interface Props {
   name: "app-chat" | "app-brain" | "app-receipts" | "app-chat-update";
   alt: string;
@@ -9,7 +10,7 @@ interface Props {
 }
 const { name, alt, class: cls, eager = false } = Astro.props;
 ---
-<picture class={cls}>
+<picture class:list={["frame", cls]}>
   <source media="(prefers-color-scheme: dark)" srcset={`/img/${name}-dark.webp`}>
   <img src={`/img/${name}-light.webp`} alt={alt} width="1600" height="1047" loading={eager ? "eager" : "lazy"} decoding="async">
 </picture>

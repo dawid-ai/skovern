@@ -51,7 +51,7 @@
 .body .callout b { display: block; margin-bottom: 4px }
 .body .callout p { margin: 0 }
 .body .fig { margin: 1.8em -60px }
-.body .fig .frame { border-radius: 16px; overflow: hidden; box-shadow: 0 30px 70px -36px rgba(30, 30, 50, .45), 0 0 0 1px var(--card-line) }
+.body .fig .frame { border-radius: clamp(12px, 1.64vw, 18px); overflow: hidden; box-shadow: 0 30px 70px -36px rgba(30, 30, 50, .45), 0 0 0 1px var(--card-line) }
 .body .fig img { width: 100%; height: auto }
 .body .fig figcaption { margin: 12px 60px 0; font-size: 14px; line-height: 1.45; color: var(--ink-2) }
 .body .how { list-style: none; counter-reset: s; margin: 1.2em 0 1.4em; padding: 0; display: flex; flex-direction: column; gap: 14px }
