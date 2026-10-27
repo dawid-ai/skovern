@@ -11,55 +11,26 @@
 // load, no JavaScript) and hide only once every image it needs has decoded.
 // Tests read the canvas's data-* attributes AND its pixels.
 
-const FRAME_FILL = 0.43; // the tile spans ~43% of a turntable frame's width
-const STILL_FILL = 0.88; // ... and ~88% of a front still's width
-/** Where the tile sits inside a turntable frame, across all 72 (fractions of
- *  the frame): the floor shadow lies outside it, below. */
-const TILE_IN_FRAME = { left: 0.25, top: 0.21, right: 0.75, bottom: 0.715 };
-/** The lowest ink in any frame (the floor shadow), per px of tile, below the
- *  tile's centre: 0.33 of a frame, plus the idle bob. */
-const INK_BELOW = 0.33 / FRAME_FILL + 0.03;
-const NAV = 48;
-/** More frames than this is a mistake in the build, not a smoother turn. */
-const MAX_FRAMES = 240;
-/** The idle sway: from the resting pose out through SWAY frames (about 11
- *  degrees of turn) and back, once every SWAY_S seconds. It runs only while
- *  the page is at rest; any scroll pauses it where it is, so the scrub never
- *  jumps. Those frames load up front, with frame 0. */
-const SWAY = 14;
-const SWAY_S = 9;
-const BOB_S = 5.5;
-/** A scroll this recent (ms) means the page isn't at rest. */
-const REST_MS = 500;
-
-const clamp = (v: number, a = 0, b = 1): number => Math.min(b, Math.max(a, v));
-const mix = (a: number, b: number, t: number): number => a + (b - a) * t;
-const ease = (t: number): number => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
-const pad = (n: number): string => String(n).padStart(3, "0");
-
-interface Box {
-  x: number;
-  y: number;
-  /** Width of the TILE (the glass square) at this anchor, in CSS px. */
-  tile: number;
-}
-
-function box(el: Element, fill: number, k = 1): Box {
-  const r = el.getBoundingClientRect();
-  return { x: r.left + r.width / 2, y: r.top + r.height / 2, tile: r.width * fill * k };
-}
-
-/** Load and decode an image; null if it fails. */
-async function loadImage(src: string): Promise<HTMLImageElement | null> {
-  const img = new Image();
-  img.src = src;
-  try {
-    await img.decode();
-    return img;
-  } catch {
-    return null;
-  }
-}
+import {
+  FRAME_FILL,
+  STILL_FILL,
+  TILE_IN_FRAME,
+  INK_BELOW,
+  NAV,
+  REST_MS,
+  SWAY_S,
+  BOB_S,
+  clamp,
+  mix,
+  ease,
+  pad,
+  box,
+  loadImage,
+  frameCount,
+  swayFrames,
+  wantsSaveData,
+  type Box,
+} from "./icon-flight-parts";
 
 export function startIconFlight(): void {
   const canvas = document.querySelector<HTMLCanvasElement>("#icon-fly");
@@ -72,9 +43,10 @@ export function startIconFlight(): void {
   const pin = document.querySelector<HTMLElement>("#rc-pin");
   const wl = document.querySelector<HTMLElement>("#a-wl");
   const wlSec = document.querySelector<HTMLElement>("#waitlist");
-  const count = Math.min(MAX_FRAMES, Number(hero?.dataset["frames"] ?? 0));
+  const count = frameCount(hero?.dataset["frames"]);
   if (!canvas || !hero || !heroCopy || !socket || !chip || !win || !rc || !pin || !wl || !wlSec || count < 2) return;
   if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const sway = swayFrames(count, wantsSaveData());
   const ctx = canvas.getContext("2d");
   const off = document.createElement("canvas").getContext("2d");
   if (!ctx || !off) return;
@@ -172,8 +144,8 @@ export function startIconFlight(): void {
     if (now - lastScroll > REST_MS) idle += Math.min(0.1, Math.max(0, (now - lastNow) / 1000));
     lastNow = now;
     // 0 at rest pose .. 1 at the far end of the sway; it fades out as the scroll turns the icon.
-    const sway = (0.5 - 0.5 * Math.cos((idle / SWAY_S) * Math.PI * 2)) * Math.min(SWAY, count - 1);
-    const heroIdx = Math.round(clamp(spin * (count - 1) + sway * (1 - spin), 0, count - 1));
+    const swayAt = (0.5 - 0.5 * Math.cos((idle / SWAY_S) * Math.PI * 2)) * sway;
+    const heroIdx = Math.round(clamp(spin * (count - 1) + swayAt * (1 - spin), 0, count - 1));
     const bob = Math.sin(idle * ((Math.PI * 2) / BOB_S));
     // Phase progress, as in the demo.
     const wr = win.getBoundingClientRect();
@@ -250,7 +222,7 @@ export function startIconFlight(): void {
   }
 
   // Frame 0 and the stills load first, then the sway's frames (1..SWAY), in
-  // order. The turn's other frames wait until the person scrolls or the hero
+  // order, unless the reader asked to save data. The turn's other frames wait until the person scrolls or the hero
   // leaves view, so a phone that never scrolls never downloads them.
   const requested = new Set<number>();
   const load = async (i: number): Promise<void> => {
@@ -260,7 +232,7 @@ export function startIconFlight(): void {
     schedule();
   };
   const loadSway = async (): Promise<void> => {
-    for (let i = 1; i <= Math.min(SWAY, count - 1); i += 1) await load(i);
+    for (let i = 1; i <= sway; i += 1) await load(i);
   };
   let restStarted = false;
   const loadRest = (): void => {
