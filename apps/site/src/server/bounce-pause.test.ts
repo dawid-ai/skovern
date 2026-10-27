@@ -49,6 +49,7 @@ beforeAll(async () => {
       worker: new InboxWorker({
         api: { baseUrl: "http://127.0.0.1:1", apiKey: "re_test" },
         store: inbox,
+        from: "Skovern inbox <inbox@in.skovern.com>",
         forwardTo: "d@inbox.test",
         maxPerDay: 25,
         quota: { quota: 100, reserve: 15 },
