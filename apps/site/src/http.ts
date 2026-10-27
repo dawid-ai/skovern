@@ -7,8 +7,8 @@ import type { HttpResult } from "./auth/handlers.js";
 // Every request body here is a few hundred bytes; cap hard so a flood can't buffer.
 const MAX_BODY = 4096;
 
-/** Read the whole body as UTF-8, refusing anything over `max` bytes. */
-export async function readRawBody(req: IncomingMessage, max: number = MAX_BODY): Promise<string> {
+/** Read the whole body as bytes, refusing anything over `max` bytes. */
+export async function readRawBuffer(req: IncomingMessage, max: number = MAX_BODY): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
@@ -17,7 +17,12 @@ export async function readRawBody(req: IncomingMessage, max: number = MAX_BODY):
     if (size > max) throw new Error("body too large");
     chunks.push(buf);
   }
-  return chunks.length ? Buffer.concat(chunks).toString("utf8") : "";
+  return Buffer.concat(chunks);
+}
+
+/** Read the whole body as UTF-8, refusing anything over `max` bytes. */
+export async function readRawBody(req: IncomingMessage, max: number = MAX_BODY): Promise<string> {
+  return (await readRawBuffer(req, max)).toString("utf8");
 }
 
 export async function readJson(req: IncomingMessage): Promise<unknown> {

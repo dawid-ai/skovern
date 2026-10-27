@@ -16,21 +16,23 @@ export interface SvixHeaders {
 
 export type SvixVerdict = "ok" | "missing" | "stale" | "bad-signature";
 
-/** The signature Svix would send for this message, base64. */
-export function svixSign(key: Buffer, id: string, timestamp: string, body: string): string {
-  return createHmac("sha256", key).update(`${id}.${timestamp}.${body}`).digest("base64");
+/** The signature Svix would send for this message, base64. The body is
+ *  hashed as the exact bytes received, never re-encoded through a string. */
+export function svixSign(key: Buffer, id: string, timestamp: string, body: Buffer): string {
+  return createHmac("sha256", key).update(`${id}.${timestamp}.`).update(body).digest("base64");
 }
 
 /**
  * Check a webhook against the signing key. `body` must be the raw request body,
- * byte for byte. `now` is in milliseconds.
+ * byte for byte (a string is taken as UTF-8). `now` is in milliseconds.
  */
-export function verifySvix(key: Buffer, h: SvixHeaders, body: string, now: number = Date.now()): SvixVerdict {
+export function verifySvix(key: Buffer, h: SvixHeaders, body: Buffer | string, now: number = Date.now()): SvixVerdict {
   const { id, timestamp, signature } = h;
   if (!id || !timestamp || !signature) return "missing";
   if (id.length > 256 || !/^\d{1,12}$/.test(timestamp)) return "missing";
   if (Math.abs(now / 1000 - Number(timestamp)) > TOLERANCE_SECONDS) return "stale";
-  const expected = Buffer.from(svixSign(key, id, timestamp, body), "base64");
+  const raw = typeof body === "string" ? Buffer.from(body, "utf8") : body;
+  const expected = Buffer.from(svixSign(key, id, timestamp, raw), "base64");
   for (const entry of signature.split(" ")) {
     const [version, sig] = entry.split(",", 2);
     if (version !== "v1" || !sig) continue;
