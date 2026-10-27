@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
+import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from "@playwright/test";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import pg from "pg";
 import { AuthService, AuthStore, ConsoleMailer, ConsoleNotifier, DmStore, startAuthServer, type RunningServer } from "@skovern/site";
@@ -492,11 +492,20 @@ async function windowLuminance(app: ElectronApplication, rect: { x: number; y: n
   );
 }
 
+// A locator's box, or a clear failure naming what's missing (not a null dereference).
+async function boxOf(loc: Locator, what: string): Promise<{ x: number; y: number; width: number; height: number }> {
+  const b = await loc.boundingBox();
+  expect(b, `${what} has no box on screen`).not.toBeNull();
+  return b!;
+}
+
 test("P4: every dropdown follows the theme, shut and open, in light and dark", async () => {
-  test.setTimeout(120_000);
+  test.setTimeout(180_000);
   const dir = mkdtempSync(path.join(tmpdir(), "skovern-e2e-"));
+  // Ollama installed, with a launch choice already made: Settings shows its dropdown too.
+  writeFileSync(path.join(dir, "settings.json"), JSON.stringify({ ollamaLaunch: "never", autoUpdates: true }));
   const shots = process.env["SKOVERN_SHOTS"] ?? null;
-  const { app, page } = await launch(dir);
+  const { app, page } = await launch(dir, { SKOVERN_OLLAMA_INSTALLED: "1" });
   try {
     const check = (where: string, list: SelectReport[], scheme: "light" | "dark"): void => {
       for (const s of list) {
@@ -522,40 +531,53 @@ test("P4: every dropdown follows the theme, shut and open, in light and dark", a
     await signIn(page);
     await nav(page, "Settings").click();
     await expect(page.locator("select#brain")).toBeVisible();
+    await expect(page.locator("select#ollama-launch")).toBeVisible();
     for (const scheme of ["light", "dark"] as const) {
       await page.emulateMedia({ colorScheme: scheme });
       await page.waitForTimeout(150);
       const list = await selects(page);
-      expect(list.map((s) => s.id)).toContain("brain");
+      expect(list.map((s) => s.id).sort()).toEqual(expect.arrayContaining(["brain", "ollama-launch"]));
       check(`Settings ${scheme}`, list, scheme);
 
-      // Open "Pick a brain": the list is really drawn, in the theme's colors.
-      const field = page.locator("select#brain");
-      await field.click();
-      await expect.poll(() => field.evaluate((s) => s.matches(":open"))).toBe(true);
-      const first = (await page.locator("select#brain option").first().boundingBox())!;
-      const last = (await page.locator("select#brain option").last().boundingBox())!;
-      expect(first.height, `${scheme}: the open list is on screen`).toBeGreaterThan(10);
-      await page.waitForTimeout(300); // let the opening fade finish
-      const list0 = { x: first.x, y: first.y, width: first.width, height: last.y + last.height - first.y };
-      const lumList = await windowLuminance(app, list0, shots && path.join(shots, `select-open-${scheme}-list.png`));
-      if (shots) {
-        // The field and its open list (it opens above the field when there's no room below).
-        const box = (await field.boundingBox())!;
-        const top = Math.max(0, Math.min(box.y, first.y) - 24);
-        const bottom = Math.max(box.y + box.height, last.y + last.height) + 24;
-        const left = Math.max(0, Math.min(box.x, first.x) - 24);
-        await windowLuminance(app, { x: left, y: top, width: Math.max(box.width, first.width) + 48, height: bottom - top }, path.join(shots, `select-open-${scheme}.png`));
-      }
-      if (scheme === "dark") expect(lumList, "dark: the open list is dark").toBeLessThan(0.2);
-      else expect(lumList, "light: the open list is light").toBeGreaterThan(0.6);
+      for (const id of ["brain", "ollama-launch"]) {
+        const at = `${scheme} #${id}`;
+        // Open it: the list is really drawn, in the theme's colors, inside the field's card.
+        const field = page.locator(`select#${id}`);
+        await field.scrollIntoViewIfNeeded();
+        await field.click();
+        await expect.poll(() => field.evaluate((s) => s.matches(":open")), `${at}: opens`).toBe(true);
+        await page.waitForTimeout(300); // let the opening fade finish
+        const options = page.locator(`select#${id} option`);
+        const first = await boxOf(options.first(), `${at}: the open list's first option`);
+        const last = await boxOf(options.last(), `${at}: the open list's last option`);
+        expect(first.height, `${at}: the open list is on screen`).toBeGreaterThan(10);
+        const card = await boxOf(field.locator("xpath=ancestor::*[contains(concat(' ', @class, ' '), ' g-card ')][1]"), `${at}: the field's card`);
+        expect(first.x, `${at}: the list starts inside its card`).toBeGreaterThanOrEqual(card.x - 1);
+        expect(first.x + first.width, `${at}: the list ends inside its card`).toBeLessThanOrEqual(card.x + card.width + 1);
+        const listBox = { x: first.x, y: first.y, width: first.width, height: last.y + last.height - first.y };
+        if (shots) await windowLuminance(app, listBox, path.join(shots, `select-open-${scheme}-${id}-list.png`));
+        // The list's own color: a row that isn't the picked one (that row wears the highlight).
+        const plain = await boxOf(page.locator(`select#${id} option:not(:checked)`).first(), `${at}: an unpicked option`);
+        const lum = await windowLuminance(app, plain, null);
+        if (shots) {
+          // The field and its open list (it opens above the field when there's no room below).
+          const f = await boxOf(field, `${at}: the field`);
+          const top = Math.max(0, Math.min(f.y, first.y) - 24);
+          const bottom = Math.max(f.y + f.height, last.y + last.height) + 24;
+          const left = Math.max(0, Math.min(f.x, first.x) - 24);
+          const right = Math.max(f.x + f.width, first.x + first.width) + 24;
+          await windowLuminance(app, { x: left, y: top, width: right - left, height: bottom - top }, path.join(shots, `select-open-${scheme}-${id}.png`));
+        }
+        if (scheme === "dark") expect(lum, `${at}: the open list is dark`).toBeLessThan(0.2);
+        else expect(lum, `${at}: the open list is light`).toBeGreaterThan(0.6);
 
-      // The keyboard still drives it: Escape closes without changing the pick.
-      const before = await field.inputValue();
-      await page.keyboard.press("ArrowDown");
-      await page.keyboard.press("Escape");
-      await expect.poll(() => field.evaluate((s) => s.matches(":open"))).toBe(false);
-      expect(await field.inputValue()).toBe(before);
+        // The keyboard still drives it: Escape closes without changing the pick.
+        const before = await field.inputValue();
+        await page.keyboard.press("ArrowDown");
+        await page.keyboard.press("Escape");
+        await expect.poll(() => field.evaluate((s) => s.matches(":open")), `${at}: Escape closes it`).toBe(false);
+        expect(await field.inputValue(), `${at}: Escape keeps the pick`).toBe(before);
+      }
     }
   } finally {
     await app.close();
