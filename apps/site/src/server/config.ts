@@ -73,7 +73,7 @@ export const PLAIN_ADDRESS = /^[^\s@<>,;"'()]+@[^\s@<>,;"'()]+\.[^\s@<>,;"'()]+$
 function inboxConfig(env: NodeJS.ProcessEnv, resendKey: string | null): InboxConfig | null {
   const secret = env["RESEND_WEBHOOK_SECRET"]?.trim();
   const maxPerDay = positiveInt(env, "FORWARD_MAX_PER_DAY", 15);
-  const flaggedPerDay = positiveInt(env, "FLAGGED_MAX_PER_DAY", 5, 0);
+  const flaggedPerDay = positiveInt(env, "FLAGGED_MAX_PER_DAY", 2, 0);
   if (!secret) return null;
   const match = /^whsec_([A-Za-z0-9+/]+={0,2})$/.exec(secret);
   const webhookKey = match?.[1] ? Buffer.from(match[1], "base64") : Buffer.alloc(0);
