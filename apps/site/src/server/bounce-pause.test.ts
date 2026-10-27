@@ -9,6 +9,10 @@ import { InboxStore } from "../inbox/store.js";
 import { InboxWorker } from "../inbox/worker.js";
 import { resetPausedLog } from "../waitlist/bounce-pause.js";
 import { WaitlistStore } from "../waitlist/store.js";
+import { ResendWelcomeMailer } from "../waitlist/mail.js";
+import { deliverWelcome } from "../waitlist/welcome.js";
+import { welcomeBounceStats } from "../waitlist/bounce-pause.js";
+import { FakeResend } from "../../scripts/smoke/fake-resend.js";
 
 // Ledger resend-bounce-pause (loop 052 amendment): signed email.bounced,
 // email.complained, and email.suppressed events pause welcome emails past a 5%
@@ -21,8 +25,11 @@ let container: StartedPostgreSqlContainer;
 let pool: pg.Pool;
 let server: RunningServer;
 let store: WaitlistStore;
+const fake = new FakeResend();
+let fakeUrl = "";
 
 beforeAll(async () => {
+  fakeUrl = (await fake.listen()).url;
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   pool = new pg.Pool({ connectionString: container.getConnectionUri() });
   pool.on("error", (err: Error & { code?: string }) => {
@@ -55,6 +62,7 @@ afterAll(async () => {
   await server?.close();
   await pool?.end();
   await container?.stop();
+  fake.close();
 });
 
 beforeEach(async () => {
@@ -125,6 +133,26 @@ describe("welcome bounce pause", () => {
     await feedback("email.bounced", "w1");
     await feedback("email.complained", "w1");
     expect(await join()).toBe(true);
+  });
+
+  it("pauses on a bounce of a welcome really sent through Resend, matched by the ID it returned", async () => {
+    fake.reset();
+    await sends(20);
+    await feedback("email.bounced", "w1");
+    const mailer = new ResendWelcomeMailer("re_test", "Skovern <hi@skovern.com>", fakeUrl);
+    const joined = await store.join("real@bloom.test", "Rae");
+    expect(joined.welcomeClaim).not.toBeNull();
+    const delivered = await deliverWelcome(
+      { store, mailer, appUrl: () => "https://api.test" },
+      { id: joined.id, email: "real@bloom.test", name: "Rae", number: joined.number, claim: joined.welcomeClaim! },
+    );
+    expect(delivered).toBe("sent");
+    expect(fake.sent).toHaveLength(1);
+    expect(await feedback("email.bounced", "fake-1")).toBe(200);
+    expect(await welcomeBounceStats(pool)).toEqual({ sends: 21, bad: 2 });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(await join()).toBe(false);
+    vi.restoreAllMocks();
   });
 
   it("records Resend's ID for a sent welcome, so its bounce is matched", async () => {

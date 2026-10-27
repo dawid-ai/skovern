@@ -131,9 +131,23 @@ export async function inboxClauses(h: Harness, check: Check, baseWithoutSecret: 
   const sentOn = forwards().length - alerts.length;
   check("F4", sentOn === 3 && alerts.length === 1 && alerts[0]?.to === FORWARD_TO, `forwards ${sentOn}, alerts ${alerts.length}`);
   check("F4", alerts[0]?.text.startsWith("Forwarding paused for today. New mail is waiting in Resend") === true && /^summary\/\d{4}-\d\d-\d\d$/.test(alerts[0]?.key ?? ""), `alert key ${alerts[0]?.key}`);
-  const used = await pool.query<{ kind: string; n: string }>(`SELECT kind, count(*) AS n FROM resend_usage WHERE kind <> 'welcome' GROUP BY kind ORDER BY kind`);
+  const used = await pool.query<{ kind: string; n: string }>(`SELECT kind, count(*) AS n FROM resend_usage WHERE kind NOT IN ('welcome', 'signin') GROUP BY kind ORDER BY kind`);
   const tally = used.rows.map((r) => `${r.kind}=${r.n}`).join(",");
   check("F4", tally === "forward=3,received=6,summary=1", `shared quota counts ${tally}`);
+  // P1 (bounce pause): every welcome sent earlier kept Resend's ID, and a signed
+  // bounce for one is matched to it.
+  const ids = await pool.query<{ total: string; named: string; one: string | null }>(
+    `SELECT count(*) AS total, count(resend_id) AS named, min(resend_id) AS one FROM waitlist_welcome_sends`,
+  );
+  const w = ids.rows[0]!;
+  const bounce = JSON.stringify({ type: "email.bounced", created_at: "2026-10-27T10:00:00.000Z", data: { email_id: w.one, tags: { kind: "welcome" } } });
+  const br = await post(api.base, bounce, signed(bounce));
+  const matched = await pool.query<{ n: string }>(
+    `SELECT count(*) AS n FROM mail_feedback f JOIN waitlist_welcome_sends s ON s.resend_id = f.email_id`,
+  );
+  check("P1", Number(w.total) > 0 && w.named === w.total && br.status === 200 && matched.rows[0]?.n === "1",
+    `welcomes with Resend IDs ${w.named}/${w.total}, bounce → ${br.status}, matched ${matched.rows[0]?.n}`);
+
   const logs = api.logs();
   const spent = logs.split("\n").filter((l) => l.includes("forward budget spent")).length;
   check("F4", spent === 2, `${spent} budget-spent log lines`);
