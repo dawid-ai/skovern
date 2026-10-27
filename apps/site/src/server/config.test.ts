@@ -70,7 +70,14 @@ describe("loadConfig", () => {
     expect(cfg.resendKey).toBeNull();
     expect(cfg.trustProxy).toBe(false);
     expect(cfg.inbox).toBeNull();
-    expect(cfg.welcomeBudget).toEqual({ perHour: 20, perDay: 70 });
+    expect(cfg.welcomeBudget).toEqual({ perHour: 20, perDay: 50 });
+    expect(cfg.resendQuota).toEqual({ quota: 100, reserve: 15 });
+  });
+
+  it("reads the Resend quota and reserve, and refuses a reserve that eats the quota", () => {
+    expect(loadConfig({ RESEND_DAILY_QUOTA: "3000", RESEND_RESERVE: "0" }).resendQuota).toEqual({ quota: 3000, reserve: 0 });
+    expect(() => loadConfig({ RESEND_RESERVE: "100" })).toThrow("RESEND_RESERVE must be smaller than RESEND_DAILY_QUOTA.");
+    expect(() => loadConfig({ RESEND_RESERVE: "-1" })).toThrow("RESEND_RESERVE must be a whole number of 0 or more.");
   });
 });
 
@@ -82,10 +89,10 @@ describe("loadConfig inbox", () => {
     expect(loadConfig({ ...PROD, FORWARD_TO: "a@b.test" }).inbox).toBeNull();
   });
 
-  it("turns on with the secret and one address, at 25 forwards a day by default", () => {
+  it("turns on with the secret and one address, at 15 forwards a day by default", () => {
     const inbox = loadConfig(INBOX).inbox;
     expect(inbox?.forwardTo).toBe("jozwiakdawid+skovern@gmail.com");
-    expect(inbox?.maxPerDay).toBe(25);
+    expect(inbox?.maxPerDay).toBe(15);
     expect(inbox?.webhookKey.toString()).toBe("0123456789abcdef0123");
     expect(loadConfig({ ...INBOX, FORWARD_MAX_PER_DAY: "5" }).inbox?.maxPerDay).toBe(5);
   });

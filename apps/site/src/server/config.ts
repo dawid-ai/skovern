@@ -4,6 +4,8 @@
 // silently falls back to dev defaults on the public internet is worse than one
 // that refuses to start.
 
+import { DEFAULT_QUOTA, type ResendQuota } from "./resend-usage.js";
+
 // Defaults match docker-compose.yml so `pnpm dev` works right after `db:up`.
 const DEV_DATABASE_URL = "postgres://skovern:skovern@localhost:5442/skovern";
 const PROD_ORIGINS = ["https://skovern.com", "https://www.skovern.com"];
@@ -25,8 +27,10 @@ export interface ServerConfig {
   /** Sign-in, DM, publish, news, and their admin pages. Off by default in
    *  production until the beta: the public api is the waitlist and nothing else. */
   accountRoutes: boolean;
-  /** Global cap on welcome emails (Resend's free tier is 100 a day). */
+  /** Global cap on welcome emails. */
   welcomeBudget: { perHour: number; perDay: number };
+  /** Resend's daily quota (sent plus received) and the part kept free (resend-usage.ts). */
+  resendQuota: ResendQuota;
   /** Mail to @skovern.com forwarded to one fixed inbox (loop 052). Null = the
    *  webhook route isn't mounted. */
   inbox: InboxConfig | null;
@@ -58,7 +62,7 @@ export const PLAIN_ADDRESS = /^[^\s@<>,;"'()]+@[^\s@<>,;"'()]+\.[^\s@<>,;"'()]+$
 
 function inboxConfig(env: NodeJS.ProcessEnv, resendKey: string | null): InboxConfig | null {
   const secret = env["RESEND_WEBHOOK_SECRET"]?.trim();
-  const maxPerDay = positiveInt(env, "FORWARD_MAX_PER_DAY", 25);
+  const maxPerDay = positiveInt(env, "FORWARD_MAX_PER_DAY", 15);
   if (!secret) return null;
   const match = /^whsec_([A-Za-z0-9+/]+={0,2})$/.exec(secret);
   const webhookKey = match?.[1] ? Buffer.from(match[1], "base64") : Buffer.alloc(0);
@@ -84,12 +88,19 @@ function list(raw: string | undefined): string[] | null {
     .filter(Boolean);
 }
 
-function positiveInt(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
+function positiveInt(env: NodeJS.ProcessEnv, key: string, fallback: number, min = 1): number {
   const raw = env[key]?.trim();
   if (!raw) return fallback;
   const n = Number(raw);
-  if (!Number.isInteger(n) || n < 1) throw new ConfigError(`${key} must be a whole number of 1 or more.`);
+  if (!Number.isInteger(n) || n < min) throw new ConfigError(`${key} must be a whole number of ${min} or more.`);
   return n;
+}
+
+function resendQuota(env: NodeJS.ProcessEnv): ResendQuota {
+  const quota = positiveInt(env, "RESEND_DAILY_QUOTA", DEFAULT_QUOTA.quota);
+  const reserve = positiveInt(env, "RESEND_RESERVE", DEFAULT_QUOTA.reserve, 0);
+  if (reserve >= quota) throw new ConfigError("RESEND_RESERVE must be smaller than RESEND_DAILY_QUOTA.");
+  return { quota, reserve };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv): ServerConfig {
@@ -137,8 +148,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): ServerConfig {
     accountRoutes: env["ACCOUNT_ROUTES"] ? env["ACCOUNT_ROUTES"] === "1" : !production,
     welcomeBudget: {
       perHour: positiveInt(env, "WELCOME_MAX_PER_HOUR", 20),
-      perDay: positiveInt(env, "WELCOME_MAX_PER_DAY", 70),
+      perDay: positiveInt(env, "WELCOME_MAX_PER_DAY", 50),
     },
+    resendQuota: resendQuota(env),
     inbox: inboxConfig(env, resendKey),
     host: val("HOST") ?? "127.0.0.1",
     port: Number(val("PORT") ?? 8787),

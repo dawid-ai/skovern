@@ -36,8 +36,23 @@ export class DevLinkMailer implements Mailer {
  *  couldn't be reached (network error, timeout). A 4xx means this message will
  *  never be accepted (bad address, refused); a 5xx or null may work later. */
 export class MailError extends Error {
-  constructor(readonly status: number | null) {
-    super(status === null ? "email send failed (unreachable)" : `email send failed (${status})`);
+  constructor(
+    readonly status: number | null,
+    /** Resend's error name, like `invalid_idempotent_request`, when it gave one. */
+    readonly code: string | null = null,
+  ) {
+    super(status === null ? "email send failed (unreachable)" : `email send failed (${status}${code ? ` ${code}` : ""})`);
+  }
+}
+
+/** Resend's error `name` from a failed response: a short snake_case word,
+ *  never the message (which can echo an address). */
+export async function errorCode(res: Response): Promise<string | null> {
+  try {
+    const name = ((await res.json()) as { name?: unknown }).name;
+    return typeof name === "string" && /^[a-z_]{1,64}$/.test(name) ? name : null;
+  } catch {
+    return null;
   }
 }
 
@@ -66,12 +81,27 @@ export interface ResendEmail {
   tags?: { name: string; value: string }[];
 }
 
-export async function resendPost(baseUrl: string, apiKey: string, email: ResendEmail): Promise<void> {
+/**
+ * Send one email. Returns Resend's ID for it (null if the answer had none).
+ * With `idempotencyKey`, Resend sends a repeat of the same request only once
+ * within 24 hours, and answers 409 `invalid_idempotent_request` when the key
+ * was used for a different body.
+ */
+export async function resendPost(
+  baseUrl: string,
+  apiKey: string,
+  email: ResendEmail,
+  opts: { idempotencyKey?: string } = {},
+): Promise<string | null> {
   let res: Response;
   try {
     res = await fetch(`${baseUrl}/emails`, {
       method: "POST",
-      headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        "content-type": "application/json",
+        ...(opts.idempotencyKey ? { "idempotency-key": opts.idempotencyKey } : {}),
+      },
       body: JSON.stringify(email),
       signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
     });
@@ -79,7 +109,13 @@ export async function resendPost(baseUrl: string, apiKey: string, email: ResendE
     throw new MailError(null);
   }
   // why: never include the response body — it can echo the address or key
-  if (!res.ok) throw new MailError(res.status);
+  if (!res.ok) throw new MailError(res.status, await errorCode(res));
+  try {
+    const id = ((await res.json()) as { id?: unknown }).id;
+    return typeof id === "string" && id.length <= 100 ? id : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Prod mailer — Resend HTTP API. */
