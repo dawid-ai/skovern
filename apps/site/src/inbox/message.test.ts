@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildForward,
   inboxFrom,
-  isAutoSubmitted,
+  autoKind,
   looksSpoofed,
   MAX_ATTACHMENT_BYTES,
   MAX_HTML_CHARS,
@@ -92,11 +92,21 @@ describe("buildForward", () => {
     expect(buildForward(email({ replyTo: ["ROSA@bloom.test"] }), opts).text).not.toContain("Reply-To:");
   });
 
-  it("S4: spots Auto-Submitted mail, except Auto-Submitted: no", () => {
-    expect(isAutoSubmitted(email({ autoSubmitted: "auto-replied" }))).toBe(true);
-    expect(isAutoSubmitted(email({ autoSubmitted: " Auto-Generated; foo" }))).toBe(true);
-    expect(isAutoSubmitted(email({ autoSubmitted: "no" }))).toBe(false);
-    expect(isAutoSubmitted(email())).toBe(false);
+  it("H3: sorts Auto-Submitted into auto-replies, other automatic mail, and ordinary mail", () => {
+    expect(autoKind(email({ autoSubmitted: "auto-replied" }))).toBe("replied");
+    expect(autoKind(email({ autoSubmitted: " Auto-Replied; owner-email=x" }))).toBe("replied");
+    expect(autoKind(email({ autoSubmitted: " Auto-Generated; foo" }))).toBe("other");
+    expect(autoKind(email({ autoSubmitted: "auto-notified" }))).toBe("other");
+    expect(autoKind(email({ autoSubmitted: "no" }))).toBeNull();
+    expect(autoKind(email())).toBeNull();
+  });
+
+  it("H3: marks other automatic mail [auto] in the banner, without a subject prefix", () => {
+    const m = buildForward(email({ autoSubmitted: "auto-generated" }), opts);
+    expect(m.subject).toBe("[skovern.com] Hello there");
+    expect(m.text).toContain("[auto] Sent automatically (Auto-Submitted: auto-generated)");
+    expect(buildForward(email({ autoSubmitted: "auto-x<script>" }), opts).text).toContain("(Auto-Submitted: auto)");
+    expect(buildForward(email(), opts).text).not.toContain("[auto]");
   });
 
   it("S4: keeps a valid attachment type and inline ID, and drops invalid ones", () => {

@@ -52,10 +52,24 @@ export function looksSpoofed(e: ReceivedEmail, missingOk = false): boolean {
   return !((is(a.spf, "pass") || is(a.dkim, "pass")) && !is(a.dmarc, "fail"));
 }
 
-/** Sent by a machine (an auto-reply, a bounce, a vacation notice): RFC 3834
- *  `Auto-Submitted` with any value but `no`. */
-export function isAutoSubmitted(e: ReceivedEmail): boolean {
-  return e.autoSubmitted !== null && /^\s*auto-/i.test(e.autoSubmitted);
+/** RFC 3834 `Auto-Submitted`, sorted:
+ *  - "replied": an auto-reply (out of office, vacation). Held: it answers mail
+ *    we sent and is the loop risk.
+ *  - "other": any other `auto-*` (auto-generated, auto-notified: receipts,
+ *    notices). Forwarded, but on the flagged cap, with [auto] in the banner.
+ *  - null: absent or `no`, ordinary mail. */
+export type AutoKind = "replied" | "other" | null;
+
+export function autoKind(e: ReceivedEmail): AutoKind {
+  const value = e.autoSubmitted?.split(";")[0]?.trim().toLowerCase() ?? "";
+  if (!value.startsWith("auto-")) return null;
+  return value === "auto-replied" ? "replied" : "other";
+}
+
+/** The Auto-Submitted value for the banner, when it's a plain token. */
+function autoLabel(e: ReceivedEmail): string {
+  const value = e.autoSubmitted?.split(";")[0]?.trim().toLowerCase() ?? "";
+  return /^auto-[a-z-]{1,30}$/.test(value) ? value : "auto";
 }
 
 const oneLine = (s: string): string => s.replace(/[\r\n\t]+/g, " ").trim();
@@ -117,6 +131,7 @@ export function buildForward(e: ReceivedEmail, o: ForwardOptions): ResendEmail {
   const header = [
     `From: ${oneLine(e.from)}`,
     ...(unverified ? [`Sender not verified for ${fromDomain}`] : []),
+    ...(autoKind(e) === "other" ? [`[auto] Sent automatically (Auto-Submitted: ${autoLabel(e)})`] : []),
     ...(replyDiffers ? [`Reply-To: ${reply}`] : []),
     `To: ${e.to.map(oneLine).join(", ")}`,
     ...(e.cc.length ? [`Cc: ${e.cc.map(oneLine).join(", ")}`] : []),

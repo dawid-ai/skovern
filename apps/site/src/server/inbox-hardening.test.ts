@@ -212,15 +212,21 @@ describe("S3: flagged mail and auto-replies don't spend a main forward slot", ()
     expect(fake.sent.map((m) => m.subject)).toEqual(["[skovern.com] Order", "[spam?] [skovern.com] Order"]);
   });
 
-  it("S4: holds Auto-Submitted mail as held_auto in either header shape, but forwards Auto-Submitted: no", async () => {
-    vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("H3: holds auto-replies in either header shape, forwards other automatic mail on the flagged cap", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     deps.maxPerDay = 1;
+    deps.flaggedPerDay = 1;
     fake.inbound.set(id(1), received(id(1), { headers: { "AuTo-SuBmItTeD": ["auto-replied"] } }));
     fake.inbound.set(id(2), received(id(2), { headers: [{ name: "AUTO-SUBMITTED", value: "auto-generated" }] }));
-    fake.inbound.set(id(3), received(id(3), { headers: [{ name: "Auto-Submitted", value: "no" }] }));
-    for (const n of [1, 2, 3]) await deliver(id(n));
-    expect([await outcome(id(1)), await outcome(id(2)), await outcome(id(3))]).toEqual(["held_auto", "held_auto", "forwarded"]);
-    expect(fake.sent).toHaveLength(1);
+    fake.inbound.set(id(3), received(id(3), { headers: { "Auto-Submitted": "auto-notified" } }));
+    fake.inbound.set(id(4), received(id(4), { headers: [{ name: "Auto-Submitted", value: "no" }] }));
+    for (const n of [1, 2, 3, 4]) await deliver(id(n));
+    expect(await Promise.all([1, 2, 3, 4].map((n) => outcome(id(n))))).toEqual(["held_auto", "forwarded", "held_auto", "forwarded"]);
+    expect(fake.sent).toHaveLength(2);
+    expect(fake.sent[0]?.text).toContain("[auto] Sent automatically (Auto-Submitted: auto-generated)");
+    expect(fake.sent[0]?.subject).toBe("[skovern.com] Order");
+    expect((await pool.query(`SELECT kind FROM resend_usage WHERE ref = $1`, [`forward/${id(2)}`])).rows[0]?.kind).toBe("flagged");
+    expect(lines(warn, "is automatic mail and the flagged cap is used")).toHaveLength(1);
   });
 
   it("logs one line when the alert is skipped because the whole quota is used", async () => {

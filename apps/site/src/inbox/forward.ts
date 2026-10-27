@@ -1,7 +1,7 @@
 import { MailError, resendPost, type ResendEmail } from "../auth/mailer.js";
 import { isOwnDomain } from "../server/config.js";
 import type { ResendQuota } from "../server/resend-usage.js";
-import { AUTO_SUBMITTED, buildForward, FORWARD_TAG, isAutoSubmitted, looksSpoofed, senderAddress } from "./message.js";
+import { AUTO_SUBMITTED, autoKind, buildForward, FORWARD_TAG, looksSpoofed, senderAddress } from "./message.js";
 import { getAttachmentLinks, getReceivedEmail, type ReceivedEmail, type ResendApi } from "./resend-api.js";
 import type { InboxStore, Lease } from "./store.js";
 
@@ -88,7 +88,8 @@ export async function processOne(deps: ForwardDeps, job: Lease): Promise<Forward
   }
   // Neither automatic nor possibly spoofed mail takes a main forward slot, so a
   // burst of either can't use up the day's forwards. Both count as received.
-  if (isAutoSubmitted(email)) {
+  const auto = autoKind(email);
+  if (auto === "replied") {
     await deps.store.settle(emailId, "held_auto");
     console.warn(`[inbox] email ${emailId} is an automatic reply; it stays in Resend`);
     return "held";
@@ -100,14 +101,16 @@ export async function processOne(deps: ForwardDeps, job: Lease): Promise<Forward
     const then = deps.authMissingOk ? "forwarding it unflagged (INBOX_AUTH_MISSING_OK=1)" : "treating it as flagged";
     console.warn(`[inbox] no authentication data on ${emailId}; ${then}`);
   }
-  if (looksSpoofed(email, deps.authMissingOk)) {
+  const spoofed = looksSpoofed(email, deps.authMissingOk);
+  if (spoofed || auto === "other") {
     const slot = await deps.store.claimSlot(`forward/${emailId}`, "flagged", deps.quota, deps.flaggedPerDay);
     if (slot !== "ok") {
-      await deps.store.settle(emailId, "held_spam");
+      await deps.store.settle(emailId, spoofed ? "held_spam" : "held_auto");
       const a = email.authentication;
       const checks = a ? `spf ${a.spf}, dkim ${a.dkim}, dmarc ${a.dmarc}` : "no checks";
+      const what = spoofed ? `may be spoofed (${checks})` : "is automatic mail";
       const reason = slot === "cap" ? "the flagged cap is used" : "the shared Resend budget is spent";
-      console.warn(`[inbox] email ${emailId} may be spoofed (${checks}) and ${reason}; it stays in Resend`);
+      console.warn(`[inbox] email ${emailId} ${what} and ${reason}; it stays in Resend`);
       if (slot === "quota") await sendPausedAlert(deps);
       return "held";
     }
