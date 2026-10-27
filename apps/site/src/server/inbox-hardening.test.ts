@@ -245,7 +245,7 @@ describe("S3: flagged mail and auto-replies don't spend a main forward slot", ()
 });
 
 describe("S4: webhook hardening", () => {
-  it("answers 400, not 413, and logs when a body read fails", async () => {
+  it("answers 400, not 413, when a body read fails, and counts it with a log-safe svix-id", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const req = Object.assign(
       new Readable({
@@ -253,12 +253,15 @@ describe("S4: webhook hardening", () => {
           this.destroy(new Error("aborted"));
         },
       }),
-      { method: "POST", headers: { "svix-id": "msg_abort1" } },
+      { method: "POST", headers: { "svix-id": "msg_abort1;\u001b[31m<b>" } },
     ) as unknown as IncomingMessage;
     const r = await handleInboxHook({ key: KEY, store: deps.store, worker, pool, refusals }, req);
     expect(r.status).toBe(400);
-    expect(lines(warn, "webhook body read failed")).toEqual(["[inbox] webhook body read failed (aborted), svix-id msg_abort1"]);
-    expect(lines(warn, "over limit")).toHaveLength(0);
+    expect(warn).not.toHaveBeenCalled(); // H5: no per-request line
+    refusals.flush();
+    expect(lines(warn, "webhook refused")).toEqual([
+      "[inbox] webhook refused 1 time in the last minute (read-failed 1 (last svix-id msg_abort131mb))",
+    ]);
   });
 
   it("checks the signature over the raw bytes, even ones that aren't valid UTF-8", async () => {
@@ -270,12 +273,17 @@ describe("S4: webhook hardening", () => {
     expect(await outcome(id(1))).toBe("forwarded");
   });
 
-  it("logs an over-limit body with its svix-id", async () => {
+  it("counts over-limit bodies in the once-a-minute line, with the last svix-id", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const big = Buffer.alloc(300 * 1024, 0x20);
     const r = await post(big, { "svix-id": "msg_toolarge1", "svix-timestamp": "1", "svix-signature": "v1,x" });
     expect(r.status).toBe(413);
-    expect(lines(warn, "webhook body over limit")).toEqual(["[inbox] webhook body over limit (262144 bytes), svix-id msg_toolarge1"]);
+    await post(big, { "svix-id": "msg_toolarge2" });
+    expect(warn).not.toHaveBeenCalled(); // H5: no per-request line
+    refusals.flush();
+    expect(lines(warn, "webhook refused")).toEqual([
+      "[inbox] webhook refused 2 times in the last minute (too-large 2 (last svix-id msg_toolarge2))",
+    ]);
   });
 
   it("logs refused signatures as one line a minute, with counts", async () => {

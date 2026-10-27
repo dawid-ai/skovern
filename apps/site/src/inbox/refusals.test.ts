@@ -1,5 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { RefusalLog } from "./refusals.js";
+import { RefusalLog, safeSvixId } from "./refusals.js";
+
+describe("safeSvixId", () => {
+  it("keeps only letters, digits, _ and -", () => {
+    expect(safeSvixId("msg_2Abc-9")).toBe("msg_2Abc-9");
+    expect(safeSvixId("msg\r\n[inbox] forged line")).toBe("msginboxforgedline");
+    expect(safeSvixId("x".repeat(100))).toHaveLength(64);
+    expect(safeSvixId(undefined)).toBe("none");
+    expect(safeSvixId("<>")).toBe("none");
+  });
+});
 
 describe("RefusalLog", () => {
   afterEach(() => {

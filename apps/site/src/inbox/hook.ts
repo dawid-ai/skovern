@@ -87,14 +87,15 @@ async function attempt(ctx: InboxRouteContext, req: IncomingMessage): Promise<Ht
   try {
     raw = await readRawBuffer(req, MAX_HOOK_BODY);
   } catch (err) {
-    const svixId = (id ?? "none").slice(0, 64);
+    // Counted in the once-a-minute refusal line, never logged per request.
+    const refusals = ctx.refusals ?? sharedRefusals;
     if (!(err instanceof BodyTooLargeError)) {
       // An aborted or broken upload: not a size problem, so not a 413.
-      console.warn(`[inbox] webhook body read failed (${(err as Error).message}), svix-id ${svixId}`);
+      refusals.note("read-failed", id);
       return { status: 400, body: { ok: false, message: "Bad request." } };
     }
-    // Real events are a few KB; this is worth a look, with the ID to find it in Resend.
-    console.warn(`[inbox] webhook body over limit (${MAX_HOOK_BODY} bytes), svix-id ${svixId}`);
+    // Real events are a few KB; the svix-id finds it in Resend.
+    refusals.note("too-large", id);
     return { status: 413, body: { ok: false, message: "Too big." } };
   }
   const verdict = verifySvix(
