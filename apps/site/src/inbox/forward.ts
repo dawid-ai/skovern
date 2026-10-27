@@ -94,16 +94,19 @@ export async function processOne(deps: ForwardDeps, job: Lease): Promise<Forward
   // Possibly spoofed mail is still forwarded, flagged [spam?] (a small shop's
   // weak SPF shouldn't lose its mail), but on its own small cap. Past that cap,
   // it stays in Resend.
-  const flagged = looksSpoofed(email);
-  if (flagged) {
-    if (!(await deps.store.claimSlot(`forward/${emailId}`, "flagged", deps.quota, deps.flaggedPerDay))) {
+  if (email.authentication === null) console.warn(`[inbox] no authentication data on ${emailId}; forwarding it unflagged`);
+  if (looksSpoofed(email)) {
+    const slot = await deps.store.claimSlot(`forward/${emailId}`, "flagged", deps.quota, deps.flaggedPerDay);
+    if (slot !== "ok") {
       await deps.store.settle(emailId, "held_spam");
       const a = email.authentication;
       const checks = a ? `spf ${a.spf}, dkim ${a.dkim}, dmarc ${a.dmarc}` : "no checks";
-      console.warn(`[inbox] email ${emailId} may be spoofed (${checks}) and the flagged cap is used; it stays in Resend`);
+      const reason = slot === "cap" ? "the flagged cap is used" : "the shared Resend budget is spent";
+      console.warn(`[inbox] email ${emailId} may be spoofed (${checks}) and ${reason}; it stays in Resend`);
+      if (slot === "quota") await sendPausedAlert(deps);
       return "held";
     }
-  } else if (!(await deps.store.claimSlot(`forward/${emailId}`, "forward", deps.quota, deps.maxPerDay))) {
+  } else if ((await deps.store.claimSlot(`forward/${emailId}`, "forward", deps.quota, deps.maxPerDay)) !== "ok") {
     return hold(deps, emailId);
   }
 
@@ -128,7 +131,7 @@ export async function processOne(deps: ForwardDeps, job: Lease): Promise<Forward
   // A refused attachment (too big, a link Resend can't fetch) shouldn't lose the
   // message: send it again with the files listed by name. That's one more send.
   if (result === "refused" && email.attachments.length) {
-    if (!(await deps.store.claimSlot(`forward/${emailId}/names`, "names", deps.quota))) return hold(deps, emailId);
+    if ((await deps.store.claimSlot(`forward/${emailId}/names`, "names", deps.quota)) !== "ok") return hold(deps, emailId);
     result = await send(deps, emailId, build(false), `forward/${emailId}/names`);
     if (result === "retry") return retry(deps, job);
   }

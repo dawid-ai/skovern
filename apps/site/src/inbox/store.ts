@@ -50,6 +50,9 @@ export const PENDING_MAX_HOURS = 24;
  *  Resend, unforwarded. */
 export type Settled = "forwarded" | "held" | "held_spam" | "held_auto" | "skipped" | "refused" | "gone";
 
+/** A send slot: taken, or refused by its own daily cap, or by the shared quota. */
+export type SlotClaim = "ok" | "cap" | "quota";
+
 /** Today's alert: claimed now (send it), already claimed, or no room even in the reserve. */
 export interface SummaryClaim {
   status: "claimed" | "already" | "full";
@@ -136,13 +139,14 @@ export class InboxStore {
   /** Under the shared lock, take a send slot counted as `ref`: room under the
    *  shared quota, and (for forwards) under `perDay`. A ref already counted
    *  (a retry) always has its slot. */
-  async claimSlot(ref: string, kind: "forward" | "flagged" | "names", q: ResendQuota, perDay?: number): Promise<boolean> {
+  async claimSlot(ref: string, kind: "forward" | "flagged" | "names", q: ResendQuota, perDay?: number): Promise<SlotClaim> {
     return this.locked(async (client) => {
       const had = await client.query(`SELECT 1 FROM resend_usage WHERE ref = $1`, [ref]);
-      if (had.rowCount) return true;
-      if (perDay !== undefined && (await usedToday(client, kind)) >= perDay) return false;
-      if (!(await sharedRoom(client, q))) return false;
-      return countUse(client, ref, kind);
+      if (had.rowCount) return "ok";
+      if (perDay !== undefined && (await usedToday(client, kind)) >= perDay) return "cap";
+      if (!(await sharedRoom(client, q))) return "quota";
+      await countUse(client, ref, kind);
+      return "ok";
     });
   }
 
