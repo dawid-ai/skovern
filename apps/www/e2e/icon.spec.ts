@@ -276,8 +276,13 @@ test.describe("P2: the hero icon moves on its own at rest", () => {
       );
       expect(names.filter((n) => n !== "f-000.webp")).toEqual([]);
       if (mode === "save-data") {
-        // ... and it still moves at rest, with the bob alone, on frame 0.
-        expect(await changed(page, await rectOf(page, "#a-hero"))).toBeGreaterThan(0.002);
+        // ... and it still moves at rest, with the bob alone, on frame 0. A bob
+        // moves slowest at its top and bottom, so take the most it moved in any
+        // of three 1 s windows.
+        const r = await rectOf(page, "#a-hero");
+        let most = 0;
+        for (let i = 0; i < 3; i += 1) most = Math.max(most, await changed(page, r));
+        expect(most, "share of pixels the bob moved in its liveliest second").toBeGreaterThan(0.002);
         expect(await page.evaluate(() => (document.querySelector("#icon-fly") as HTMLCanvasElement).dataset["frame"])).toBe("0");
       }
     });
