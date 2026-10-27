@@ -233,26 +233,6 @@ export async function screenPixels(page: Page, r: Rect): Promise<{ w: number; h:
   }, png.toString("base64"));
 }
 
-/** A 24x24 grey thumbnail of the real screen inside `r`, for comparing moments. */
-export async function screenThumb(page: Page, r: Rect): Promise<number[]> {
-  const { w, h, data } = await screenPixels(page, r);
-  const out: number[] = [];
-  for (let ty = 0; ty < 24; ty += 1) {
-    for (let tx = 0; tx < 24; tx += 1) {
-      let s = 0, n = 0;
-      for (let y = Math.floor((ty * h) / 24); y < Math.floor(((ty + 1) * h) / 24); y += 1) {
-        for (let x = Math.floor((tx * w) / 24); x < Math.floor(((tx + 1) * w) / 24); x += 1) {
-          const o = (y * w + x) * 4;
-          s += ((data[o] ?? 0) + (data[o + 1] ?? 0) + (data[o + 2] ?? 0)) / 3;
-          n += 1;
-        }
-      }
-      out.push(n ? s / n : 0);
-    }
-  }
-  return out;
-}
-
 /** Runs IN THE PAGE: the tile's width (alpha > 200) at 15% and at 85% of its
  *  height in a shipped image. A camera below the tile's middle (or a tile
  *  tipped toward it) draws the top edge wider: the whole icon, S included,

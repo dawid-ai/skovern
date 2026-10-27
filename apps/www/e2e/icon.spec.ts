@@ -257,6 +257,32 @@ test.describe("P2: the hero icon moves on its own at rest", () => {
     expect(Math.max(...seen)).toBeLessThanOrEqual(SWAY);
   });
 
+  // Phone data: the sway's frames are the only ones fetched before a scroll,
+  // and not even those when the reader asks to save data or for less motion.
+  for (const mode of ["save-data", "reduced motion"] as const) {
+    test(`with ${mode}, no frame past f-000 is fetched before a scroll`, async ({ page }) => {
+      if (mode === "save-data") {
+        await page.addInitScript(() => {
+          Object.defineProperty(Navigator.prototype, "connection", { configurable: true, get: () => ({ saveData: true }) });
+        });
+      } else {
+        await page.emulateMedia({ reducedMotion: "reduce" });
+      }
+      await page.goto(`${www()}/`);
+      if (mode === "save-data") await page.waitForFunction(() => document.documentElement.classList.contains("fly-on"));
+      await page.waitForTimeout(3000);
+      const names = await page.evaluate(() =>
+        performance.getEntriesByType("resource").map((e) => e.name.slice(-10)).filter((n) => /^f-\d{3}\.webp$/.test(n)),
+      );
+      expect(names.filter((n) => n !== "f-000.webp")).toEqual([]);
+      if (mode === "save-data") {
+        // ... and it still moves at rest, with the bob alone, on frame 0.
+        expect(await changed(page, await rectOf(page, "#a-hero"))).toBeGreaterThan(0.002);
+        expect(await page.evaluate(() => (document.querySelector("#icon-fly") as HTMLCanvasElement).dataset["frame"])).toBe("0");
+      }
+    });
+  }
+
   test("under reduced motion, two crops 1 s apart are identical", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.goto(`${www()}/`);
