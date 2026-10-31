@@ -143,6 +143,12 @@ test("Receipts reads as a two-way ledger: In/Out tags, one entry per new reply, 
     await page.getByLabel("Your message").fill(MY_MESSAGE);
     await page.getByRole("button", { name: "Send" }).click();
     await expect(page.getByText(MY_MESSAGE)).toBeVisible();
+    // Loop 049 (e2e-load-flakes): the message can show up through the Shell's 5 s thread poll before
+    // the send's own "done" receipt is written, and Receipts reads the log once when it opens. Wait
+    // for that receipt on disk first, so the page never loads a log that's one line short.
+    await expect
+      .poll(() => readFileSync(path.join(userDataDir, "receipts.jsonl"), "utf8"), { timeout: 15_000 })
+      .toMatch(/"task":"Skovern: your message to Dawid"[^\n]*"phase":"done"/);
 
     // ---- Receipts page: the two-way ledger ----
     await page.getByRole("button", { name: "Receipts" }).click();

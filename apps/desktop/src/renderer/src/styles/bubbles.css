@@ -1,0 +1,222 @@
+/* Design A conversation pieces shared by Chat and Messages: the scrolling thread, iMessage-style
+   bubbles, the jump control, and the rounded composer with a round Send button. */
+
+.chat-thread-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.thread {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chat-thread {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px max(24px, calc((100% - 680px) / 2)) 10px;
+  /* Room on the right for the jump control, so it never covers a bubble. */
+  padding-right: max(60px, calc((100% - 680px) / 2));
+}
+
+.stamp {
+  align-self: center;
+  max-width: 46ch;
+  margin: 0 0 8px;
+  font-size: 12px;
+  text-align: center;
+  color: var(--label-2);
+}
+
+.bubble {
+  max-width: min(520px, 78%);
+  padding: 8px 13px;
+  border-radius: 18px;
+  font-size: 14px;
+  line-height: 1.45;
+  animation: msg 0.45s var(--spring) both;
+}
+
+@keyframes msg {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+.bubble p {
+  color: inherit;
+  white-space: pre-line;
+}
+
+/* The other side's name sits under its bubble, like the mockup ("Your brain", "Dawid"). Your own
+   bubbles need no label on screen; "You" stays for screen readers. */
+.bubble .who {
+  position: absolute;
+  top: 100%;
+  left: 6px;
+  margin-top: 3px;
+  font-size: 11.5px;
+  line-height: 1.2;
+  color: var(--label-2);
+  white-space: nowrap;
+}
+
+.from-you .who {
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.from-you {
+  align-self: flex-end;
+  background: var(--tint);
+  color: var(--on-tint);
+  border-bottom-right-radius: 6px;
+}
+
+.from-brain,
+.from-founder {
+  position: relative;
+  margin-bottom: 17px;
+  align-self: flex-start;
+  background: var(--bubble);
+  color: var(--label);
+  border-bottom-left-radius: 6px;
+}
+
+.from-you + .from-brain,
+.from-brain + .from-you,
+.from-you + .from-founder,
+.from-founder + .from-you {
+  margin-top: 6px;
+}
+
+.chat-status {
+  font-style: italic;
+  color: var(--label-2) !important;
+}
+
+/* Floating jump control for long chats: top, previous reply, next reply, newest. */
+.chat-jump {
+  position: absolute;
+  right: 14px;
+  bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  padding: 3px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  box-shadow: 0 0 0 0.5px var(--label-3), var(--pop);
+}
+
+.chat-jump-btn {
+  width: 28px;
+  height: 26px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--label);
+}
+
+.chat-jump-btn .ic {
+  width: 16px;
+  height: 16px;
+}
+
+.chat-jump-btn:hover:not(:disabled) {
+  background: var(--fill);
+  color: var(--label);
+}
+
+.chat-jump-btn:disabled {
+  opacity: 0.35;
+}
+
+/* The composer: a rounded box with a round Send button inside it. */
+.chat-composer {
+  flex: none;
+  padding: 8px max(24px, calc((100% - 680px) / 2)) 14px;
+}
+
+.cbox {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 5px 5px 5px 14px;
+  border-radius: 20px;
+  background: var(--surface);
+  box-shadow: 0 0 0 0.5px var(--sep), var(--shadow);
+  transition: box-shadow 0.2s;
+}
+
+.cbox:focus-within {
+  box-shadow: 0 0 0 3px var(--tint-soft), 0 0 0 1px var(--tint);
+}
+
+.cbox textarea {
+  flex: 1;
+  min-height: 30px;
+  max-height: 120px;
+  padding: 5px 0;
+  border-radius: 0;
+  background: transparent;
+  field-sizing: content;
+}
+
+.cbox textarea:focus-visible {
+  box-shadow: none;
+}
+
+.send {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--tint);
+  color: var(--on-tint);
+  transition: transform 0.25s var(--spring), opacity 0.2s;
+}
+
+.send .ic {
+  width: 17px;
+  height: 17px;
+  stroke-width: 2.2;
+}
+
+.send:disabled {
+  opacity: 0.35;
+}
+
+.send:active:not(:disabled) {
+  transform: scale(0.88);
+}
+
+.chat-composer .notice {
+  margin-top: 8px;
+}
+
+.chat-error {
+  color: var(--red-t);
+}
+
+.chat-fallback-note {
+  font-style: italic;
+}
+
+/* Messages: the same bubbles in a page-width thread. */
+.messages-thread {
+  padding: 4px 0;
+}
+
+.messages-composer .cbox {
+  margin-top: 4px;
+}

@@ -3,6 +3,9 @@ import type { BrainStatusView, ProviderId, Receipt } from "../../../shared/brain
 import { providerName } from "../../../shared/brain.js";
 import type { OllamaLaunch, OllamaStatusView, SettingsView } from "../../../shared/settings.js";
 import { LocalBrainSetup } from "./LocalBrainSetup.js";
+import { UpdatesSection } from "../components/UpdatesSection.js";
+import { Icon } from "../components/Icon.js";
+import { OllamaSettings } from "./OllamaSettings.js";
 
 // "Settings" — for now, the brain picker: choose where your assistant thinks,
 // paste your key (kept safe on this computer), and test it with one real call.
@@ -124,106 +127,114 @@ export function SettingsPage({ onBrainChanged, onOpenYourBrain }: { onBrainChang
   }
 
   return (
-    <section className="page page-narrow">
+    <section className="page page-narrow settings-page">
       <header className="page-head">
         <h1>Settings</h1>
         <p>Pick the brain that powers your desk hand. Your key stays safe on this computer.</p>
       </header>
 
-      <p className={`active-brain${status.provider === "local" ? " active-brain-local" : status.configured ? " active-brain-online" : ""}`}>
-        {status.configured && status.provider ? (
-          <>
-            <span className="brain-dot" aria-hidden="true" /> Right now you’re using{" "}
-            <strong>
-              {providerName(status.provider)}
-              {status.model ? ` — ${status.model}` : ""}
-            </strong>
-            .
-          </>
-        ) : (
-          "You haven’t picked a brain yet — choose one below."
-        )}
-      </p>
+      <section className="group">
+        <h2 className="g-head">Brain</h2>
+        <div className="g-card">
+          <p className={`g-row active-brain${status.provider === "local" ? " active-brain-local" : status.configured ? " active-brain-online" : ""}`}>
+            {status.configured && status.provider ? (
+              <>
+                <span className="brain-dot" aria-hidden="true" /> Right now you’re using{" "}
+                <strong>
+                  {providerName(status.provider)}
+                  {status.model ? ` — ${status.model}` : ""}
+                </strong>
+                .
+              </>
+            ) : (
+              "You haven’t picked a brain yet — choose one below."
+            )}
+          </p>
 
-      <div className="form">
-        <label htmlFor="brain">Pick a brain</label>
-        <select
-          id="brain"
-          value={provider}
-          onChange={(e) => setProvider(e.target.value as ProviderId)}
-        >
-          {BRAINS.map((b) => (
-            <option key={b.id} value={b.id}>
-              {b.label}
-            </option>
-          ))}
-        </select>
-        <p className="hint">{BRAINS.find((b) => b.id === provider)?.hint}</p>
+          <div className="g-row g-field">
+            <label htmlFor="brain">Pick a brain</label>
+            <select id="brain" value={provider} onChange={(e) => setProvider(e.target.value as ProviderId)}>
+              {BRAINS.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="g-row g-sub">
+            <p className="hint">{BRAINS.find((b) => b.id === provider)?.hint}</p>
+          </div>
 
-        {provider === "local" ? (
-          <>
-            <p className="hint">
-              {status.provider === "local"
-                ? "Your local brain is set up. Open it to change your model or check your computer again."
-                : "Set this up in its own place: we'll check your computer and help you pick a private brain."}
-            </p>
-            <div className="row">
+          {provider === "local" ? (
+            <div className="g-row">
+              <span className="tile tile-green">
+                <Icon name="brain" />
+              </span>
+              <p className="hint g-main">
+                {status.provider === "local"
+                  ? "Your local brain is set up. Open it to change your model or check your computer again."
+                  : "Set this up in its own place: we'll check your computer and help you pick a private brain."}
+              </p>
               <button className="primary" onClick={() => setLocalOpen(true)}>
                 Set up the local brain →
               </button>
             </div>
-          </>
-        ) : provider === "claude-cli" ? (
-          <p className="hint">
-            This brain runs on the Claude app on this computer, so there&apos;s nothing to paste. If it&apos;s not
-            installed, we&apos;ll tell you when you test it.
-          </p>
-        ) : (
-          <>
-            <label htmlFor="key">Your key</label>
-            <input
-              id="key"
-              type="password"
-              value={key}
-              onChange={(e) => setKey(e.target.value)}
-              placeholder={status.configured ? "A key is saved — paste a new one to replace it" : "Paste your key"}
-            />
-          </>
-        )}
-
-        {/* The local brain picks its model in its own setup view, not here. */}
-        {provider !== "local" && (
-          <>
-            <label htmlFor="model">Which model? (optional)</label>
-            <input
-              id="model"
-              type="text"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              placeholder="Leave blank for a good default"
-            />
-          </>
-        )}
-
-        <div className="row">
-          {provider !== "local" && (
-            <button
-              className="primary"
-              onClick={() => void save()}
-              disabled={busy || (provider !== "claude-cli" && key.trim().length === 0)}
-            >
-              Save brain
-            </button>
+          ) : provider === "claude-cli" ? (
+            <div className="g-row">
+              <p className="hint">
+                This brain runs on the Claude app on this computer, so there&apos;s nothing to paste. If it&apos;s not
+                installed, we&apos;ll tell you when you test it.
+              </p>
+            </div>
+          ) : (
+            <div className="g-row g-field">
+              <label htmlFor="key">Your key</label>
+              <input
+                id="key"
+                type="password"
+                value={key}
+                onChange={(e) => setKey(e.target.value)}
+                placeholder={status.configured ? "A key is saved — paste a new one to replace it" : "Paste your key"}
+              />
+            </div>
           )}
-          <button className="link" onClick={() => void test()} disabled={busy || !status.configured}>
-            {testing ? (
-              <>
-                <span className="spinner" aria-hidden="true" /> Thinking…
-              </>
-            ) : (
-              "Test my brain"
+
+          {/* The local brain picks its model in its own setup view, not here. */}
+          {provider !== "local" && (
+            <div className="g-row g-field">
+              <label htmlFor="model">Which model? (optional)</label>
+              <input
+                id="model"
+                type="text"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                placeholder="Leave blank for a good default"
+              />
+            </div>
+          )}
+
+          <div className="g-row">
+            <button className="link" onClick={() => void test()} disabled={busy || !status.configured}>
+              {testing ? (
+                <>
+                  <span className="spinner" aria-hidden="true" /> Thinking…
+                </>
+              ) : (
+                "Test my brain"
+              )}
+            </button>
+            {provider !== "local" && (
+              <span className="g-trail">
+                <button
+                  className="primary"
+                  onClick={() => void save()}
+                  disabled={busy || (provider !== "claude-cli" && key.trim().length === 0)}
+                >
+                  Save brain
+                </button>
+              </span>
             )}
-          </button>
+          </div>
         </div>
 
         {notice.length > 0 && <p className="notice">{notice}</p>}
@@ -243,58 +254,19 @@ export function SettingsPage({ onBrainChanged, onOpenYourBrain }: { onBrainChang
             <p>{reply}</p>
           </div>
         )}
-        {receipt !== null && <p className="receipt">{receiptLine(receipt)}</p>}
-      </div>
+        {receipt !== null && <p className="receipt g-foot">{receiptLine(receipt)}</p>}
+      </section>
 
       {ollama !== null && (
-        <div className="form ollama-settings">
-          <h2>Ollama (optional helper)</h2>
-          <p className="hint">
-            Ollama is a free helper that can run bigger brains on your computer. Skovern doesn&apos;t
-            need it — your built-in brain works on its own.{" "}
-            {ollama.installed
-              ? ollama.running
-                ? "It's installed and running."
-                : "It's installed, but not running right now."
-              : "It's not installed on this computer — that's perfectly fine."}
-          </p>
-          {ollama.installed && settings !== null && settings.ollamaLaunch === "ask" && (
-            // The consent OFFER (default state): ask before ever starting Ollama for the user.
-            <div className="ollama-consent" role="group" aria-label="Use Ollama?">
-              <p>
-                We found Ollama on your computer. Want Skovern to start it automatically when you
-                use an Ollama brain? You can change this anytime.
-              </p>
-              <div className="row">
-                <button className="primary" onClick={() => void changeOllamaLaunch("always")}>
-                  Yes, start it automatically
-                </button>
-                <button className="link" onClick={() => void useBuiltin()}>
-                  No, use my built-in brain
-                </button>
-              </div>
-            </div>
-          )}
-          {ollama.installed && settings !== null && settings.ollamaLaunch !== "ask" && (
-            <>
-              <label htmlFor="ollama-launch">If you pick an Ollama brain and Ollama isn&apos;t running:</label>
-              <select
-                id="ollama-launch"
-                value={settings.ollamaLaunch}
-                onChange={(e) => {
-                  const v = e.target.value as OllamaLaunch;
-                  // Picking "just use my built-in" with no model on disk → route to download it.
-                  if (v === "never") void useBuiltin();
-                  else void changeOllamaLaunch(v);
-                }}
-              >
-                <option value="always">Start Ollama for me automatically</option>
-                <option value="never">Just use my built-in brain</option>
-              </select>
-            </>
-          )}
-        </div>
+        <OllamaSettings
+          ollama={ollama}
+          settings={settings}
+          onLaunch={(v) => void changeOllamaLaunch(v)}
+          onUseBuiltin={() => void useBuiltin()}
+        />
       )}
+
+      <UpdatesSection />
     </section>
   );
 }

@@ -1,0 +1,74 @@
+---
+import Base from "../../layouts/Base.astro";
+import Cover from "../../components/Cover.astro";
+import PostCard from "../../components/PostCard.astro";
+import Waitlist from "../../components/Waitlist.astro";
+import { author, categoryLabel, formatDate, getPosts, postUrl, readMinutes } from "../../lib/posts";
+import { CATEGORIES } from "../../lib/post-schema";
+import "../../styles/blog.css";
+
+const posts = await getPosts();
+const [featured, ...rest] = posts;
+const cats = (Object.keys(CATEGORIES) as (keyof typeof CATEGORIES)[]).filter((c) => rest.some((p) => p.data.category === c));
+---
+<Base title="Skovern Blog · Notes for small shops" description="Plain-English guides for small-shop owners: AI that keeps your customers' info private, faster review replies, better captions, and less busywork." current="blog" joinHref="#join">
+  <div class="wide blog-wrap">
+    <header class="bhead">
+      <p class="eyebrow">Skovern Blog</p>
+      <h1>Notes for small shops.</h1>
+      <p class="lede">Plain-English guides on AI, privacy, and getting through the busywork. Written for shop owners, not tech people.</p>
+    </header>
+
+    {featured && (
+      <a class="feat" href={postUrl(featured)} aria-label={`Featured: ${featured.data.title}`}>
+        <Cover cover={featured.data.cover}>
+          {featured.data.cover === "icon" && <>
+          <span class="rc-chip" style="left:8%;top:18%;--c:#30d158"><i></i>Chat: order for Mrs. Patel · stayed here</span>
+          <span class="rc-chip" style="right:7%;bottom:16%;--c:#e87a2e"><i></i>Checked for an update · github.com</span>
+          </>}
+        </Cover>
+        <div class="fbody">
+          <span class="cat">{categoryLabel(featured.data.category)} · Newest</span>
+          <h2>{featured.data.title}</h2>
+          <p>{featured.data.description}</p>
+          <span class="meta">{author(featured.data.author).name}, {author(featured.data.author).role} · {formatDate(featured.data.date)} · {readMinutes(featured)} min read</span>
+          <span class="go">Read the post</span>
+        </div>
+      </a>
+    )}
+
+    {rest.length > 0 && (
+      <>
+        <div class="tools">
+          <h2 id="all">More posts</h2>
+          <div class="toolrow">
+            <div class="filters" role="group" aria-label="Filter by topic">
+              <button class="chip" type="button" data-f="all" aria-pressed="true">All</button>
+              {cats.map((c) => <button class="chip" type="button" data-f={c} aria-pressed="false">{CATEGORIES[c]}</button>)}
+            </div>
+            <label class="search"><span class="sr">Search posts</span><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg><input type="search" id="q" placeholder="Search posts" autocomplete="off"></label>
+          </div>
+        </div>
+        <p class="sr" id="count" aria-live="polite"></p>
+        <div class="cards" id="cards">
+          {rest.map((p) => <PostCard post={p} dek />)}
+          <div class="empty" id="empty" hidden><b>No posts match that.</b>Try another word, or pick All.</div>
+        </div>
+      </>
+    )}
+
+    <section class="join" id="join" aria-labelledby="h-join">
+      <div>
+        <img class="icon" src="/img/icon-front-dark.webp" alt="" width="512" height="512" loading="lazy" decoding="async">
+        <p class="eyebrow">Waitlist</p>
+        <h2 id="h-join">Want Skovern when it's ready?</h2>
+        <p>Join the waitlist. It's free, and we'll email you when your invite is ready. New posts come out about twice a week, right here.</p>
+      </div>
+      <Waitlist id="wl-blog" sub="We're letting testers in a few at a time, Windows first." />
+    </section>
+  </div>
+</Base>
+<script>
+  import { startBlogFilter } from "../../scripts/blog-filter";
+  startBlogFilter();
+</script>

@@ -348,7 +348,9 @@ test("M4(f) + M6: leaving and coming back mid-set-up shows the running set-up â€
     expect(second.ok).toBe(false);
     expect(second.message).toMatch(/already getting a brain ready/);
 
-    await expect(page.getByText("Local: qwen2.5:32b")).toBeVisible({ timeout: 60_000 });
+    // At 800Ã—600 the sidebar is an icon rail (design A), so the chip's words are visually hidden
+    // but still its text.
+    await expect(page.locator(".brain-chip")).toContainText("Local: qwen2.5:32b", { timeout: 60_000 });
     expect(fx.seen.helperRequests).toBe(1);
     expect(fx.seen.pullRequests).toBe(1);
   } finally {

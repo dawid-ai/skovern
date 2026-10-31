@@ -1,0 +1,108 @@
+/* Blog post (round-3 post.html). */
+.progress { position: fixed; left: 0; top: 48px; height: 2px; width: 100%; transform-origin: 0 50%; transform: scaleX(0); background: var(--accent); z-index: 99 }
+
+.ahead { max-width: 880px; margin: 0 auto; padding: clamp(48px, 7vw, 88px) 22px clamp(28px, 4vw, 44px); text-align: center }
+.crumbs { font-size: 14px; font-weight: 600; color: var(--ink-2); margin-bottom: 18px }
+.crumbs a { color: var(--ink-2) }
+.crumbs span { color: var(--accent-t) }
+.ahead h1 { font-size: clamp(34px, 5vw, 60px); line-height: 1.06; font-weight: 700; letter-spacing: -.035em; text-wrap: balance }
+.deck { margin: 20px auto 0; max-width: 640px; font-size: clamp(19px, 1.8vw, 22px); line-height: 1.42; color: var(--ink-2); font-weight: 500; letter-spacing: -.012em }
+.byline { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 28px; font-size: 15px; color: var(--ink-2); flex-wrap: wrap }
+.av { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 700; background: linear-gradient(150deg, #f3a15f, #e87a2e 60%, #b8501a) }
+.byline b { color: var(--ink); font-weight: 600 }
+.byline .who { display: flex; align-items: center; gap: 10px; text-align: left; line-height: 1.3 }
+.byline .dot { color: var(--ink-3) }
+
+.hero-fig { max-width: 1180px; margin: 0 auto; padding: 0 22px }
+.hero-fig .cover { aspect-ratio: 2.1/1; border-radius: 28px }
+.hero-fig .cover .obj { width: min(30%, 340px) }
+.hero-fig .rc-chip { position: absolute; display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 14px; background: color-mix(in srgb, var(--card) 92%, transparent);
+  box-shadow: 0 14px 34px -14px rgba(0, 0, 0, .3); font-size: 14px; font-weight: 600; color: var(--ink); white-space: nowrap }
+.hero-fig .rc-chip i { width: 9px; height: 9px; border-radius: 50% ; background: var(--c) }
+.hero-fig .rc-chip small { font-weight: 500; color: var(--ink-2); font-size: inherit }
+.hero-fig figcaption { margin-top: 12px; font-size: 13px; color: var(--ink-2); text-align: center }
+
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 680px) minmax(0, 1fr); gap: 56px; max-width: 1240px; margin: clamp(48px, 6vw, 72px) auto 0; padding: 0 22px }
+.toc { justify-self: end; width: 220px }
+.toc nav { position: sticky; top: 84px }
+.toc p { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 12px }
+.toc ol { list-style: none; margin: 0; padding: 0; border-left: 1px solid var(--line) }
+.toc a { display: block; padding: 6px 0 6px 14px; margin-left: -1px; border-left: 2px solid transparent; color: var(--ink-2); font-size: 14px; line-height: 1.35 }
+.toc a:hover { color: var(--ink); text-decoration: none }
+.toc a.on { color: var(--ink); font-weight: 600; border-left-color: var(--accent) }
+.share { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 28px }
+.share a, .share button { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border-radius: 999px; background: var(--bg-2); color: var(--ink); font-size: 13px; font-weight: 600 }
+.share a:hover, .share button:hover { text-decoration: none; background: color-mix(in srgb, var(--bg-2) 70%, var(--line)) }
+.share svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round }
+.toc .share { flex-direction: column; align-items: flex-start }
+
+.body { font-size: 19px; line-height: 1.65; letter-spacing: -.003em; min-width: 0 }
+.body p { margin: 0 0 1.15em }
+.body p.lead { font-size: 21px; line-height: 1.55; color: var(--ink) }
+.body h2 { font-size: clamp(26px, 2.6vw, 32px); line-height: 1.15; font-weight: 700; letter-spacing: -.025em; margin: 1.9em 0 .6em; scroll-margin-top: 72px }
+.body h2:first-of-type { margin-top: 1.4em }
+.body strong { font-weight: 600 }
+.body ul, .body ol:not(.how) { padding-left: 1.2em; margin: 0 0 1.15em }
+.body .quote { margin: 1.6em 0; padding: 0; border: 0 }
+.body .quote p { font-size: clamp(26px, 3vw, 34px); line-height: 1.2; font-weight: 700; letter-spacing: -.028em; color: var(--ink); margin: 0; text-wrap: balance }
+.body .quote p::before { content: ""; display: block; width: 44px; height: 4px; border-radius: 2px; background: var(--accent); margin-bottom: 18px }
+.body .callout { display: flex; gap: 16px; margin: 1.6em 0; padding: 22px 24px; border-radius: 20px; background: var(--callout); font-size: 17px; line-height: 1.55 }
+.body .callout .ci { flex: none; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: #fff; font-weight: 800; font-size: 16px }
+.body .callout b { display: block; margin-bottom: 4px }
+.body .callout p { margin: 0 }
+.body .fig { margin: 1.8em -60px }
+.body .fig .frame { border-radius: clamp(12px, 1.64vw, 18px); overflow: hidden; box-shadow: 0 30px 70px -36px rgba(30, 30, 50, .45), 0 0 0 1px var(--card-line) }
+.body .fig img { width: 100%; height: auto }
+.body .fig figcaption { margin: 12px 60px 0; font-size: 14px; line-height: 1.45; color: var(--ink-2) }
+.body .how { list-style: none; counter-reset: s; margin: 1.2em 0 1.4em; padding: 0; display: flex; flex-direction: column; gap: 14px }
+.body .how li { counter-increment: s; position: relative; padding: 18px 20px 18px 66px; border-radius: 18px; background: var(--bg-2) }
+.body .how li::before { content: counter(s); position: absolute; left: 18px; top: 16px; width: 32px; height: 32px; border-radius: 50%; background: var(--ink); color: var(--bg); display: grid; place-items: center; font-size: 15px; font-weight: 700 }
+.body .how b { display: block; font-size: 19px; letter-spacing: -.01em; margin-bottom: 2px }
+.body .how span { display: block; font-size: 17px; line-height: 1.5; color: var(--ink-2) }
+.body .faq { border-top: 1px solid var(--line); margin-top: .6em }
+.body .faq details { border-bottom: 1px solid var(--line) }
+.body .faq summary { list-style: none; cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 18px 0; font-weight: 600; font-size: 19px; letter-spacing: -.01em }
+.body .faq summary::-webkit-details-marker { display: none }
+.body .faq summary::after { content: ""; flex: none; width: 12px; height: 12px; border-right: 2px solid var(--ink-2); border-bottom: 2px solid var(--ink-2); transform: rotate(45deg) translateY(-3px); transition: transform .3s var(--ease) }
+.body .faq details[open] summary::after { transform: rotate(225deg) translateY(-3px) }
+.body .faq details p { margin: 0 0 18px; color: var(--ink-2); font-size: 17px }
+.body .endnote { margin-top: 2em; padding-top: 1.4em; border-top: 1px solid var(--line); font-size: 16px; color: var(--ink-2) }
+.inline-share { display: none }
+
+.related { max-width: 1180px; margin: clamp(72px, 9vw, 112px) auto 0; padding: 0 22px }
+.related h2 { font-size: clamp(26px, 2.6vw, 32px); font-weight: 700; letter-spacing: -.025em; margin-bottom: 22px }
+.related .cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px }
+.related .pbody h3 { font-size: 20px }
+.endjoin { max-width: 1180px; margin: clamp(56px, 7vw, 88px) auto clamp(80px, 10vw, 120px); padding: 0 22px }
+.endjoin .box { border-radius: 28px; background: var(--cv-warm); padding: clamp(32px, 5vw, 72px) clamp(16px, 4vw, 56px); display: grid; grid-template-columns: 1fr minmax(0, 500px);
+  gap: clamp(24px, 4vw, 56px); align-items: center }
+.endjoin img { width: 96px; margin-bottom: 18px; filter: drop-shadow(0 16px 26px rgba(150, 60, 10, .3)) }
+.endjoin h2 { font-size: clamp(32px, 4vw, 52px); line-height: 1.05; font-weight: 700; letter-spacing: -.032em }
+.endjoin p.l { margin-top: 14px; font-size: 19px; color: var(--ink-2); max-width: 28em }
+
+@media (max-width: 1180px) {
+  .layout { grid-template-columns: minmax(0, 680px); justify-content: center; gap: 0 }
+  .toc { display: none }
+  .inline-share { display: flex }
+  .body .fig { margin-left: 0; margin-right: 0 }
+  .body .fig figcaption { margin-left: 0; margin-right: 0 }
+}
+@media (max-width: 860px) {
+  .related .cards { grid-template-columns: 1fr }
+  .endjoin .box { grid-template-columns: 1fr }
+}
+@media (max-width: 640px) {
+  .ahead, .hero-fig, .layout, .related, .endjoin { padding-left: 16px; padding-right: 16px }
+  .hero-fig .cover { aspect-ratio: 4/3; border-radius: 22px }
+  .hero-fig .cover .obj { width: 46% }
+  .hero-fig .rc-chip { font-size: 12px; padding: 8px 10px }
+  .hero-fig .rc-chip small { display: none }
+  .body { font-size: 18px }
+  .body .how li { padding: 16px 16px 16px 58px }
+  .body .how li::before { left: 14px }
+  .endjoin .box { border-radius: 22px }
+}
+@media (prefers-reduced-motion: reduce) {
+  .body .faq summary::after { transition: none }
+  .progress { display: none }
+}

@@ -1,5 +1,4 @@
 import pg from "pg";
-import { DevLinkMailer, ResendMailer, type Mailer } from "../auth/mailer.js";
 import { AuthService } from "../auth/service.js";
 import { AuthStore } from "../auth/store.js";
 import { startAuthServer } from "../auth/server.js";
@@ -8,76 +7,163 @@ import { POSTS } from "../news/posts.js";
 import { DmStore } from "../dm/store.js";
 import { pickNotifier } from "../dm/notifier.js";
 import { VisibilityStore } from "../publish/visibility-store.js";
+import { WaitlistStore } from "../waitlist/store.js";
+import { InboxStore } from "../inbox/store.js";
+import { InboxWorker } from "../inbox/worker.js";
+import { inboxFrom } from "../inbox/message.js";
+import { ConfigError, loadConfig, type ServerConfig } from "./config.js";
+import { pickMailers } from "./mailers.js";
+import { SigninMeter } from "./resend-usage.js";
+import { RateLimiter } from "./rate-limit.js";
+import { startSweep, startWelcomeBacklog } from "./sweep.js";
 
-// Defaults match docker-compose.yml so `pnpm dev` works right after `db:up`.
-const DEFAULT_DATABASE_URL = "postgres://skovern:skovern@localhost:5442/skovern";
-
-function pickMailer(): Mailer {
-  const key = process.env["RESEND_API_KEY"];
-  if (key) return new ResendMailer(key, process.env["MAIL_FROM"] ?? "Skovern <hi@skovern.org>");
-  if (process.env["NODE_ENV"] === "production") {
-    // DevLinkMailer prints full single-use tokens — never in prod.
-    throw new Error("RESEND_API_KEY is required in production");
-  }
-  return new DevLinkMailer();
-}
+/** SIGTERM must end the process within this, even with a stuck socket (ledger shutdown-watchdog). */
+const SHUTDOWN_DEADLINE_MS = 8_000;
 
 async function main(): Promise<void> {
-  const databaseUrl = process.env["DATABASE_URL"] ?? DEFAULT_DATABASE_URL;
-  const port = Number(process.env["PORT"] ?? 8787);
-  const pool = new pg.Pool({ connectionString: databaseUrl });
+  let cfg: ServerConfig;
+  try {
+    cfg = loadConfig(process.env);
+  } catch (err) {
+    if (!(err instanceof ConfigError)) throw err;
+    console.error(`[auth-server] can't start: ${err.message}`);
+    process.exit(1);
+  }
+  const pool = new pg.Pool({ connectionString: cfg.databaseUrl });
+  // An idle client dropping (e.g. Postgres restart) must not crash the process.
+  pool.on("error", (err) => console.error("[db] idle client error:", err.message));
 
   const news = new NewsStore(pool);
   const dm = new DmStore(pool);
   const visibility = new VisibilityStore(pool);
+  const waitlist = new WaitlistStore(pool, { ...cfg.welcomeBudget, quota: cfg.resendQuota });
+  const inboxStore = new InboxStore(pool);
   try {
     await new AuthStore(pool).migrate();
     await news.migrate();
     await news.syncPosts(POSTS);
     await dm.migrate();
     await visibility.migrate();
+    await waitlist.migrate();
+    await inboxStore.migrate();
   } catch (err) {
     console.error(
-      `[auth-server] can't reach the database at ${databaseUrl.replace(/:[^:@/]*@/, ":***@")}.\n` +
-        `Run \`pnpm --filter @skovern/site db:up\` first. (${(err as Error).message})`,
+      `[auth-server] can't reach the database at ${cfg.databaseUrl.replace(/:[^:@/]*@/, ":***@")}.\n` +
+        (cfg.production ? "" : "Run `pnpm --filter @skovern/site db:up` first. ") +
+        `(${(err as Error).message})`,
     );
     await pool.end();
     process.exit(1);
   }
 
+  const mailers = pickMailers(cfg, new SigninMeter(pool, cfg.resendQuota));
+  // loadConfig refuses an inbox config without RESEND_API_KEY.
+  const inboxWorker =
+    cfg.inbox && cfg.resendKey
+      ? new InboxWorker({
+          api: { baseUrl: cfg.resendUrl, apiKey: cfg.resendKey },
+          store: inboxStore,
+          from: inboxFrom(cfg.inbox.fromDomain),
+          forwardTo: cfg.inbox.forwardTo,
+          maxPerDay: cfg.inbox.maxPerDay,
+          flaggedPerDay: cfg.inbox.flaggedPerDay,
+          authMissingOk: cfg.inbox.authMissingOk,
+          quota: cfg.resendQuota,
+        })
+      : null;
   // AuthService reads config.appUrl lazily, so we can fill it from the real
   // bound URL after listening — correct even when PORT=0 picks an ephemeral port.
-  const config = { appUrl: process.env["APP_URL"] ?? "" };
-  const auth = new AuthService(new AuthStore(pool), pickMailer(), config);
+  const authConfig = { appUrl: cfg.appUrl };
+  const auth = new AuthService(new AuthStore(pool), mailers.magic, authConfig);
+  const limiter = new RateLimiter();
   const server = await startAuthServer({
     service: auth,
     news,
     dm: { auth, store: dm, notifier: pickNotifier() },
     visibility,
-    adminToken: process.env["SKOVERN_ADMIN_TOKEN"] ?? null,
-    publicOrigin: (process.env["APP_URL"] ?? "").replace(/\/$/, "") || undefined,
-    port,
+    adminToken: cfg.adminToken,
+    publicOrigin: cfg.appUrl || undefined,
+    port: cfg.port,
+    host: cfg.host,
+    limiter,
+    trustProxy: cfg.trustProxy,
+    accountRoutes: cfg.accountRoutes,
+    ...(cfg.inbox && inboxWorker
+      ? { inbox: { key: cfg.inbox.webhookKey, store: inboxStore, worker: inboxWorker, pool } }
+      : {}),
+    waitlist: {
+      deps: { store: waitlist, mailer: mailers.welcome, appUrl: () => authConfig.appUrl },
+      limiter,
+      trustProxy: cfg.trustProxy,
+      corsOrigins: cfg.corsOrigins,
+      adminToken: cfg.adminToken,
+      siteUrl: cfg.siteUrl,
+    },
   });
-  if (!config.appUrl) config.appUrl = server.url;
+  if (!authConfig.appUrl) authConfig.appUrl = server.url;
   console.log(`[auth-server] listening on ${server.url}`);
   console.log(
-    process.env["SKOVERN_ADMIN_TOKEN"]
-      ? `[auth-server] admin inbox: ${server.url}/admin/dm — log in with ANY username and your SKOVERN_ADMIN_TOKEN as the password`
-      : `[auth-server] admin inbox DISABLED — set SKOVERN_ADMIN_TOKEN before starting to enable /admin/dm`,
+    cfg.accountRoutes
+      ? "[auth-server] account routes ON (sign-in, messages, publish, news)"
+      : "[auth-server] account routes OFF: only /healthz and the waitlist are mounted (set ACCOUNT_ROUTES=1 to change)",
+  );
+  console.log(
+    cfg.adminToken
+      ? `[auth-server] admin pages: /admin/dm and /admin/waitlist — log in with ANY username and your SKOVERN_ADMIN_TOKEN as the password`
+      : `[auth-server] admin pages DISABLED — set SKOVERN_ADMIN_TOKEN before starting to enable them`,
   );
 
+  console.log(
+    cfg.inbox
+      ? `[auth-server] inbox webhook ON at /hooks/resend/inbound (up to ${cfg.inbox.maxPerDay} forwards a day)`
+      : "[auth-server] inbox webhook OFF (set RESEND_WEBHOOK_SECRET and FORWARD_TO to turn it on)",
+  );
+  if (cfg.inbox?.fromFallback) {
+    console.warn(
+      `[auth-server] WARNING: inbox forwards go out from inbox@skovern.com (INBOX_FROM_FALLBACK=1). ` +
+        `Verify ${cfg.inbox.wantedFromDomain} in Resend, then remove INBOX_FROM_FALLBACK.`,
+    );
+  }
+  if (cfg.inbox?.authMissingOk) {
+    console.warn(
+      "[auth-server] WARNING: mail with no authentication results is forwarded unflagged (INBOX_AUTH_MISSING_OK=1). " +
+        "Remove it once Resend's results are confirmed on real mail.",
+    );
+  }
+
+  const stopSweep = startSweep(pool, undefined, () => inboxStore.prune());
+  const stopInbox = inboxWorker ? inboxWorker.start() : () => {};
+  const stopBacklog = startWelcomeBacklog({ store: waitlist, mailer: mailers.welcome, appUrl: () => authConfig.appUrl });
+  const pruneTimer = setInterval(() => limiter.prune(), 5 * 60_000);
+  pruneTimer.unref();
+
   let shuttingDown = false;
-  const shutdown = (): void => {
+  const shutdown = (signal: string): void => {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log("[auth-server] shutting down…");
+    console.log(`[auth-server] ${signal}: draining…`);
+    stopSweep();
+    stopBacklog();
+    stopInbox();
+    // Watchdog: a hung socket or a stuck pool must not keep the old container alive.
+    setTimeout(() => {
+      console.error("[auth-server] drain took too long; exiting anyway");
+      process.exit(1);
+    }, SHUTDOWN_DEADLINE_MS).unref();
     void server
       .close()
       .then(() => pool.end())
-      .then(() => process.exit(0));
+      .then(() => {
+        console.log("[auth-server] stopped");
+        process.exit(0);
+      })
+      .catch((err: unknown) => {
+        console.error("[auth-server] shutdown error:", (err as Error).message);
+        process.exit(1);
+      });
   };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
 }
 
 void main().catch((err: unknown) => {

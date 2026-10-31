@@ -1,0 +1,56 @@
+---
+import "../styles/global.css";
+import Icons from "../components/Icons.astro";
+import Nav from "../components/Nav.astro";
+import Footer from "../components/Footer.astro";
+import { DEFAULT_DESCRIPTION, SITE_NAME } from "../lib/site";
+
+interface Props {
+  title: string;
+  description?: string;
+  /** Absolute or root-relative image for social cards. */
+  image?: string;
+  type?: "website" | "article";
+  current?: "home" | "blog";
+  joinHref?: string;
+  noindex?: boolean;
+}
+const { title, description = DEFAULT_DESCRIPTION, image = "/og.png", type = "website", current, joinHref, noindex = false } = Astro.props;
+const canonical = new URL(Astro.url.pathname, Astro.site);
+const ogImage = new URL(image, Astro.site);
+---
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{title}</title>
+  <meta name="description" content={description}>
+  <link rel="canonical" href={canonical}>
+  {noindex && <meta name="robots" content="noindex">}
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+  <link rel="icon" href="/favicon.png" type="image/png" sizes="48x48">
+  <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="alternate" type="application/rss+xml" title="Skovern Blog" href="/rss.xml">
+  <meta property="og:site_name" content={SITE_NAME}>
+  <meta property="og:type" content={type}>
+  <meta property="og:title" content={title}>
+  <meta property="og:description" content={description}>
+  <meta property="og:url" content={canonical}>
+  <meta property="og:image" content={ogImage}>
+  <meta name="twitter:card" content="summary_large_image">
+  <slot name="head" />
+</head>
+<body>
+  <a class="skip" href="#main">Skip to the content</a>
+  <Icons />
+  <Nav current={current} joinHref={joinHref} />
+  <main id="main">
+    <slot />
+  </main>
+  <Footer />
+</body>
+</html>

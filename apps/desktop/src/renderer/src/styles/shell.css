@@ -1,0 +1,277 @@
+/* Design A shell: translucent sidebar over a soft wallpaper, account card on top, the brain chip
+   at the bottom, and a content pane with a slim toolbar and large page titles. Layout reacts to
+   the window size (container queries on .shell), so an 800 x 520 window behaves the same on any
+   monitor. */
+
+.shell {
+  position: relative;
+  height: 100vh;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  overflow: hidden;
+  container: win / size;
+  background:
+    radial-gradient(60% 50% at 10% 10%, var(--wall-a), transparent 70%),
+    radial-gradient(50% 60% at 15% 90%, var(--wall-b), transparent 70%),
+    var(--wall-c);
+}
+
+.sidebar {
+  width: 232px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  padding: 14px 10px 12px;
+  background: var(--sidebar);
+  backdrop-filter: blur(30px) saturate(1.8);
+  border-right: 0.5px solid var(--sep);
+}
+
+/* The account card: the app mark plus who you are, like the Apple Account card in Settings. */
+.account-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border-radius: 12px;
+}
+
+.app-mark {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font: 700 17px/1 var(--font-d);
+  background: linear-gradient(150deg, #f3a15f, var(--brand) 60%, #c25a1c);
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.1);
+}
+
+.account-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.account-text b {
+  font-size: 14px;
+}
+
+.og-badge {
+  font-size: 12px;
+  color: var(--label-2);
+}
+
+.nav {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 6px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.nav-item {
+  position: relative;
+  width: 100%;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 14px;
+  text-align: left;
+  color: var(--label);
+  transition: background 0.15s;
+}
+
+.nav-item:hover {
+  background: var(--fill);
+}
+
+.nav-item .ic {
+  width: 19px;
+  height: 19px;
+  color: var(--tint);
+}
+
+.nav-item.active {
+  background: var(--tint);
+  color: var(--on-tint);
+  font-weight: 500;
+}
+
+.nav-item.active .ic {
+  color: var(--on-tint);
+}
+
+.nav-badge {
+  margin-left: auto;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--red);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  display: grid;
+  place-items: center;
+}
+
+.sidebar-foot {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.sidebar-foot .signout {
+  margin: 0;
+  color: var(--label-2);
+  font-size: 13px;
+}
+
+.sidebar-foot .signout .ic {
+  width: 16px;
+  height: 16px;
+}
+
+/* The always-visible brain chip: green dot when a private brain is awake, gray when it's asleep
+   or missing, orange when the brain is online (what you type leaves the computer). */
+.brain-chip {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 12px;
+  background: var(--fill);
+}
+
+.brain-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--label-3);
+}
+
+.brain-chip-local .brain-dot,
+.active-brain-local .brain-dot,
+.conv-chip-local .brain-dot {
+  background: var(--green);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 25%, transparent);
+}
+
+.brain-chip-online .brain-dot,
+.active-brain-online .brain-dot,
+.conv-chip-online .brain-dot {
+  background: var(--amber);
+}
+
+.brain-chip-lines {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.brain-chip-text {
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brain-chip-state {
+  font-size: 12px;
+  color: var(--label-2);
+}
+
+.brain-chip-empty {
+  font-weight: 500;
+  color: var(--label-2);
+}
+
+/* A shorter window: tighter titles and nav. */
+@container win (max-height: 600px) {
+  h1 {
+    font-size: 26px;
+  }
+
+  .page-head p {
+    font-size: 13px;
+  }
+
+  .toolbar {
+    height: 36px;
+  }
+
+  .nav-item {
+    height: 31px;
+  }
+
+  .account-card {
+    padding: 4px 8px;
+  }
+}
+
+/* A narrow window: the sidebar becomes an icon rail. Labels stay in the accessible name. */
+@container win (max-width: 920px) {
+  .sidebar {
+    width: 64px;
+    padding: 12px 8px 10px;
+  }
+
+  .account-card {
+    justify-content: center;
+    padding: 6px 0;
+  }
+
+  .account-text,
+  .nav-label,
+  .brain-chip-lines,
+  .signout-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .nav-item {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .nav-badge {
+    position: absolute;
+    top: 2px;
+    right: 4px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    font-size: 10px;
+  }
+
+  .brain-chip {
+    justify-content: center;
+    padding: 12px 0;
+  }
+
+  .sidebar-foot {
+    align-items: center;
+  }
+
+  .page {
+    padding: 0 24px 40px;
+  }
+}

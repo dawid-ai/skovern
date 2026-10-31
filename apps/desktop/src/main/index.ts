@@ -1,9 +1,14 @@
-import { app, BrowserWindow, Menu, Tray, dialog, nativeImage } from "electron";
+/// <reference types="electron-vite/node" />
+import { app, BrowserWindow, Menu, Tray, dialog, nativeImage, nativeTheme } from "electron";
 import { writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import electronUpdater from "electron-updater";
+// The app mark (loop 049): bundled files next to the build, never fetched.
+import appIconPath from "../../build/icon.png?asset";
+import trayIconPath from "../../build/tray.png?asset";
+import trayIcon2xPath from "../../build/tray@2x.png?asset";
 import {
   anthropicProvider,
   createAccountClient,
@@ -11,7 +16,6 @@ import {
   createNewsClient,
   createPublishClient,
   createRouter,
-  getAppInfo,
   localProvider,
   openRouterProvider,
   type Provider,
@@ -36,7 +40,10 @@ import { appendMessage, createTokenCoalescer, deleteChat, getChat, listChats, ne
 import { resolveChatReply } from "./chat-reply.js";
 import { validateOllamaName } from "./ollama-name.js";
 import { disposeOllama, ensureOllamaRunning, fakeLaunchCount, ollamaInstalled, pickOllamaAction, sweepOrphanedOllama } from "./ollama-launch.js";
-import { getSettings, setOllamaLaunch, type OllamaLaunch } from "./settings-store.js";
+import { getSettings, setAutoUpdates, setOllamaLaunch, type OllamaLaunch } from "./settings-store.js";
+import { appInfo } from "./app-info.js";
+import { createUpdates } from "./updates.js";
+import { electronPort, fakePort, fakeScenario, updatesLog } from "./updates-port.js";
 import { DownloadError, sweepOrphanParts } from "./download.js";
 import { initialNewness, observeThread } from "./dm-newness.js";
 import { testPasswordStore } from "./password-store.js";
@@ -412,9 +419,12 @@ async function chatSend(chatId: string, text: string): Promise<ChatSendResult> {
   }
 }
 
-// ponytail: placeholder 16x16 orange square until the real icon exists
-const TRAY_ICON_DATA_URL =
-  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAJElEQVR4nGN4UaXH8KJK7z+ZmIESzWA8asCoAaMGUNEAirIzALsgiyMIAIRAAAAAAElFTkSuQmCC";
+// The tray mark at 16 px, plus a 32 px copy for high-DPI screens.
+function trayImage(): Electron.NativeImage {
+  const img = nativeImage.createFromPath(trayIconPath);
+  img.addRepresentation({ scaleFactor: 2, buffer: nativeImage.createFromPath(trayIcon2xPath).toPNG() });
+  return img;
+}
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -425,6 +435,9 @@ function createWindow(): void {
     width: 960,
     height: 640,
     title: "Skovern",
+    icon: appIconPath,
+    // Match the renderer's background so a dark-mode window never flashes white on open.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#141416" : "#f2f2f7",
     show: false,
     autoHideMenuBar: true,
     webPreferences: {
@@ -464,7 +477,7 @@ function createWindow(): void {
 }
 
 function createTray(): void {
-  tray = new Tray(nativeImage.createFromDataURL(TRAY_ICON_DATA_URL));
+  tray = new Tray(trayImage());
   tray.setToolTip("Skovern");
   tray.setContextMenu(
     Menu.buildFromTemplate([
@@ -486,17 +499,6 @@ function createTray(): void {
     ]),
   );
   tray.on("click", () => mainWindow?.show());
-}
-
-function checkForUpdatesSafely(): void {
-  // contract 001: updater is wired, dry-run — real checks only make sense packaged
-  if (!app.isPackaged) {
-    console.log("[updater] dev build — skipping update check");
-    return;
-  }
-  autoUpdater.checkForUpdatesAndNotify().catch((error: unknown) => {
-    console.warn("[updater] check failed (offline is fine):", error);
-  });
 }
 
 app.on("before-quit", () => {
@@ -540,13 +542,37 @@ if (!app.requestSingleInstanceLock()) {
 app
   .whenReady()
   .then(() => {
-    registerTrusted(TRUST, "app:info", () => getAppInfo());
+    registerTrusted(TRUST, "app:info", () => appInfo(app));
 
     // First-party cloud calls are egress too. Each client gets a receipted `fetch`
     // wrapper (loop 015): a durable "sent" line lands before any byte leaves, so
     // the Receipts panel shows EVERY outbound byte — not just model + plugin calls.
     // Metadata only (host + label + bytes), never a key, token, or body.
     const fetchSink = fileFetchSink();
+
+    // App updates (release-updates loop): the real GitHub feed only in the installed app; a
+    // dev build has nothing to update from unless an e2e sets the unpackaged-only fake feed.
+    // Nothing downloads until the user says so, and every check/download is receipted first.
+    const updatesFake = fakeScenario(app.isPackaged, process.env);
+    const fakeInstalls = { count: 0 };
+    if (updatesFake) (globalThis as { __skovernFakeInstalls?: { count: number } }).__skovernFakeInstalls = fakeInstalls;
+    const updatesLogLine = updatesLog(app.getPath("userData"));
+    const updates = createUpdates({
+      port: updatesFake ? fakePort(updatesFake, fakeInstalls) : app.isPackaged ? electronPort(autoUpdater, updatesLogLine) : null,
+      sink: fetchSink,
+      current: app.getVersion(),
+      getAuto: () => getSettings().autoUpdates,
+      saveAuto: setAutoUpdates,
+      emit: (view) => {
+        for (const w of BrowserWindow.getAllWindows()) w.webContents.send("updates:event", view);
+      },
+      log: updatesLogLine,
+    });
+    registerTrusted(TRUST, "updates:current", () => updates.view());
+    registerTrusted(TRUST, "updates:check", () => updates.check(true));
+    registerTrusted(TRUST, "updates:download", () => updates.download());
+    registerTrusted(TRUST, "updates:install", () => updates.install());
+    registerTrusted(TRUST, "updates:setAuto", (on: unknown) => updates.setAuto(on === true));
 
     const account = createAccountClient(API_BASE, receiptedFetch(fetchSink, "Skovern: sign-in", { direction: "out" }));
 
@@ -1057,7 +1083,7 @@ app
       tray = null;
       console.warn("[tray] unavailable — window close will quit:", error);
     }
-    checkForUpdatesSafely();
+    updates.startSchedule();
   })
   .catch((error: unknown) => {
     console.error("[main] startup failed:", error);

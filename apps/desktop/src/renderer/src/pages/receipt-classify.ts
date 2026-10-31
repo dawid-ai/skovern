@@ -39,6 +39,7 @@ const ROUTINE_LABELS: Record<string, string> = {
   news: "Checked the news",
   messages: "Checked your messages",
   "model list": "Checked the model list",
+  "update check": "Checked for a Skovern update",
 };
 
 // The grouping key + display label for a routine receipt. Group by the task so the

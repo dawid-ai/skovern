@@ -8,11 +8,28 @@ import type { RunSkillResult, SandboxCheckResult, SkillView } from "../shared/pl
 import type { ActivitySummary, DateRange, ReceiptView } from "../shared/receipts.js";
 import type { ChatMeta, ChatSendResult, ChatStatusEvent, ChatTokenEvent, ChatView } from "../shared/chat.js";
 import type { OllamaLaunch, OllamaStatusView, SettingsView } from "../shared/settings.js";
+import type { UpdatesView } from "../shared/updates.js";
 
 const SETUP_PHASES: readonly SetupPhase[] = ["helper", "unpack", "start", "brain"];
 
 const api = {
   getAppInfo: (): Promise<AppInfo> => ipcRenderer.invoke("app:info") as Promise<AppInfo>,
+  updates: {
+    current: (): Promise<UpdatesView> => ipcRenderer.invoke("updates:current") as Promise<UpdatesView>,
+    check: (): Promise<UpdatesView> => ipcRenderer.invoke("updates:check") as Promise<UpdatesView>,
+    download: (): Promise<UpdatesView> => ipcRenderer.invoke("updates:download") as Promise<UpdatesView>,
+    install: (): Promise<UpdatesView> => ipcRenderer.invoke("updates:install") as Promise<UpdatesView>,
+    setAuto: (on: boolean): Promise<UpdatesView> => ipcRenderer.invoke("updates:setAuto", on) as Promise<UpdatesView>,
+    // Listen-only, main → renderer. A payload without a state never reaches React.
+    onEvent: (cb: (view: UpdatesView) => void): (() => void) => {
+      const handler = (_event: unknown, payload: unknown): void => {
+        const v = (payload ?? {}) as { state?: { kind?: unknown } };
+        if (typeof v.state?.kind === "string") cb(payload as UpdatesView);
+      };
+      ipcRenderer.on("updates:event", handler);
+      return () => ipcRenderer.removeListener("updates:event", handler);
+    },
+  },
   account: {
     request: (email: string): Promise<RequestResult> =>
       ipcRenderer.invoke("account:request", email) as Promise<RequestResult>,

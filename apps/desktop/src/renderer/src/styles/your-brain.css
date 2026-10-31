@@ -1,0 +1,95 @@
+/* Design A Your brain page (downloaded brains, memory, folder) and Connect your own brain. */
+
+/* Your brain: downloaded brains, what's awake in memory, and where they live. */
+.your-models-memory {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-height: 46px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  font-size: 14px;
+}
+
+.your-models-memory > span:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.your-models-folder {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.your-models-folder code {
+  word-break: break-all;
+}
+
+.your-models-empty {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+/* Connect your own brain by address. */
+.connect-brain {
+  padding-bottom: 8px;
+}
+
+.connect-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 10px 16px;
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.connect-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.connect-warning {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--amber) 14%, transparent);
+}
+
+.connect-warning p {
+  color: var(--label);
+}
+
+.connect-models {
+  list-style: none;
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.connect-model-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 46px;
+  padding: 8px 16px;
+}
+
+.connect-model-row + .connect-model-row {
+  border-top: 0.5px solid var(--sep);
+}

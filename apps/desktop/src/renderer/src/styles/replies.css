@@ -1,0 +1,54 @@
+/* Design A small shared pieces: the brain-reply bubble, the receipt line, and fit dots. */
+
+/* The "your brain says" reply bubble (Settings test, skill results). */
+.brain-reply {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--bubble);
+  font-size: 13.5px;
+}
+
+.brain-reply p {
+  color: var(--label);
+}
+
+.brain-reply .who {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--label-2);
+  margin-bottom: 2px;
+}
+
+.brain-reply-busy .processing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--label-2);
+}
+
+.receipt {
+  font-size: 12.5px;
+  color: var(--label-2);
+}
+
+/* Fit dots: green runs great, amber runs slowly, red too big. */
+.fit-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: none;
+  display: inline-block;
+}
+
+.fit-green {
+  background: var(--green);
+}
+
+.fit-amber {
+  background: var(--amber);
+}
+
+.fit-red {
+  background: var(--red);
+}

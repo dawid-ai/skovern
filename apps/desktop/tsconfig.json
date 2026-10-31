@@ -8,5 +8,5 @@
     "resolveJsonModule": true,
     "types": ["node"]
   },
-  "include": ["src", "e2e", "playwright.config.ts", "electron.vite.config.ts"]
+  "include": ["src", "e2e", "scripts", "playwright.config.ts", "electron.vite.config.ts"]
 }

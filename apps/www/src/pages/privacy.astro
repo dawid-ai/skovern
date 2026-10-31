@@ -1,0 +1,51 @@
+---
+import Base from "../layouts/Base.astro";
+import { CONTACT_EMAIL } from "../lib/site";
+import "../styles/page.css";
+---
+<Base title="Privacy · Skovern" description="What Skovern's website and waitlist keep about you, why, for how long, and how to delete it. Plain words, no legalese.">
+  <div class="page">
+    <p class="eyebrow">Privacy</p>
+    <h1>What we keep, and why.</h1>
+    <p class="lede">This page covers skovern.com and the waitlist. The Skovern app has its own receipts that show what leaves your computer.</p>
+
+    <h2>Who we are</h2>
+    <p>Skovern is run by Dawid Jóźwiak. When this page says "we", that's who it means: Dawid Jóźwiak, Skovern.</p>
+
+    <h2>When you join the waitlist</h2>
+    <p>We keep what you type into the form, and nothing more:</p>
+    <ul>
+      <li>Your name and email. We need these to save your place in line and send your invite.</li>
+      <li>If you fill in step 2: your job title, your type of business, and your website. These help us build Skovern for shops like yours. They're optional.</li>
+      <li>When you joined, and your place in line.</li>
+    </ul>
+    <p>We keep them because you asked us to: joining the list is your consent, and you can take it back any time by leaving.</p>
+
+    <h2>How long we keep it</h2>
+    <p>Until you leave the list, or until the waitlist closes after Skovern's public launch. Whichever comes first, we delete your details then.</p>
+
+    <h2>Where it lives</h2>
+    <p>Your details are stored in our own database, hosted on Railway in the United States (US East, in Virginia). We don't sell them, share them, or use them for ads.</p>
+    <p>We send email through Resend, also in the United States. When we email you, Resend gets your name, your email, and the message. That's the only other company that sees anything you type.</p>
+
+    <h2>What we don't do</h2>
+    <ul>
+      <li>No analytics or tracking scripts on this site.</li>
+      <li>No cookies.</li>
+      <li>No fonts, scripts, or images loaded from other companies. Everything comes from skovern.com.</li>
+    </ul>
+    <p>Like every web server, ours sees your internet address when you visit. We use it to stop people from flooding the form, and we don't store it with your details.</p>
+
+    <h2>Your rights</h2>
+    <p>You can see the details we keep about you, fix them, or delete them.</p>
+    <ul>
+      <li><b>Delete:</b> every email from us has a link at the bottom to leave the list. One click on the button, and we delete your name, email, and answers.</li>
+      {CONTACT_EMAIL ? (
+        <li><b>See or fix:</b> write to <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a> from the address you signed up with.</li>
+      ) : (
+        <li><b>See or fix:</b> an address to write to is on its way. Until then, the remove link in your welcome email deletes everything, and you can join again with the right details.</li>
+      )}
+    </ul>
+    <p class="note">Last updated October 26, 2026.</p>
+  </div>
+</Base>

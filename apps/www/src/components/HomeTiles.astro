@@ -1,0 +1,93 @@
+---
+// Feature tiles. Each tile animates once when it scrolls in (src/scripts/home.ts).
+---
+<section class="tiles" id="features" aria-labelledby="h-feat">
+  <div class="wrap center head">
+    <p class="eyebrow o" data-rv>What it does</p>
+    <h2 class="h-l" id="h-feat" data-rv>Built for the busywork.</h2>
+    <p class="lede" data-rv="2">Small helpers that each do one job well, and tell you what they did.</p>
+  </div>
+  <div class="grid">
+    <article class="tile half lift" id="t-receipts" data-reveal aria-labelledby="h-rec">
+      <p class="eyebrow">Receipts</p>
+      <h2 id="h-rec">Every byte.<br>Written down.</h2>
+      <p class="tl">If anything leaves your computer, Skovern keeps a receipt. Where it went, how much, and when. Even our own update check.</p>
+      <p class="sample">In a sample shop:</p>
+      <div class="count"><b id="rcount">0</b><span>receipts<br>since May</span></div>
+      <div class="tstage" style="padding-top:26px">
+        <div class="rlist" id="rlist" aria-label="Receipts, newest first">
+          <div class="rhead">Today</div>
+          <div class="rrow" data-i="3"><div><div class="rr"><span class="ico" style="--c:var(--green);width:30px;height:30px;border-radius:8px"><svg class="ic"><use href="#i-house"/></svg></span><div class="rmain"><div class="rt"><b>Your private brain</b> · Chat: Sorry note for Mark</div><div class="rs">your computer · stayed on your computer</div></div><div class="rtrail"><span class="tag t-local">Local</span><span class="tm">2:14 PM</span></div></div></div></div>
+          <div class="rrow" data-i="2"><div><div class="rr"><span class="ico" style="--c:#e87a2e;width:30px;height:30px;border-radius:8px"><svg class="ic"><use href="#i-up"/></svg></span><div class="rmain"><div class="rt"><b>Skovern</b> · Checked for a Skovern update</div><div class="rs">github.com · 0.4 KB out · 1.1 KB back</div></div><div class="rtrail"><span class="tag t-out">Out ↑</span><span class="tm">12:00 PM</span></div></div></div></div>
+          <div class="rrow" data-i="1"><div><div class="rr"><span class="ico" style="--c:#e87a2e;width:30px;height:30px;border-radius:8px"><svg class="ic"><use href="#i-up"/></svg></span><div class="rmain"><div class="rt"><b>A connector</b> · Read a website for a skill</div><div class="rs">bloomandvine.shop · 0.6 KB out · 48.2 KB back</div></div><div class="rtrail"><span class="tag t-out">Out ↑</span><span class="tm">11:05 AM</span></div></div></div></div>
+          <div class="rrow" data-i="0"><div><div class="rr"><span class="ico" style="--c:var(--blue);width:30px;height:30px;border-radius:8px"><svg class="ic"><use href="#i-down"/></svg></span><div class="rmain"><div class="rt"><b>A brain download</b> · Qwen2.5 14B</div><div class="rs">huggingface.co · 9.0 GB back · went through</div></div><div class="rtrail"><span class="tag t-in">In ↓</span><span class="tm">9:31 AM</span></div></div></div></div>
+        </div>
+      </div>
+    </article>
+
+    <article class="tile half white lift" id="t-brain" data-reveal aria-labelledby="h-brain">
+      <p class="eyebrow">Your brain</p>
+      <h2 id="h-brain">Picks itself.<br>Sets itself up.</h2>
+      <p class="tl">Skovern checks your computer and picks a brain that fits. Then it installs everything, Ollama included. You don't need to know what Ollama is. That's sort of the point.</p>
+      <div class="tstage" style="margin-block:auto">
+        <div class="bcard" id="bcard">
+          <div class="ringwrap" aria-hidden="true">
+            <svg viewBox="0 0 120 120"><circle class="ring-bg" cx="60" cy="60" r="54"/><circle class="ring-fg" id="ringFg" cx="60" cy="60" r="54"/></svg>
+            <div class="ring-c"><span class="pct"><b id="ringPct">0%</b><small>getting it</small></span><span class="ok"><svg class="ic"><use href="#i-check"/></svg></span></div>
+          </div>
+          <div class="bmeta">
+            <div class="eb">Our pick for your computer</div>
+            <h3>Qwen2.5 14B</h3>
+            <div class="fit"><span class="fitdot"></span><b>Runs great here</b> · 9.0 GB</div>
+            <div class="fit" style="margin-top:4px">Writes about 45 words a second</div>
+            <div class="bstep" id="bstep">Checking your computer…</div>
+          </div>
+        </div>
+        <div class="pc"><span class="mt"><svg class="ic" style="width:18px;height:18px"><use href="#i-cpu"/></svg></span><div><b>This computer is great for private brains.</b>NVIDIA GeForce RTX 4090 · 64 GB memory · 812 GB free</div></div>
+      </div>
+    </article>
+
+    <article class="tile third lift" id="t-skills" data-reveal aria-labelledby="h-skills">
+      <p class="eyebrow">Skills and connectors</p>
+      <h2 id="h-skills">Skills do<br>the chores.</h2>
+      <p class="tl">Skills are add-ons with one job each. Connectors link Skovern to places you already use. Both ask before they do anything.</p>
+      <div class="tstage">
+        <div class="slist">
+          <div class="srow"><span class="sicon" style="--c:#e87a2e"><svg class="ic"><use href="#i-chat"/></svg></span><div class="smeta"><b>Reply to customers</b><span>Drafts a reply. You hit send.</span></div><button class="cap" data-get aria-label="Get Reply to customers">Get</button></div>
+          <div class="srow"><span class="sicon" style="--c:#af52de"><svg class="ic"><use href="#i-compose"/></svg></span><div class="smeta"><b>Draft a post</b><span>For Instagram or your window sign.</span></div><button class="cap" data-get aria-label="Get Draft a post">Get</button></div>
+          <div class="srow"><span class="sicon" style="--c:#007aff"><svg class="ic"><use href="#i-calendar"/></svg></span><div class="smeta"><b>Holiday hours helper</b><span>One set of hours, every place.</span></div><button class="cap" data-get aria-label="Get Holiday hours helper">Get</button></div>
+          <div class="srow"><span class="sicon" style="--c:#34c759"><svg class="ic"><use href="#i-search"/></svg></span><div class="smeta"><b>AI Visibility</b><span>What AI search says about you.</span></div><button class="cap" data-get aria-label="Get AI Visibility">Get</button></div>
+        </div>
+        <div class="conns"><span class="conn"><svg class="ic"><use href="#i-globe"/></svg>Your website</span><span class="conn"><svg class="ic"><use href="#i-envelope"/></svg>Email</span><span class="conn"><svg class="ic"><use href="#i-plug"/></svg>More connectors</span></div>
+      </div>
+    </article>
+
+    <article class="tile third lift" id="t-updates" data-reveal aria-labelledby="h-upd">
+      <p class="eyebrow">Updates</p>
+      <h2 id="h-upd">It updates.<br>After it asks.</h2>
+      <p class="tl">When a new Skovern is out, it asks first. Say Later and it waits. The check goes to github.com, and yes, it gets a receipt.</p>
+      <div class="tstage">
+        <div class="desk">
+          <div class="notice" id="notice" role="status">
+            <div class="n-head"><span class="appicon">S</span>SKOVERN<span class="when">now</span></div>
+            <h4 id="nH">A new Skovern is here (0.1.1).</h4>
+            <p id="nP">Chats open faster, your brain says when it's asleep, and long receipts no longer get cut off.</p>
+            <div class="n-act" id="nAct"><button class="nbtn gray" data-n="later">Later</button><button class="nbtn" data-n="update">Update now</button></div>
+          </div>
+          <div class="desk-foot"><span class="conn"><svg class="ic"><use href="#i-refresh"/></svg>Checked github.com · 12:00 PM</span></div>
+        </div>
+      </div>
+    </article>
+
+    <article class="tile third white founders lift" id="founders" data-reveal aria-labelledby="h-found">
+      <p class="eyebrow">Founding users</p>
+      <h2 id="h-found">Get in early.<br>Get a number.</h2>
+      <p class="tl">When the open beta starts, the first shops in get a founding number on their account. It never changes. You also get a direct line to the person building Skovern.</p>
+      <a class="more" href="#waitlist" data-join>Join the waitlist</a>
+      <div class="tstage" style="padding-top:8px">
+        <div class="big1" aria-hidden="true">#1</div>
+        <div class="acct"><span class="avatar">YS</span><div><b>Your shop</b><span>Founding user #1</span></div></div>
+      </div>
+    </article>
+  </div>
+</section>

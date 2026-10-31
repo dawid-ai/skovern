@@ -1,0 +1,21 @@
+---
+import Base from "../../layouts/Base.astro";
+import { CONTACT_EMAIL } from "../../lib/site";
+import "../../styles/page.css";
+---
+<Base title="Leave the waitlist · Skovern" description="How to leave the Skovern waitlist and delete your details." noindex>
+  <div class="page">
+    <p class="eyebrow">Waitlist</p>
+    <h1>Leave the waitlist.</h1>
+    <p class="lede">Sorry to see you go. Here's how to delete your details.</p>
+    <h2>Use the link in your email</h2>
+    <p>Every email from us ends with a link to leave the list. Open it, press <b>Remove me</b>, and we delete your name, email, and answers right away.</p>
+    {CONTACT_EMAIL && (
+      <>
+        <h2>Can't find the email?</h2>
+        <p>Write to <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a> from the address you signed up with. We'll delete your details and tell you when it's done.</p>
+      </>
+    )}
+    <div class="actions"><a class="pill line md" href="/">Back to Skovern</a></div>
+  </div>
+</Base>
