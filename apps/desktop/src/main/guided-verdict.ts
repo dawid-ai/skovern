@@ -1,4 +1,5 @@
-import type { VerdictModel } from "@skovern/core";
+import { verdict, type HardwareProfile, type Verdict, type VerdictModel } from "@skovern/core";
+import { fromOllamaRegistry } from "./ollama-name.js";
 
 // The candidate set the recommendation scores: our BUILT-IN (gguf) catalog ONLY.
 //
@@ -12,6 +13,9 @@ import type { VerdictModel } from "@skovern/core";
 // two views always name the same model — a single source of truth, no divergence.
 
 const GB = 1024 * 1024 * 1024;
+
+// The quick green label `verdict` gives a writing brain (core/src/local/verdict.ts).
+const RUNS_GREAT = "Runs great here";
 
 type CandidateInput = { id: string; label: string; params?: number; sizeBytes?: number; quant?: string; gguf?: unknown };
 
@@ -38,4 +42,36 @@ export function builtInCandidates(catalogModels: CandidateInput[]): VerdictModel
  *  only (037 flip-kill), so widening the DISPLAY set can never widen what becomes the pick. */
 export function allCandidates(models: CandidateInput[]): VerdictModel[] {
   return models.map(toVerdictModel);
+}
+
+/** The catalog brains that run through Ollama (no `gguf` block) and download from Ollama's own
+ *  registry — gettable when Skovern can set Ollama up on this computer (loop 047). A catalog id that
+ *  names another server never becomes the pick (SEC-047-2). */
+export function ollamaPathCandidates(catalogModels: CandidateInput[]): VerdictModel[] {
+  return catalogModels.filter((m) => m.gguf === undefined && fromOllamaRegistry(m.id)).map(toVerdictModel);
+}
+
+/** THE recommendation (loop 047): one function both the headline (`localStatus`) and the hero
+ *  (`localModels`) call, so they always name the same brain.
+ *
+ *  Inputs are hardware + catalog + whether Skovern can set Ollama up on this KIND of computer —
+ *  never whether any Ollama is installed or running — so the pick can't flip (loop 037 holds).
+ *  A brain that needs Ollama wins only when its row says "Runs great here" and it's bigger than
+ *  the best good built-in: a small or slow computer never gets asked to set up a helper, and a
+ *  helper is never set up for a brain that writes slower than a built-in one (Dawid, 2026-10-24). */
+export function guidedVerdict(profile: HardwareProfile, catalogModels: CandidateInput[], canSetUpOllama: boolean): Verdict {
+  const builtIns = builtInCandidates(catalogModels);
+  const base = verdict(profile, builtIns);
+  if (!canSetUpOllama) return base;
+  // Keyed on the row's own label, so the pick agrees with what the user reads on that row.
+  const ollamaPath = ollamaPathCandidates(catalogModels);
+  const fits = verdict(profile, ollamaPath).fits;
+  const runsGreat = ollamaPath.filter((m) => fits.find((f) => f.modelId === m.id)?.label === RUNS_GREAT);
+  const wide = verdict(profile, [...builtIns, ...runsGreat]);
+  if (!wide.canRunGoodOne || wide.recommendedModelId === null) return base;
+  if (builtIns.some((m) => m.id === wide.recommendedModelId)) return base;
+  const paramsOf = (vs: VerdictModel[], id: string | null) => vs.find((m) => m.id === id)?.params ?? 0;
+  const widePick = paramsOf(runsGreat, wide.recommendedModelId);
+  const basePick = base.canRunGoodOne ? paramsOf(builtIns, base.recommendedModelId) : 0;
+  return widePick > basePick ? wide : base;
 }

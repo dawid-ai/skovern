@@ -59,6 +59,10 @@ export class DownloadError extends Error {}
 const STALL_MS = 60_000;
 
 const NO_SPACE = "There isn't enough free space on this computer for this model. Free up some room and try again.";
+const NO_SPACE_HELPER = "There isn't enough free space on this computer for this brain and its helper. Free up some room and try again.";
+
+/** The bytes didn't match their sha256 — the file was deleted, so a retry starts clean. */
+export const SAFETY_FAILED = "The downloaded model didn't match its safety check and was removed. Try again.";
 
 /** The connection failed (no internet, a dropped transfer). The `.part` is kept, so it resumes. */
 export const STOPPED =
@@ -121,10 +125,14 @@ async function defaultFreeBytes(): Promise<number> {
 /** Refuse up-front if `needBytes` (+ headroom) won't fit — BEFORE any byte leaves, so a
  *  doomed multi-GB pull fails honestly instead of dying half-way. A probe that can't
  *  measure (returns Infinity) never blocks. Exported for a direct unit. */
-export async function ensureDiskSpace(needBytes: number, probeFreeBytes: () => Promise<number> = defaultFreeBytes): Promise<void> {
+export async function ensureDiskSpace(
+  needBytes: number,
+  probeFreeBytes: () => Promise<number> = defaultFreeBytes,
+  withHelper = false,
+): Promise<void> {
   const free = await probeFreeBytes();
   if (free < needBytes + DISK_MARGIN_BYTES) {
-    throw new DownloadError(NO_SPACE);
+    throw new DownloadError(withHelper ? NO_SPACE_HELPER : NO_SPACE);
   }
 }
 
@@ -229,6 +237,30 @@ export async function downloadModel(
   stallMs: number = STALL_MS,
 ): Promise<string> {
   const dest = modelPath(gguf.filename); // throws on an unsafe name before anything else
+  await downloadVerified(gguf, dest, sink, onProgress, fetchImpl, probeFreeBytes, stallMs);
+  return dest;
+}
+
+/** A file to fetch: where from, its expected sha256 and size, and the name its receipt shows. */
+export interface VerifiedSource {
+  url: string;
+  sha256: string;
+  sizeBytes: number;
+  filename: string;
+}
+
+/** The receipted, resumable, sha256-gated download behind `downloadModel`, for any app-owned
+ *  `dest` (loop 047: the Ollama helper zip too). The caller owns the path; this never builds one
+ *  from untrusted input. */
+export async function downloadVerified(
+  gguf: VerifiedSource,
+  dest: string,
+  sink: FetchSink,
+  onProgress?: (p: DownloadProgress) => void,
+  fetchImpl: typeof fetch = fetch,
+  probeFreeBytes: () => Promise<number> = defaultFreeBytes,
+  stallMs: number = STALL_MS,
+): Promise<void> {
   // Stable temp name (not a per-call unique one) so a restart can find + resume the
   // partial. The real `dest` is created ONLY after the sha256 passes, so a corrupt/
   // tampered download never exists under `dest` even if this is interrupted.
@@ -257,7 +289,7 @@ export async function downloadModel(
     const base = { kind: "fetch" as const, host, task: `Downloading ${gguf.filename}`, direction: "in" as const };
     await sink.append({ ...base, ts: new Date().toISOString(), bytesSent: 0, bytesReceived: 0, ok: false, phase: "sent" });
 
-    await mkdir(modelsDir(), { recursive: true });
+    await mkdir(path.dirname(dest), { recursive: true });
     let hash = createHash("sha256");
     // Resume: re-hash the existing partial so the final gate covers the whole file.
     // ponytail: re-hashes the whole partial each resume — fine for a one-shot resume;
@@ -365,13 +397,12 @@ export async function downloadModel(
     if (digest !== gguf.sha256.toLowerCase()) {
       await unlink(part).catch(() => {});
       await doneReceipt(false);
-      throw new DownloadError("The downloaded model didn't match its safety check and was removed. Try again.");
+      throw new DownloadError(SAFETY_FAILED);
     }
 
     // Verified → give it its real name. Only now does modelDownloaded() see it.
     await rename(part, dest);
     await doneReceipt(true);
-    return dest;
   } catch (err) {
     throw toDownloadError(err); // e.g. an fs error while re-hashing a partial — never raw
   } finally {

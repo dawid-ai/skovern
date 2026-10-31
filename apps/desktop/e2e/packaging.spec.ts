@@ -176,6 +176,10 @@ test.describe("packaged Windows build (loop 029)", () => {
           SKOVERN_MODEL_DOWNLOAD_URL: "https://evildownload.test/model.gguf",
           SKOVERN_OLLAMA_URL: "https://evilollama.test",
           SKOVERN_LLAMA_FAKE: "1",
+          // 047: the helper build comes only from the in-code pin (unit M10 pins the reader).
+          SKOVERN_OLLAMA_DIST_URL: "https://evilhelper.test/ollama.zip",
+          SKOVERN_OLLAMA_DIST_SHA256: "0".repeat(64),
+          SKOVERN_OLLAMA_DIST: "off",
           SKOVERN_PASSWORD_STORE: "gnome-libsecret",
           SKOVERN_UPDATER_FAKE: "available",
         },

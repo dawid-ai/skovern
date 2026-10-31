@@ -50,6 +50,8 @@ of it, or you're savvy enough to set it up."*
   API. Skovern talks to it; it does **not** install or manage it. This is where a power user's
   existing 27B/32B stay usable *without re-downloading*.
 
+> **Reversed 2026-10-20 (Dawid), loop 047.** When a computer's best brain runs through Ollama and it has none, Skovern now sets up a pinned copy of Ollama's command-line build after one consent. See `docs/loops/047-managed-ollama.md`.
+
 **Rejected — Ollama by default (auto-install/run).** Silently installing and babysitting a
 third-party program on a non-technical user's machine (AV friction, trust, disk, uninstall, their
 version drift as a failure surface we don't control) costs more than it saves. Its one real

@@ -70,6 +70,9 @@ export interface LocalModelsView {
   models: LocalModelView[];
   /** e.g. the offline-snapshot notice, or Ollama-not-running message. */
   notice: string;
+  /** Set when the recommended brain needs the helper (Ollama) and it isn't on this computer yet:
+   *  the helper's size and the total with the brain, for the one consent (loop 047). */
+  helper: { sizeBytes: number; size: string; totalSize: string } | null;
 }
 
 /** Result of a `local:pull` start / `local:save`. */
@@ -116,9 +119,14 @@ export interface YourModelsView {
 /** A pull-progress tick pushed main→renderer on the `local:pullProgress` channel. */
 export interface PullProgressView {
   modelId: string;
+  /** Which step of a helper set-up this is (loop 047); absent for a plain download. */
+  phase?: SetupPhase;
   percent: number;
   /** Plain status ("downloading", "done", or an error line). */
   status: string;
   done: boolean;
   ok: boolean;
 }
+
+/** The steps of "set up the helper, then get the brain" (loop 047), in order. */
+export type SetupPhase = "helper" | "unpack" | "start" | "brain";

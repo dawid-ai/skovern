@@ -144,6 +144,33 @@
   background: color-mix(in srgb, var(--red) 10%, transparent);
   font-size: 13px;
 }
+/* 047: the one consent before Skovern sets up its helper — same family as .pull-error, calmer. */
+.helper-consent {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 420px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--fill);
+  color: var(--label);
+  font-size: 14px;
+}
+.helper-consent p {
+  margin: 0;
+}
+.helper-consent .row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+/* In a table row, tables.css turns .primary into a --fill capsule, which would vanish on this box. */
+.helper-consent .primary {
+  background: var(--tint);
+  color: var(--on-tint);
+}
 
 .pull-error p {
   color: var(--label);

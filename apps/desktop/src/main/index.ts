@@ -32,7 +32,9 @@ import { toCsv } from "./csv.js";
 import { runPlugin, sandboxCheck } from "./plugin-host.js";
 import { claudeCliProvider } from "./claude-cli.js";
 import { brainSwitchPlan } from "./brain-switch.js";
-import { classifyAddress, connectProbe, deleteLocalModel, disposeLocal, downloadedEmbeddedModelId, downloadedModelsView, embeddedFilenameFor, embeddedFilenames, engineForModel, freeMemory, freeOutgoingBrain, isEmbeddedModel, localModels, localStatus, makeEngine, modelLoaded, openModelsFolder, pullModel, warmEmbeddedModel } from "./local.js";
+import { classifyAddress, connectProbe, deleteLocalModel, disposeLocal, downloadedEmbeddedModelId, downloadedModelsView, embeddedFilenameFor, embeddedFilenames, engineForModel, freeMemory, freeOutgoingBrain, isEmbeddedModel, localModels, localStatus, makeEngine, modelLoaded, ollamaPathCatalogModel, openModelsFolder, pullModel, warmEmbeddedModel } from "./local.js";
+import { freeDiskSeam, installManagedOllama } from "./ollama-dist.js";
+import { setUpAndGet } from "./ollama-setup.js";
 import { normalizeEndpoint } from "./connect-endpoint.js";
 import { appendMessage, createTokenCoalescer, deleteChat, getChat, listChats, newChat, renameChat, sendChatStatus, sendChatToken } from "./chat-store.js";
 import { resolveChatReply } from "./chat-reply.js";
@@ -42,7 +44,7 @@ import { getSettings, setAutoUpdates, setOllamaLaunch, type OllamaLaunch } from 
 import { appInfo } from "./app-info.js";
 import { createUpdates } from "./updates.js";
 import { electronPort, fakePort, fakeScenario, updatesLog } from "./updates-port.js";
-import { sweepOrphanParts } from "./download.js";
+import { DownloadError, sweepOrphanParts } from "./download.js";
 import { initialNewness, observeThread } from "./dm-newness.js";
 import { testPasswordStore } from "./password-store.js";
 import { helloManifest } from "../plugins/hello/manifest.js";
@@ -885,6 +887,54 @@ app
       }
     });
 
+    // Loop 047: set the helper (Ollama) up if needed, start it, then get the brain — one flow,
+    // after the user's consent in the renderer. Only a CATALOG brain that runs through Ollama is
+    // accepted (never free text), and progress streams back on `local:pullProgress` with a phase.
+    // ONE set-up at a time, owned by main — so leaving the screen and coming back can't start a
+    // second one, and the fresh screen shows the running one's progress (checker B4).
+    let setUpRun: PullProgressView | null = null;
+    registerTrusted(TRUST, "local:setUpStatus", (): PullProgressView | null => setUpRun);
+    registerTrusted(TRUST, "local:setUp", async (rawId: unknown): Promise<LocalActionResult> => {
+      if (setUpRun) return { ok: false, message: "Skovern is already getting a brain ready — hang tight." };
+      const modelId = typeof rawId === "string" ? rawId : "";
+      // Claim the one slot BEFORE the first await, so two calls in the same moment (a double
+      // click, a second window) can't both get past the check (checker iteration 2, B4).
+      setUpRun = { modelId, phase: "helper", percent: 0, status: "starting", done: false, ok: true };
+      const target = await ollamaPathCatalogModel(modelId).catch(() => null);
+      if (!target) {
+        // Release the claim WITH a done event, so a screen that adopted it doesn't freeze (N5).
+        const message = "That brain isn't one Skovern can set up.";
+        setUpRun = null;
+        mainWindow?.webContents.send("local:pullProgress", { modelId, percent: 0, status: message, done: true, ok: false });
+        return { ok: false, message };
+      }
+      const send = (view: PullProgressView): void => {
+        setUpRun = view.done ? null : view;
+        mainWindow?.webContents.send("local:pullProgress", view);
+      };
+      try {
+        // Inside the try, so a failed first send still frees the slot (checker iteration 3, N6).
+        send({ modelId, phase: "helper", percent: 0, status: "starting", done: false, ok: true });
+        await setUpAndGet(modelId, target.sizeBytes ?? 0, (t) => send({ modelId, phase: t.phase, percent: t.percent, status: t.phase, done: false, ok: true }), {
+          installed: ollamaInstalled,
+          install: installManagedOllama,
+          running: () => makeEngine().detect(),
+          start: () => ensureOllamaRunning(() => makeEngine().detect(), 20_000),
+          allowAutoStart: () => setOllamaLaunch("always"),
+          pull: pullModel,
+          sink: fileFetchSink(),
+          probeFreeBytes: freeDiskSeam(),
+        });
+        send({ modelId, percent: 100, status: "done", done: true, ok: true });
+        return { ok: true, message: "Downloaded — it's ready to use." };
+      } catch (err) {
+        // Only messages Skovern wrote reach the screen; anything else gets a plain one (checker N5).
+        const message = err instanceof DownloadError ? err.message : "The set-up didn't finish. Try again — it picks up where it left off.";
+        send({ modelId, percent: 0, status: message, done: true, ok: false });
+        return { ok: false, message };
+      }
+    });
+
     // "Your models" (loop 041): see what's downloaded + loaded, delete to reclaim disk, free
     // memory to reclaim VRAM. All main-owned; the renderer only reads/drives by IPC.
     registerTrusted(TRUST, "local:downloadedModels", (): Promise<YourModelsView> => downloadedModelsView());
@@ -951,7 +1001,9 @@ app
       installed: ollamaInstalled(),
       running: await makeEngine().detect(),
       // Only surfaced under the unpackaged fake-spawn seam, so an e2e can prove a launch fired.
-      ...(!app.isPackaged && process.env["SKOVERN_OLLAMA_SPAWN_FAKE"] === "1" ? { launchAttempts: fakeLaunchCount() } : {}),
+      ...(!app.isPackaged && (process.env["SKOVERN_OLLAMA_SPAWN_FAKE"] === "1" || process.env["SKOVERN_OLLAMA_SPAWN_FAKE"] === "serve")
+        ? { launchAttempts: fakeLaunchCount() }
+        : {}),
     }));
 
     // Start Ollama once, on the user's explicit request (the in-chat "Start Ollama" CTA is the

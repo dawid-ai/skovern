@@ -3,12 +3,14 @@ import type { AppInfo } from "@skovern/core";
 import type { CurrentAccount, RequestResult, VerifyResult } from "../shared/account.js";
 import type { DmSendResult, DmThreadView, NewsPostView, PublishResultView, PublishVisibilityInput } from "../shared/cloud.js";
 import type { BrainStatusView, SaveBrainInput, SaveBrainResult, TestBrainResult } from "../shared/brain.js";
-import type { ConnectProbeView, LocalActionResult, LocalModelsView, LocalStatusView, PullProgressView, YourModelsView } from "../shared/local.js";
+import type { ConnectProbeView, LocalActionResult, LocalModelsView, LocalStatusView, PullProgressView, SetupPhase, YourModelsView } from "../shared/local.js";
 import type { RunSkillResult, SandboxCheckResult, SkillView } from "../shared/plugin.js";
 import type { ActivitySummary, DateRange, ReceiptView } from "../shared/receipts.js";
 import type { ChatMeta, ChatSendResult, ChatStatusEvent, ChatTokenEvent, ChatView } from "../shared/chat.js";
 import type { OllamaLaunch, OllamaStatusView, SettingsView } from "../shared/settings.js";
 import type { UpdatesView } from "../shared/updates.js";
+
+const SETUP_PHASES: readonly SetupPhase[] = ["helper", "unpack", "start", "brain"];
 
 const api = {
   getAppInfo: (): Promise<AppInfo> => ipcRenderer.invoke("app:info") as Promise<AppInfo>,
@@ -83,6 +85,11 @@ const api = {
     models: (): Promise<LocalModelsView> => ipcRenderer.invoke("local:models") as Promise<LocalModelsView>,
     pull: (modelId: string): Promise<LocalActionResult> =>
       ipcRenderer.invoke("local:pull", modelId) as Promise<LocalActionResult>,
+    // 047: set the helper up (if needed), start it, then get this catalog brain.
+    setUp: (modelId: string): Promise<LocalActionResult> =>
+      ipcRenderer.invoke("local:setUp", modelId) as Promise<LocalActionResult>,
+    // 047: the set-up running right now (main owns it), so a fresh screen can show it.
+    setUpStatus: (): Promise<PullProgressView | null> => ipcRenderer.invoke("local:setUpStatus") as Promise<PullProgressView | null>,
     // Connect your own brain by address (loop 044): probe a typed address before saving.
     connect: (address: string): Promise<ConnectProbeView> =>
       ipcRenderer.invoke("local:connect", address) as Promise<ConnectProbeView>,
@@ -107,12 +114,15 @@ const api = {
           typeof p["done"] === "boolean" &&
           typeof p["ok"] === "boolean"
         ) {
+          // 047: a set-up step, only if it's one of the known four.
+          const phase = SETUP_PHASES.find((ph) => ph === p["phase"]);
           cb({
             modelId: p["modelId"],
             percent: p["percent"],
             status: p["status"],
             done: p["done"],
             ok: p["ok"],
+            ...(phase ? { phase } : {}),
           });
         }
       };

@@ -16,3 +16,29 @@ export function validateOllamaName(raw: string): NameResult {
   if (!OLLAMA_NAME.test(name)) return { ok: false, reason: "Use only letters, numbers, and : . / - _" };
   return { ok: true, name };
 }
+
+/** Ollama's own registry — where a name with no host part downloads from. */
+export const OLLAMA_REGISTRY = "registry.ollama.ai";
+
+/** The host Ollama will download this name from, mirroring Ollama's `ParseNameBare` (v0.40.6):
+ *  drop a `:tag`, then the last part is the model and the one before it the namespace; only a name
+ *  with three or more parts names a host (everything before the namespace, minus any `scheme://`).
+ *  So "qwen2.5:32b" and "library/qwen2.5" → the registry, "hf.co/user/repo:Q4" → "hf.co". Used for
+ *  an honest receipt (loop 047, SEC-047-2). */
+export function ollamaPullHost(name: string): string {
+  let s = name.trim();
+  if (s.lastIndexOf(":") > s.lastIndexOf("/")) s = s.slice(0, s.lastIndexOf(":"));
+  const parts = s.split("/");
+  if (parts.length < 3) return OLLAMA_REGISTRY;
+  let host = parts.slice(0, -2).join("/");
+  const scheme = host.indexOf("://");
+  if (scheme >= 0) host = host.slice(scheme + 3);
+  return host.length > 0 ? host.toLowerCase() : OLLAMA_REGISTRY;
+}
+
+/** Does this name download from Ollama's own registry? Catalog brains that can become the pick and
+ *  trigger the set-up must (SEC-047-2). */
+export function fromOllamaRegistry(name: string): boolean {
+  // A scheme ("http://registry.ollama.ai/…") would make Ollama fetch the manifest over plain http.
+  return !name.includes("://") && ollamaPullHost(name) === OLLAMA_REGISTRY;
+}

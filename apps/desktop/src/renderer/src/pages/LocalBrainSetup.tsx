@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { LocalModelView, LocalStatusView, PullProgressView } from "../../../shared/local.js";
+import type { LocalModelsView, LocalModelView, LocalStatusView, PullProgressView } from "../../../shared/local.js";
 import { partitionModels } from "./local-partition.js";
 import { ConnectBrain } from "./ConnectBrain.js";
 import { speedWords } from "./speed-words.js";
+import { HelperConsent, progressWords } from "./HelperConsent.js";
 
 // "On this computer — free & private": the local-brain setup view, reached from
 // Settings (its own place, per the IA rule). Full-width: two callout cards up top —
@@ -49,7 +50,12 @@ export function LocalBrainSetup({
   // A download that failed, by model id → its plain-language reason. Shown IN PLACE of the
   // model's action with a Try again (which resumes), never a bar stuck at 0% (loop 045 B2).
   const [failed, setFailed] = useState<Record<string, string>>({});
+  // 047: the helper (Ollama) the pick needs, if it isn't on this computer yet, and which brain's
+  // consent is open.
+  const [helper, setHelper] = useState<LocalModelsView["helper"]>(null);
+  const [consentFor, setConsentFor] = useState<string | null>(null);
   const unsubPull = useRef<(() => void) | null>(null);
+  const mounted = useRef(false);
 
   const refresh = useCallback(async () => {
     setBusy(true);
@@ -60,16 +66,44 @@ export function LocalBrainSetup({
     ]);
     setStatus(s);
     setModels(m.models);
+    setHelper(m.helper);
     setNotice(m.notice || s.notice || "");
     // Mark the model you're actually using ("This is your brain"), even before you
     // click anything this session.
     setSavedId(b.provider === "local" ? b.model : null);
     setBusy(false);
+    // 047 (checker B4): a set-up started before this screen opened is still running in main —
+    // show its progress and nothing to click, then refresh when it ends.
+    const run = await window.skovern.local.setUpStatus();
+    // The screen may have closed while we asked — then don't subscribe at all (checker N-d).
+    if (run && !unsubPull.current && mounted.current) {
+      setPulling((prev) => ({ ...prev, [run.modelId]: run }));
+      unsubPull.current = window.skovern.local.onPullProgress((p) => {
+        if (!p.done) {
+          setPulling((prev) => ({ ...prev, [p.modelId]: p }));
+          return;
+        }
+        unsubPull.current?.();
+        unsubPull.current = null;
+        setPulling((prev) => {
+          const next = { ...prev };
+          delete next[p.modelId];
+          return next;
+        });
+        if (!p.ok) setFailed((prev) => ({ ...prev, [p.modelId]: p.status }));
+        void refresh();
+      });
+    }
   }, []);
 
   useEffect(() => {
+    mounted.current = true;
     void refresh();
-    return () => unsubPull.current?.();
+    return () => {
+      mounted.current = false;
+      unsubPull.current?.();
+      unsubPull.current = null;
+    };
   }, [refresh]);
 
   async function useModel(id: string) {
@@ -101,7 +135,10 @@ export function LocalBrainSetup({
     await getModel(name);
   }
 
-  async function getModel(id: string) {
+  // 047: the recommended catalog brain that runs through Ollama goes through "set up, start, get"
+  // (main sets the helper up only if this computer has no Ollama).
+  async function getModel(id: string, via: "pull" | "setUp" = "pull") {
+    setConsentFor(null);
     setFailed((prev) => {
       const next = { ...prev };
       delete next[id];
@@ -113,7 +150,7 @@ export function LocalBrainSetup({
     unsubPull.current = window.skovern.local.onPullProgress((p) => {
       setPulling((prev) => ({ ...prev, [p.modelId]: p }));
     });
-    const res = await window.skovern.local.pull(id);
+    const res = via === "setUp" ? await window.skovern.local.setUp(id) : await window.skovern.local.pull(id);
     unsubPull.current?.();
     unsubPull.current = null;
     // Clear the progress entry whatever the outcome — a rejected pull-by-name must not leave a
@@ -159,7 +196,7 @@ export function LocalBrainSetup({
           <div className="pull-bar">
             <div className="pull-fill" style={{ width: `${Math.max(3, prog.percent)}%` }} />
           </div>
-          <p className="hint">Downloading… {prog.percent}%</p>
+          <p className="hint">{progressWords(prog)}</p>
         </div>
       );
     }
@@ -168,7 +205,7 @@ export function LocalBrainSetup({
       return (
         <div className="pull-error" role="alert">
           <p>{failure}</p>
-          <button className="primary" onClick={() => void getModel(m.id)}>
+          <button className="primary" onClick={() => void getModel(m.id, viaFor(m))}>
             Try again
           </button>
         </div>
@@ -189,6 +226,17 @@ export function LocalBrainSetup({
         </button>
       );
     }
+    // 047: our pick runs through Ollama → one consent if the helper isn't here yet, then one flow.
+    if (viaFor(m) === "setUp") {
+      if (consentFor === m.id && helper) {
+        return <HelperConsent totalSize={helper.totalSize} helperSize={helper.size} onYes={() => void getModel(m.id, "setUp")} onNo={() => setConsentFor(null)} />;
+      }
+      return (
+        <button className="primary" onClick={() => (helper ? setConsentFor(m.id) : void getModel(m.id, "setUp"))}>
+          Get this one
+        </button>
+      );
+    }
     // An embedded model downloads via our own downloader — no Ollama needed, so its
     // button stays live. A non-embedded (Ollama) model needs Ollama running to fetch —
     // when it's not, say so honestly instead of showing a dead, unexplained button.
@@ -198,6 +246,11 @@ export function LocalBrainSetup({
         {needsOllama ? "Needs Ollama" : "Get this one"}
       </button>
     );
+  }
+
+  // Our recommended catalog pick that runs through Ollama → the set-up flow (047).
+  function viaFor(m: LocalModelView): "pull" | "setUp" {
+    return m.recommended && m.group === "suggested" && !m.embedded ? "setUp" : "pull";
   }
 
   // The honest provenance line — every model is someone else's free file you run privately.
