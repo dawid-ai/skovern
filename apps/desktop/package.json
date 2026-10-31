@@ -24,7 +24,7 @@
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-markdown": "^10.1.0",
-    "systeminformation": "^5.31.16"
+    "systeminformation": "^5.33.16"
   },
   "devDependencies": {
     "@dawid-ai/model-fit": "0.2.0",
