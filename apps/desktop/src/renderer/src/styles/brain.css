@@ -166,6 +166,11 @@
   align-items: center;
   flex-wrap: wrap;
 }
+/* In a table row, tables.css turns .primary into a --fill capsule, which would vanish on this box. */
+.helper-consent .primary {
+  background: var(--tint);
+  color: var(--on-tint);
+}
 
 .pull-error p {
   color: var(--label);
