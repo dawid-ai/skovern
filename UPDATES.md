@@ -3,6 +3,11 @@
 Each release lists what changed, in plain words. The app shows the newest entry when it offers
 an update. The release workflow refuses a version with no entry here.
 
+## v0.1.3 — 2026-10-31
+
+- On a strong computer, Skovern can now suggest a bigger private brain, and set up the helper it needs for you, with one click and one "yes".
+- Getting the helper shows up on your Receipts page, like everything else that leaves your computer.
+
 ## v0.1.2 — 2026-10-27
 
 - Drop-down menus match your theme now. In dark mode, the list under Pick a brain is dark too, with easy-to-read words, instead of a pale grey box.
